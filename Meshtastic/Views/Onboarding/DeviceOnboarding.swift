@@ -569,7 +569,7 @@ struct DeviceOnboarding: View {
 			locationStatus: locationStatus
 		) {
 			navigationPath.append(next)
-		} else if step == .siri {
+		} else if step == .expertMode {
 			dismiss()
 		}
 	}
