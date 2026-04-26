@@ -28,6 +28,8 @@ struct Settings: View {
 	@State private var selectedNode: Int = 0
 	@State private var preferredNodeNum: Int = 0
 
+	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
+
 	@ObservedObject
 	var router: Router
 
@@ -503,9 +505,22 @@ struct Settings: View {
 							}
 						}
 					}
-					radioConfigurationSection
-					deviceConfigurationSection
-					moduleConfigurationSection
+					if expertModeEnabled {
+						radioConfigurationSection
+						deviceConfigurationSection
+						moduleConfigurationSection
+					} else {
+						Section {
+							Label {
+								Text("Advanced radio, device, and module configuration is hidden. Enable Expert Mode in App Settings to unlock.")
+									.font(.caption)
+									.foregroundStyle(.secondary)
+							} icon: {
+								Image(systemName: "wand.and.stars")
+									.foregroundColor(.orange)
+							}
+						}
+					}
 					loggingSection
 #if DEBUG
 					developersSection

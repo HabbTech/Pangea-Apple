@@ -85,6 +85,7 @@ extension UserDefaults {
 		case testIntEnum
 		case lastDeviceAPIUpdate
 		case lastFirmwareAPIUpdate
+		case expertModeEnabled
 	}
 
 	func reset() {
@@ -221,6 +222,9 @@ extension UserDefaults {
 
 	@UserDefault(.lastFirmwareAPIUpdate, defaultValue: .distantPast)
 	static var lastFirmwareAPIUpdate: Date
+
+	@UserDefault(.expertModeEnabled, defaultValue: false)
+	static var expertModeEnabled: Bool
 }
 
 enum TestIntEnum: Int, Decodable {

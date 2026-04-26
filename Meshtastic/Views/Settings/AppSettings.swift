@@ -20,6 +20,7 @@ struct AppSettings: View {
 	@AppStorage("environmentEnableWeatherKit") private var  environmentEnableWeatherKit: Bool = true
 	@AppStorage("enableAdministration") private var  enableAdministration: Bool = false
 	@AppStorage("usageDataAndCrashReporting") private var usageDataAndCrashReporting: Bool = true
+	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 	
 	let autoconnectBinding = Binding<Bool>(get: {
 		return UserDefaults.autoconnectOnDiscovery
@@ -48,6 +49,13 @@ struct AppSettings: View {
 					}
 					.tint(.accentColor)
 					Text("Provide anonymous usage statistics and crash reports.")
+						.foregroundStyle(.secondary)
+						.font(.caption)
+					Toggle(isOn: $expertModeEnabled) {
+						Label("Expert Mode", systemImage: "wand.and.stars")
+					}
+					.tint(.accentColor)
+					Text("Reveal advanced radio, device, and module configuration. Only enable if you understand the underlying settings.")
 						.foregroundStyle(.secondary)
 						.font(.caption)
 					if showAutoConnect {
