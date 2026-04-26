@@ -27,8 +27,8 @@
           ],
           "glass" : true,
           "hidden" : false,
-          "image-name" : "Meshtastic Logo.svg",
-          "name" : "Meshtastic Logo"
+          "image-name" : "pangea_logo.png",
+          "name" : "Pangea Logo"
         },
         {
           "fill-specializations" : [
