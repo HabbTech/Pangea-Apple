@@ -418,14 +418,16 @@ struct Settings: View {
 							.foregroundColor(.red)
 					}
 				}
-				NavigationLink(value: SettingsNavigationState.firmwareUpdates) {
-					Label {
-						Text("Firmware Updates")
-					} icon: {
-						Image(systemName: "arrow.up.arrow.down.square")
+				if expertModeEnabled {
+					NavigationLink(value: SettingsNavigationState.firmwareUpdates) {
+						Label {
+							Text("Firmware Updates")
+						} icon: {
+							Image(systemName: "arrow.up.arrow.down.square")
+						}
 					}
+					.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 				}
-				.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
 				if !(node?.deviceConfig?.isManaged ?? false) {
 					if accessoryManager.isConnected {
@@ -509,6 +511,10 @@ struct Settings: View {
 						radioConfigurationSection
 						deviceConfigurationSection
 						moduleConfigurationSection
+						loggingSection
+#if DEBUG
+						developersSection
+#endif
 					} else {
 						Section {
 							Label {
@@ -521,10 +527,6 @@ struct Settings: View {
 							}
 						}
 					}
-					loggingSection
-#if DEBUG
-					developersSection
-#endif
 				}
 			}
 			.navigationDestination(for: SettingsNavigationState.self) { destination in
