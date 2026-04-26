@@ -20,7 +20,6 @@ struct DeviceOnboarding: View {
 	@State var navigationPath: [SetupGuide] = []
 	@State var locationStatus = LocationsHandler.shared.manager.authorizationStatus
 	@AppStorage("provideLocation") private var provideLocation: Bool = false
-	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 	@AppStorage("provideLocationInterval") private var provideLocationInterval: Int = 30
 	@Environment(\.dismiss) var dismiss
 	/// The Title View
@@ -411,17 +410,6 @@ struct DeviceOnboarding: View {
 						title: String(localized: "Change Anytime"),
 						subtitle: String(localized: "Go to Settings → App Settings to toggle Expert Mode on or off at any time.")
 					)
-					Toggle(isOn: $expertModeEnabled) {
-						Label {
-							Text("I'm an advanced user")
-								.font(.subheadline.weight(.semibold))
-						} icon: {
-							Image(systemName: "bolt.shield")
-						}
-					}
-					.tint(.orange)
-					.padding(.top, 8)
-					.padding(.horizontal, 4)
 				}
 				.padding()
 			}
