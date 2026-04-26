@@ -1,6 +1,6 @@
 //
 //  Image.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/5/25.
 //

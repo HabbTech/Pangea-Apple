@@ -1,5 +1,5 @@
 // NodeInfoEntityToNodeInfo.swift
-// Meshtastic
+// Pangea
 //
 // Utility to convert NodeInfoEntity (Core Data) to NodeInfo (protobuf)
 

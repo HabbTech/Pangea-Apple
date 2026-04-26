@@ -1,6 +1,6 @@
 //
 //  MQTT.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright (c) Garth Vander Houwen 9/4/22.
 //
@@ -107,7 +107,7 @@ struct MQTTConfig: View {
 						Text("By enabling this feature, you acknowledge and expressly consent to the transmission of your device’s real-time geographic location over the MQTT protocol without encryption. This location data may be used for purposes such as live map reporting, device tracking, and related telemetry functions.")
 							.foregroundColor(.gray)
 							.font(.caption)
-						Text("Please be advised that because the map report is not encrypted, your data may be stored and displayed permanently by third parties. Meshtastic does not assume responsibility for any such storage, display or disclosure of this data.")
+						Text("Please be advised that because the map report is not encrypted, your data may be stored and displayed permanently by third parties. Pangea does not assume responsibility for any such storage, display or disclosure of this data.")
 							.foregroundColor(.gray)
 							.font(.caption)
 						Toggle(isOn: $mapReportingOptIn) {

@@ -1,6 +1,6 @@
 //
 //  PaxCounterConfig.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 2/25/24.
 //

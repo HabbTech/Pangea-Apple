@@ -1,6 +1,6 @@
 //
 //  ChannelMessageList.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 12/24/21.
 //

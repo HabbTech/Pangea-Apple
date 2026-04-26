@@ -1,6 +1,6 @@
 //
 //  MeshtasticAppDelegate.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Ben on 8/20/23.
 //

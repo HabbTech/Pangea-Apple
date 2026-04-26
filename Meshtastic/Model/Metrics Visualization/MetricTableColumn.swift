@@ -1,6 +1,6 @@
 //
 //  SeriesConfigurationEntry.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 12/7/24.
 //

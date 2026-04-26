@@ -1,6 +1,6 @@
 //
 //  MeshActivityAttributes.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 3/1/23.
 //

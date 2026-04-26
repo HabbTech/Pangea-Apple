@@ -1,6 +1,6 @@
 //
 //  BatteryLevel.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 3/24/23.
 //

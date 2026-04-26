@@ -1,6 +1,6 @@
 //
 //  NodeInfoEntityExtension.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/3/23.
 //
@@ -102,7 +102,7 @@ public func createNodeInfo(num: Int64, context: NSManagedObjectContext) -> NodeI
 	let userId = num.toHex()
 	newUser.userId = "!\(userId)"
 	let last4 = String(userId.suffix(4))
-	newUser.longName = "Meshtastic \(last4)"
+	newUser.longName = "Pangea \(last4)"
 	newUser.shortName = last4
 	newUser.hwModel = "UNSET"
 	newNode.user = newUser

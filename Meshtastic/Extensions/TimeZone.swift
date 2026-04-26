@@ -1,6 +1,6 @@
 //
 //  TimeZone.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(C) Garth Vander Houwen 4/8/24.
 //

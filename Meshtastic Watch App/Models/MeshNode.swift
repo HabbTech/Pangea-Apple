@@ -1,8 +1,8 @@
 //
 //  MeshNode.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import Foundation
@@ -11,7 +11,7 @@ import CoreLocation
 /// Lightweight in-memory model for a mesh node seen by the watch.
 /// Transferred from the companion iOS app via WatchConnectivity.
 struct MeshNode: Identifiable, Equatable, Codable {
-	/// Meshtastic node number (unique on the mesh).
+	/// Pangea node number (unique on the mesh).
 	let num: UInt32
 	/// Stable identifier derived from the node number.
 	var id: UInt32 { num }

@@ -1,6 +1,6 @@
 //
 //  Color.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 4/25/23.
 //

@@ -1,6 +1,6 @@
 //
 //  UserEntityExtension.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 6/3/22.
 //
@@ -174,7 +174,7 @@ public func createUser(num: Int64, context: NSManagedObjectContext) throws -> Us
 		let userId = num.toHex()
 		newUser.userId = userId
 		let last4 = String(userId.suffix(4))
-		newUser.longName = "Meshtastic \(last4)"
+		newUser.longName = "Pangea \(last4)"
 		newUser.shortName = last4
 		newUser.hwModel = "UNSET"
 		newUser.unmessagable = false

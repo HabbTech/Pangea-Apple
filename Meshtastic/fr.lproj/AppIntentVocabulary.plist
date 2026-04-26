@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Envoyer un message sur Meshtastic</string>
-				<string>Envoyer un message Meshtastic à Pierre</string>
+				<string>Envoyer un message sur Pangea</string>
+				<string>Envoyer un message Pangea à Pierre</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Chercher des messages Meshtastic</string>
-				<string>Trouver des messages sur Meshtastic</string>
+				<string>Chercher des messages Pangea</string>
+				<string>Trouver des messages sur Pangea</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Marquer le message Meshtastic comme lu</string>
-				<string>Marquer les messages Meshtastic comme lus</string>
+				<string>Marquer le message Pangea comme lu</string>
+				<string>Marquer les messages Pangea comme lus</string>
 			</array>
 		</dict>
 	</array>

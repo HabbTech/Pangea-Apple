@@ -1,6 +1,6 @@
 //
 //  CoreDataBrowser.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 12/9/25.
 //

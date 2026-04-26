@@ -1,6 +1,6 @@
 //
 //  URL+fetch.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/6/25.
 //

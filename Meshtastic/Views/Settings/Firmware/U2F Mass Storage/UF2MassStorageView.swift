@@ -1,6 +1,6 @@
 //
 //  UF2MassStorageView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/12/25.
 //

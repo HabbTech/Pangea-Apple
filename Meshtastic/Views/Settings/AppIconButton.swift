@@ -1,6 +1,6 @@
 //
 //  AppIconButton.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Chase Christiansen on 7/21/25.
 //

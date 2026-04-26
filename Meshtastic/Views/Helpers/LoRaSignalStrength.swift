@@ -1,6 +1,6 @@
 //
 //  LoRaSignalStrength.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 5/15/23.
 //

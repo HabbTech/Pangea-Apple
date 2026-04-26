@@ -1,6 +1,6 @@
 //
  //  ChannelTips.swift
- //  Meshtastic
+ //  Pangea
  //
  //  Copyright(c) Garth Vander Houwen 8/31/23.
  //
@@ -13,10 +13,10 @@
 		return "tip.channels.share"
 	}
 	var title: Text {
-		Text("Sharing Meshtastic Channels")
+		Text("Sharing Pangea Channels")
 	}
 	var message: Text? {
-		Text("A Meshtastic QR code contains the LoRa config and channel values needed for radios to communicate. You can share a complete channel configuration using the Replace Channels option, if you choose Add Channels your shared channels will be added to the channels on the receiving radio.")
+		Text("A Pangea QR code contains the LoRa config and channel values needed for radios to communicate. You can share a complete channel configuration using the Replace Channels option, if you choose Add Channels your shared channels will be added to the channels on the receiving radio.")
 	}
 	var image: Image? {
 		Image(systemName: "qrcode")

@@ -387,7 +387,7 @@ struct Settings: View {
 			List {
 				NavigationLink(value: SettingsNavigationState.about) {
 					Label {
-						Text("About Meshtastic")
+						Text("About Pangea")
 					} icon: {
 						Image(systemName: "questionmark.app")
 					}

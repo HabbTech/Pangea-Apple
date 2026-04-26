@@ -1,6 +1,6 @@
 //
 //  GpsFormats.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 8/20/22.
 //

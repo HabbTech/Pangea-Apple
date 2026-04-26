@@ -1,6 +1,6 @@
 //
 //  ChannelRoles.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/21/22.
 //

@@ -15,7 +15,7 @@
 			<string>Default</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>gvh.MeshtasticApple.mbtiles</string>
+				<string>gvh.PangeaApple.mbtiles</string>
 			</array>
 		</dict>
 		<dict>
@@ -26,7 +26,7 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.json</string>
-				<string>gvh.MeshtasticApple.geojson</string>
+				<string>gvh.PangeaApple.geojson</string>
 			</array>
 		</dict>
 		<dict>
@@ -37,7 +37,7 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.xml</string>
-				<string>gvh.MeshtasticApple.kml</string>
+				<string>gvh.PangeaApple.kml</string>
 			</array>
 		</dict>
 		<dict>
@@ -48,7 +48,7 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.zip-archive</string>
-				<string>gvh.MeshtasticApple.kmz</string>
+				<string>gvh.PangeaApple.kmz</string>
 			</array>
 		</dict>
 	</array>
@@ -213,7 +213,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>com.meshtastic.uf2-firmware</string>
+			<string>com.pangea.uf2-firmware</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -235,7 +235,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>gvh.MeshtasticApple.mbtiles</string>
+			<string>gvh.PangeaApple.mbtiles</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -254,7 +254,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>gvh.MeshtasticApple.geojson</string>
+			<string>gvh.PangeaApple.geojson</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -273,7 +273,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>gvh.MeshtasticApple.kml</string>
+			<string>gvh.PangeaApple.kml</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -292,7 +292,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>gvh.MeshtasticApple.kmz</string>
+			<string>gvh.PangeaApple.kmz</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -311,7 +311,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>com.meshtastic.uf2-firmware</string>
+			<string>com.pangea.uf2-firmware</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -330,7 +330,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>com.meshtastic.zip-firmware</string>
+			<string>com.pangea.zip-firmware</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -349,7 +349,7 @@
 			<key>UTTypeIconFiles</key>
 			<array/>
 			<key>UTTypeIdentifier</key>
-			<string>com.meshtastic.bin-firmware</string>
+			<string>com.pangea.bin-firmware</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

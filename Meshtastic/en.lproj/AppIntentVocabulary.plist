@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Send a message on Meshtastic</string>
-				<string>Send a Meshtastic message to John</string>
+				<string>Send a message on Pangea</string>
+				<string>Send a Pangea message to John</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Search Meshtastic messages</string>
-				<string>Find messages on Meshtastic</string>
+				<string>Search Pangea messages</string>
+				<string>Find messages on Pangea</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Mark Meshtastic message as read</string>
-				<string>Mark Meshtastic messages as read</string>
+				<string>Mark Pangea message as read</string>
+				<string>Mark Pangea messages as read</string>
 			</array>
 		</dict>
 	</array>

@@ -6,7 +6,7 @@ struct AppIconPicker: View {
 	@Binding var isPresenting: Bool
 	@State private var didError = false
 	@State private var errorDetails: String?
-	var iconNames: [String?: String] = [nil: "Default", "AppIcon_MPowered": "Meshtastic Powered", "AppIcon_Chirpy": "Chirpy", "AppIcon_Ham": "Ham"]
+	var iconNames: [String?: String] = [nil: "Default", "AppIcon_MPowered": "Pangea Powered", "AppIcon_Chirpy": "Chirpy", "AppIcon_Ham": "Ham"]
 
 	// MARK: View
 	var body: some View {

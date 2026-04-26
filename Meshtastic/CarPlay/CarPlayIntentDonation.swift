@@ -1,6 +1,6 @@
 //
 //  CarPlayIntentDonation.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 4/16/26.
 //
@@ -34,7 +34,7 @@ enum CarPlayIntentDonation {
 				content: message.messagePayload,
 				speakableGroupName: nil,
 				conversationIdentifier: "dm-\(fromUser.num)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: sender,
 				attachments: nil
 			)
@@ -48,7 +48,7 @@ enum CarPlayIntentDonation {
 				content: message.messagePayload,
 				speakableGroupName: groupName,
 				conversationIdentifier: "channel-\(message.channel)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: sender,
 				attachments: nil
 			)
@@ -91,7 +91,7 @@ enum CarPlayIntentDonation {
 				content: content,
 				speakableGroupName: nil,
 				conversationIdentifier: "dm-\(toUserNum)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: me,
 				attachments: nil
 			)
@@ -104,7 +104,7 @@ enum CarPlayIntentDonation {
 				content: content,
 				speakableGroupName: groupName,
 				conversationIdentifier: "channel-\(channel)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: me,
 				attachments: nil
 			)

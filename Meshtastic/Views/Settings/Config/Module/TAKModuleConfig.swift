@@ -1,6 +1,6 @@
 //
 //  TAKModuleConfig.swift
-//  Meshtastic
+//  Pangea
 import SwiftUI
 import CoreData
 import OSLog

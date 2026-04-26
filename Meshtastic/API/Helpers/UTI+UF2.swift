@@ -1,6 +1,6 @@
 //
 //  UTI+UF2.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/12/25.
 //

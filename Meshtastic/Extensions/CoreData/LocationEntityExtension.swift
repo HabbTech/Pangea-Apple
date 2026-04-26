@@ -1,6 +1,6 @@
 //
 //  LocationEntityExtension.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright (c) Garth Vander Houwen 11/21/23.
 //

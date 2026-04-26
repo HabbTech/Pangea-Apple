@@ -1,6 +1,6 @@
 //
 //  MeshMap.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 11/7/23.
 //

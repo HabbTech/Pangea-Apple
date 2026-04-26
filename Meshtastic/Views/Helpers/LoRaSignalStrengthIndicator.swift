@@ -1,6 +1,6 @@
 //
 //  LoRaSignalStrengthIndicator.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 5/9/23.
 //

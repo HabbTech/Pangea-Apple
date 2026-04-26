@@ -1,6 +1,6 @@
 //
 //  TAKServerManager.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -67,7 +67,7 @@ final class TAKServerManager: ObservableObject {
 	/// User toggle for read-only mode - locked to true if channel has issues
 	@AppStorage("takServerReadOnly") var userReadOnlyMode = false
 	
-	/// Enable Mesh to CoT converter - bridges Meshtastic packets to TAK format
+	/// Enable Mesh to CoT converter - bridges Pangea packets to TAK format
 	@AppStorage("takServerMeshToCot") var meshToCotEnabled = false
 
 	// MARK: - Configuration (persisted via AppStorage)
@@ -98,7 +98,7 @@ final class TAKServerManager: ObservableObject {
 
 	// MARK: - Bridge
 
-	/// Bridge for converting between CoT and Meshtastic formats
+	/// Bridge for converting between CoT and Pangea formats
 	var bridge: TAKMeshtasticBridge?
 
 	// MARK: - Private Properties
@@ -492,7 +492,7 @@ final class TAKServerManager: ObservableObject {
 
 		case .message(let cotMessage):
 			Logger.tak.info("Received CoT from TAK client: \(cotMessage.type)")
-			// Forward to Meshtastic mesh via bridge
+			// Forward to Pangea mesh via bridge
 			await bridge?.sendToMesh(cotMessage)
 
 		case .disconnected:

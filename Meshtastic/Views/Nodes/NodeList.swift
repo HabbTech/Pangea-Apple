@@ -1,6 +1,6 @@
 //
 //  NodeList.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/8/23.
 //
@@ -161,7 +161,7 @@ struct NodeList: View {
 
 //
 //  FilteredNodeList.swift
-//  Meshtastic
+//  Pangea
 //
 fileprivate struct FilteredNodeList: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
@@ -325,7 +325,7 @@ fileprivate struct FilteredNodeList: View {
 
 //
 //  NodeFilterParameters+Predicate.swift
-//  Meshtastic
+//  Pangea
 //
 
 fileprivate extension NodeFilterParameters {

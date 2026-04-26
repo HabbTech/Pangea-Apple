@@ -1,6 +1,6 @@
 //
 //  ShutDownNodeIntent.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 8/24/24.
 //

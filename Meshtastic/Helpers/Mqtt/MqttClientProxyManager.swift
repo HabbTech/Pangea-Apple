@@ -1,6 +1,6 @@
 //
 //  MQTTManager.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 7/31/23.
 //

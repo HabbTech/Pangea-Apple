@@ -1,6 +1,6 @@
 //
 //  CustomFormatters.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 8/4/24.
 //

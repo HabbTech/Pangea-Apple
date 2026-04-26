@@ -1,6 +1,6 @@
 //
 //  AmbientLightingConfig.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 11/26/23
 //

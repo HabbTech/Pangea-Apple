@@ -1,6 +1,6 @@
 //
 //  LocationsHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 12/4/23.
 //

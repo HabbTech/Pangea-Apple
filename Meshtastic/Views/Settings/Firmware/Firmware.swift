@@ -1,6 +1,6 @@
 //
 //  Firmware.swift
-//  Meshtastic
+//  Pangea
 //
 //   Copyright(c) by Garth Vander Houwen on 3/10/23.
 //
@@ -364,7 +364,7 @@ private struct FirmwareRow: View {
 	@State var showInstallationSheet: FirmwareFile.FirmwareType?
 
 	/// ESP32 OTA (BLE/WiFi) requires the AdminMessage.OTAEvent protocol with otaHash,
-	/// which was added to Meshtastic firmware in 2.7.18.
+	/// which was added to Pangea firmware in 2.7.18.
 	private let minimumESP32OTAVersion = "2.7.18"
 
 	var body: some View {

@@ -1,6 +1,6 @@
 //
 //  TAKDataPackageGenerator.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -10,7 +10,7 @@ import OSLog
 import UIKit
 
 /// Generates TAK data packages (.zip) for configuring TAK clients
-/// to connect to the Meshtastic TAK server
+/// to connect to the Pangea TAK server
 final class TAKDataPackageGenerator {
 
 	static let shared = TAKDataPackageGenerator()
@@ -31,7 +31,7 @@ final class TAKDataPackageGenerator {
 		serverHost: String = "127.0.0.1",
 		port: Int,
 		useTLS: Bool = true,
-		description: String = "Meshtastic TAK Server",
+		description: String = "Pangea TAK Server",
 		userCertName: String? = nil
 	) -> URL? {
 		let fileManager = FileManager.default

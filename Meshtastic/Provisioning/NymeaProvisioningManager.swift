@@ -1,12 +1,12 @@
 //
 //  NymeaProvisioningManager.swift
-//  Meshtastic
+//  Pangea
 //
 //  Orchestrates Wi-Fi provisioning for mPWRD-OS devices running nymea-networkmanager.
 //
 //  NOTE: AccessorySetupKit cannot be used alongside a global CBCentralManager created
 //  via NSBluetoothAlwaysUsageDescription (ASK's showPicker throws "CBManagers active
-//  with global permissions"). Meshtastic must keep its global BLE access for Meshtastic
+//  with global permissions"). Pangea must keep its global BLE access for Pangea
 //  radio connectivity, so this manager uses a dedicated CBCentralManager with a custom
 //  device-picker UI instead.
 //
@@ -231,7 +231,7 @@ final class NymeaProvisioningManager: NSObject, ObservableObject {
 			delegate.manager = self
 			centralDelegate = delegate
 			// CBCentralManager dedicated to nymea provisioning — separate from the main
-			// Meshtastic BLETransport instance so the two scans don't interfere.
+			// Pangea BLETransport instance so the two scans don't interfere.
 			central = CBCentralManager(delegate: delegate, queue: .main)
 		} else if central?.state == .poweredOn {
 			// Already powered on; (re)issue the scan with the current mode's options.

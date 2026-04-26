@@ -1,6 +1,6 @@
 //
 //  AppData.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 6/8/24.
 //

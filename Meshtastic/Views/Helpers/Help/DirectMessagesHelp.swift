@@ -1,6 +1,6 @@
 //
 //  DirectMessagesHelp.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen on 8/15/24.
 //

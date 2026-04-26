@@ -1,6 +1,6 @@
 //
 //  TAKServerConfig.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -257,7 +257,7 @@ struct TAKServerConfig: View {
 			Toggle(isOn: $takServer.userReadOnlyMode) {
 				VStack(alignment: .leading, spacing: 2) {
 					Text("Read-Only Mode")
-					Text("Meshtastic -> TAK works, TAK -> Meshtastic blocked")
+					Text("Pangea -> TAK works, TAK -> Pangea blocked")
 						.font(.caption)
 						.foregroundColor(.secondary)
 				}
@@ -268,7 +268,7 @@ struct TAKServerConfig: View {
 			Toggle(isOn: $takServer.meshToCotEnabled) {
 				VStack(alignment: .leading, spacing: 2) {
 					Text("Mesh to CoT Converter")
-					Text("Bridge Meshtastic positions, nodes, waypoints, and messages to TAK/CoT format")
+					Text("Bridge Pangea positions, nodes, waypoints, and messages to TAK/CoT format")
 						.font(.caption)
 						.foregroundColor(.secondary)
 				}
@@ -532,7 +532,7 @@ struct TAKServerConfig: View {
 		guard let url = TAKDataPackageGenerator.shared.generateDataPackage(
 			port: TAKServerManager.defaultTLSPort,
 			useTLS: true,
-			description: "Meshtastic TAK Server"
+			description: "Pangea TAK Server"
 		) else {
 			importError = "Failed to generate data package"
 			showingImportError = true

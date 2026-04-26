@@ -1,8 +1,8 @@
 //
 //  WatchCircleText.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import SwiftUI
@@ -27,7 +27,7 @@ struct WatchCircleText: View {
 		}
 	}
 
-	/// Derives a `Color` from a Meshtastic node number, matching the iOS
+	/// Derives a `Color` from a Pangea node number, matching the iOS
 	/// `UIColor(hex:)` algorithm so circles look the same on both platforms.
 	static func color(for nodeNum: UInt32) -> Color {
 		let red = Double((nodeNum & 0xFF0000) >> 16) / 255.0

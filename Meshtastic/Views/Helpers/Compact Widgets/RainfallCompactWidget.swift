@@ -1,6 +1,6 @@
 //
 //  RainfallCompactWidgets.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 3/15/25.
 //

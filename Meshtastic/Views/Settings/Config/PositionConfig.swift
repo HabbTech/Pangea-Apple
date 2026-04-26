@@ -1,6 +1,6 @@
 //
 //  PositionConfig.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Copyright (c) Garth Vander Houwen 6/11/22.
 //

@@ -1,6 +1,6 @@
 //
 //  NymeaConstants.swift
-//  Meshtastic
+//  Pangea
 //
 //  Implements the nymea-networkmanager BLE GATT profile for Wi-Fi provisioning.
 //  Protocol reference: https://github.com/nymea/nymea-networkmanager

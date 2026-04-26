@@ -1,8 +1,8 @@
 //
 //  MeshtasticWatchApp.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import SwiftUI

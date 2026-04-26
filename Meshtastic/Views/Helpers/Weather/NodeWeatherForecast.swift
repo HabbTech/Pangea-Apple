@@ -1,6 +1,6 @@
 //
 //  NodeWeatherForecast.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 2/25/23.
 //

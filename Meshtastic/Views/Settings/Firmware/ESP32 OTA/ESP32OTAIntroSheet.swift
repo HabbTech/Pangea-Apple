@@ -1,6 +1,6 @@
 //
 //  ESP32DFUSheet.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 12/12/25.
 //
@@ -16,7 +16,7 @@ struct ESP32OTAIntroSheet: View {
 	}
 
 	/// ESP32 OTA (BLE/WiFi) requires AdminMessage.OTAEvent with otaHash for authentication,
-	/// added to Meshtastic firmware in 2.7.18.
+	/// added to Pangea firmware in 2.7.18.
 	private let minimumOTAVersion = "2.7.18"
 
 	@EnvironmentObject var accessoryManager: AccessoryManager

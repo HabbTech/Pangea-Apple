@@ -1,6 +1,6 @@
 //
 //  LogDetail.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 6/5/24.
 //

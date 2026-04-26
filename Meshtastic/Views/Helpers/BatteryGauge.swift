@@ -1,6 +1,6 @@
 //
 //  BatteryGauge.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/28/22.
 //

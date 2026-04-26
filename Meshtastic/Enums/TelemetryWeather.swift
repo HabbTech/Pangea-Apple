@@ -1,6 +1,6 @@
 //
 //  TelemetryWeather.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 2/4/23.
 //

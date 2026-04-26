@@ -1,6 +1,6 @@
 //
 //  AsyncGate.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake on 8/20/25.
 //

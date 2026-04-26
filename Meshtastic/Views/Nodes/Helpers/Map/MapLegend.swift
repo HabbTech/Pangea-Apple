@@ -1,6 +1,6 @@
 //
 //  MapLegend.swift
-//  Meshtastic
+//  Pangea
 //
 //  Implements a map legend overlay that explains the visual elements
 //  displayed on the map (issue #924).

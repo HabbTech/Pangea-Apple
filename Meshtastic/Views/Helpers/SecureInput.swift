@@ -1,6 +1,6 @@
 //
 //  SecureInput.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 8/12/24.
 //

@@ -1,6 +1,6 @@
 //
 //  NymeaSession.swift
-//  Meshtastic
+//  Pangea
 //
 //  Low-level BLE session implementing the nymea-networkmanager JSON-over-BLE protocol.
 //
@@ -20,7 +20,7 @@ import Foundation
 import OSLog
 
 extension Logger {
-	static let nymea = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Meshtastic", category: "NymeaSession")
+	static let nymea = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Pangea", category: "NymeaSession")
 }
 
 // MARK: - Session Errors

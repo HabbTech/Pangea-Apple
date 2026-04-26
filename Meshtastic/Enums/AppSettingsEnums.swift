@@ -1,6 +1,6 @@
 //
 //  AppSettingsEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 12/30/22.
 //

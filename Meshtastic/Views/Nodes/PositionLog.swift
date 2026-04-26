@@ -1,6 +1,6 @@
 //
 //  LocationHistory.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 7/5/22.
 //

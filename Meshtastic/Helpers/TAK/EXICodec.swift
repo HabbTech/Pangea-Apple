@@ -1,6 +1,6 @@
 //
 //  EXICodec.swift
-//  Meshtastic
+//  Pangea
 //
 //  Zlib compression for CoT events over mesh network.
 //  Uses standard zlib format (78 xx header) for Android interoperability.

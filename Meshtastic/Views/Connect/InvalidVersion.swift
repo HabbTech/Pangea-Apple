@@ -1,6 +1,6 @@
 //
 //  InvalidVersion.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 7/13/22.
 //
@@ -49,7 +49,7 @@ struct InvalidVersion: View {
 					.background(Color(.secondarySystemBackground))
 					.cornerRadius(12)
 
-					Text("The Meshtastic Apple app requires firmware version \(minimumVersion) or later. Older firmware versions are no longer supported and may have compatibility issues or missing features.")
+					Text("The Pangea Apple app requires firmware version \(minimumVersion) or later. Older firmware versions are no longer supported and may have compatibility issues or missing features.")
 						.font(.body)
 						.foregroundColor(.secondary)
 						.multilineTextAlignment(.center)

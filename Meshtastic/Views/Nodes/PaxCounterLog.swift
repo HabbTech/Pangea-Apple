@@ -1,6 +1,6 @@
 //
 //  PaxCounterLog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 2/25/24.
 //

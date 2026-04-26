@@ -1,6 +1,6 @@
 //
 //  GenericCoTHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Handles generic CoT events that don't map to TAKPacket protobuf
 //  Uses EXI compression and Fountain codes for reliable transfer
@@ -79,7 +79,7 @@ final class GenericCoTHandler {
 	/// Send a generic CoT event (markers, shapes, routes, etc.)
 	/// - Parameters:
 	///   - cot: The CoT message to send
-	///   - channel: Meshtastic channel (0 = primary)
+	///   - channel: Pangea channel (0 = primary)
 	func sendGenericCoT(_ cot: CoTMessage, channel: UInt32 = 0) async throws {
 		guard let accessoryManager else {
 			throw GenericCoTError.notConnected
@@ -387,7 +387,7 @@ enum GenericCoTError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .notConnected:
-			return "Not connected to Meshtastic device"
+			return "Not connected to Pangea device"
 		case .noDeviceNumber:
 			return "No device number available"
 		case .compressionFailed:

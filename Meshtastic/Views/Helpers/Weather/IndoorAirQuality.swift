@@ -1,6 +1,6 @@
 //
 //  IndoorAirQuality.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) by Garth Vander Houwen on 4/10/24.
 //

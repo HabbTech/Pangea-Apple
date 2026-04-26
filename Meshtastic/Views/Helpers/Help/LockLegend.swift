@@ -1,6 +1,6 @@
 //
 //  LockLegend.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 8/15/24.
 //

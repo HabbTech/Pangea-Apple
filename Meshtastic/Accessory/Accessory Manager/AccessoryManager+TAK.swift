@@ -1,6 +1,6 @@
 //
 //  AccessoryManager+TAK.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -13,7 +13,7 @@ extension AccessoryManager {
 
 	// MARK: - TAK Server Initialization
 
-	/// Initialize the TAK bridge when connected to a Meshtastic device
+	/// Initialize the TAK bridge when connected to a Pangea device
 	func initializeTAKBridge() {
 		let takServer = TAKServerManager.shared
 
@@ -45,13 +45,13 @@ extension AccessoryManager {
 	/// Clean up TAK bridge when disconnecting
 	func cleanupTAKBridge() {
 		// Note: We don't stop the server here - it can continue running
-		// even without a Meshtastic connection (for TAK connectivity)
+		// even without a Pangea connection (for TAK connectivity)
 		Logger.tak.info("TAK bridge cleanup")
 	}
 
 	// MARK: - Send TAK Packet to Mesh
 
-	/// Send a TAK packet to the Meshtastic mesh network
+	/// Send a TAK packet to the Pangea mesh network
 	/// - Parameters:
 	///   - takPacket: The TAKPacket protobuf to send
 	///   - channel: Channel to send on (0 = default/primary)
@@ -59,8 +59,8 @@ extension AccessoryManager {
 		Logger.tak.debug("=== Sending TAKPacket to Mesh ===")
 
 		guard let activeConnection else {
-			Logger.tak.error("Not connected to Meshtastic device")
-			throw AccessoryError.connectionFailed("Not connected to Meshtastic device")
+			Logger.tak.error("Not connected to Pangea device")
+			throw AccessoryError.connectionFailed("Not connected to Pangea device")
 		}
 
 		guard let deviceNum = activeConnection.device.num else {

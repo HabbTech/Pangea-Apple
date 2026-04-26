@@ -1,6 +1,6 @@
 //
 //  Measurement.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 11/17/23.
 //

@@ -1,8 +1,8 @@
 //
 //  NearbyNodesListView.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import SwiftUI
@@ -84,7 +84,7 @@ struct NearbyNodesListView: View {
 				.padding(.horizontal)
 
 			if !phoneManager.hasReceivedData {
-				Text("Open Meshtastic on your iPhone to sync.")
+				Text("Open Pangea on your iPhone to sync.")
 					.font(.caption2)
 					.foregroundStyle(.orange)
 			}

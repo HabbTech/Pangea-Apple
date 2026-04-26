@@ -1,6 +1,6 @@
 //
 //  BatteryCompact.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 7/18/24.
 //

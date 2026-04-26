@@ -1,6 +1,6 @@
 //
 //  Bool.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/6/25.
 

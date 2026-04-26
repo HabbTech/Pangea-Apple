@@ -1,6 +1,6 @@
 //
 //  ResettableTimer.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 8/16/25.
 //

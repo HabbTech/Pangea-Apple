@@ -1,6 +1,6 @@
 //
 //  ManualConnectionList.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 10/26/25.
 //

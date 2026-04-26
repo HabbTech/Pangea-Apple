@@ -1,6 +1,6 @@
 //
 //  MessageNodeIntent.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 11/9/24.
 //

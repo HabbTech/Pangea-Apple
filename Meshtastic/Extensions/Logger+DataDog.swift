@@ -1,6 +1,6 @@
 //
 //  Logger+DataDog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 9/17/25.
 //
@@ -31,7 +31,7 @@ struct DatadogLogger {
 		self.osLogger = Logger(subsystem: subsystem, category: category)
 		self.ddLogger = DatadogLogs.Logger.create(
 			with: Logger.Configuration(
-				name: "gvh.Meshtastic",
+				name: "gvh.Pangea",
 				networkInfoEnabled: true,
 				remoteLogThreshold: .debug,
 				consoleLogFormat: .short

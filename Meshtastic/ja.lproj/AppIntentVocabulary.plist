@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Meshtasticでメッセージを送信</string>
-				<string>Meshtasticで太郎にメッセージを送って</string>
+				<string>Pangeaでメッセージを送信</string>
+				<string>Pangeaで太郎にメッセージを送って</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Meshtasticのメッセージを検索</string>
-				<string>Meshtasticでメッセージを探して</string>
+				<string>Pangeaのメッセージを検索</string>
+				<string>Pangeaでメッセージを探して</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Meshtasticのメッセージを既読にして</string>
-				<string>Meshtasticのメッセージを既読にする</string>
+				<string>Pangeaのメッセージを既読にして</string>
+				<string>Pangeaのメッセージを既読にする</string>
 			</array>
 		</dict>
 	</array>

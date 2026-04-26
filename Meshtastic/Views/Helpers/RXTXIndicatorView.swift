@@ -1,6 +1,6 @@
 //
 //  RXTXIndicatorView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 8/5/25.
 //

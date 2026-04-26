@@ -1,6 +1,6 @@
 //
 //  IntentHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Routes incoming SiriKit intents to the appropriate handler.
 //  Used by the app delegate for in-app intent handling to support

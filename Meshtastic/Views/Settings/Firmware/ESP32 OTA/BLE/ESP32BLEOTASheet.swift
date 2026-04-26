@@ -1,6 +1,6 @@
 //
 //  ESP32BLEOTASheet.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/20/25.
 //

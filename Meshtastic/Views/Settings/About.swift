@@ -1,6 +1,6 @@
 //
 //  About.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 10/6/22.
 //
@@ -15,7 +15,7 @@ struct AboutMeshtastic: View {
 
 		VStack {
 			List {
-				Section(header: Text("What is Meshtastic?")) {
+				Section(header: Text("What is Pangea?")) {
 					Text("An open source, off-grid, decentralized, mesh network that runs on affordable, low-power radios.")
 						.font(.title3)
 
@@ -40,7 +40,7 @@ struct AboutMeshtastic: View {
 					}
 					Link("Sponsor App Development", destination: URL(string: "https://github.com/sponsors/garthvh")!)
 						.font(.title2)
-					Link("GitHub Repository", destination: URL(string: "https://github.com/meshtastic/Meshtastic-Apple")!)
+					Link("GitHub Repository", destination: URL(string: "https://github.com/meshtastic/Pangea-Apple")!)
 						.font(.title2)
 					Button("Review the app") {
 						if let scene = UIApplication.shared.connectedScenes
@@ -59,7 +59,7 @@ struct AboutMeshtastic: View {
 					Link("Documentation", destination: URL(string: "https://meshtastic.org/docs/getting-started")!)
 						.font(.title2)
 				}
-				Text("Meshtastic® Copyright Meshtastic LLC")
+				Text("Pangea® Copyright Pangea LLC")
 					.font(.caption)
 			}
 		}

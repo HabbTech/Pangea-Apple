@@ -1,6 +1,6 @@
 //
 //  TAKMeshtasticBridge.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -10,7 +10,7 @@ import MeshtasticProtobufs
 import OSLog
 import CoreData
 
-/// Bridges CoT messages between TAK clients and the Meshtastic mesh network
+/// Bridges CoT messages between TAK clients and the Pangea mesh network
 /// Handles bidirectional conversion and message routing
 @MainActor
 final class TAKMeshtasticBridge {
@@ -133,9 +133,9 @@ final class TAKMeshtasticBridge {
 		return callsignToDeviceUID[callsign]
 	}
 
-	// MARK: - TAK → Meshtastic (CoT to TAKPacket)
+	// MARK: - TAK → Pangea (CoT to TAKPacket)
 
-	/// Send a CoT message received from TAK to the Meshtastic mesh
+	/// Send a CoT message received from TAK to the Pangea mesh
 	func sendToMesh(_ cotMessage: CoTMessage) async {
 		guard let takServerManager else {
 			Logger.tak.warning("Cannot send to mesh: TAKServerManager not available")
@@ -153,7 +153,7 @@ final class TAKMeshtasticBridge {
 		}
 
 		guard accessoryManager.isConnected else {
-			Logger.tak.warning("Cannot send to mesh: Not connected to Meshtastic device")
+			Logger.tak.warning("Cannot send to mesh: Not connected to Pangea device")
 			return
 		}
 
@@ -189,7 +189,7 @@ final class TAKMeshtasticBridge {
 		}
 	}
 
-	/// Convert CoT message to Meshtastic TAKPacket protobuf
+	/// Convert CoT message to Pangea TAKPacket protobuf
 	func convertToTAKPacket(cot: CoTMessage) -> TAKPacket? {
 		Logger.tak.debug("=== CoT → TAKPacket Conversion ===")
 		Logger.tak.debug("CoT Input:")
@@ -391,9 +391,9 @@ final class TAKMeshtasticBridge {
 		return takPacket
 	}
 
-	// MARK: - Meshtastic → TAK (TAKPacket to CoT)
+	// MARK: - Pangea → TAK (TAKPacket to CoT)
 
-	/// Broadcast a Meshtastic TAKPacket to all connected TAK clients
+	/// Broadcast a Pangea TAKPacket to all connected TAK clients
 	func broadcastToTAKClients(_ takPacket: TAKPacket, from nodeNum: UInt32) async {
 		// Register contact info from incoming TAKPackets (for callsign → deviceUID lookup)
 		if takPacket.hasContact {
@@ -445,14 +445,14 @@ final class TAKMeshtasticBridge {
 		Logger.tak.info("Broadcast CoT to TAK clients: \(cotMessage.type) from node \(nodeNum)")
 	}
 
-	/// Convert Meshtastic TAKPacket to CoT message
+	/// Convert Pangea TAKPacket to CoT message
 	func convertToCoT(from takPacket: TAKPacket, nodeNum: UInt32, nodeInfo: NodeInfoEntity?) -> CoTMessage? {
 		// Use the factory method from CoTMessage which handles the conversion
 		let deviceUid = "MESHTASTIC-\(String(format: "%08X", nodeNum))"
 		return CoTMessage.fromTAKPacket(takPacket, deviceUid: deviceUid)
 	}
 
-	/// Create a CoT PLI message from a Meshtastic node's position
+	/// Create a CoT PLI message from a Pangea node's position
 	func createCoTFromNode(_ node: NodeInfoEntity) -> CoTMessage? {
 		guard let position = node.latestPosition,
 			  let latitude = position.latitude,
@@ -501,10 +501,10 @@ final class TAKMeshtasticBridge {
 			altitude: Double(position.altitude),
 			speed: Double(position.speed),
 			course: Double(position.heading),
-			team: "Green",  // Meshtastic nodes shown as green by default
+			team: "Green",  // Pangea nodes shown as green by default
 			role: "Team Member",
 			battery: battery,
-			staleMinutes: 15,  // Meshtastic positions can be older
+			staleMinutes: 15,  // Pangea positions can be older
 			remarks: remarks
 		)
 	}
@@ -611,7 +611,7 @@ final class TAKMeshtasticBridge {
 	
 	// MARK: - Mesh to CoT Broadcasting
 	
-	/// Broadcast a Meshtastic position packet to connected TAK clients
+	/// Broadcast a Pangea position packet to connected TAK clients
 	/// Called when a new position is received from the mesh
 	func broadcastMeshPositionToTAK(position: Position, from nodeNum: UInt32) async {
 		// Lazy initialization of bridge if needed
@@ -637,7 +637,7 @@ final class TAKMeshtasticBridge {
 		}
 	}
 	
-	/// Broadcast a Meshtastic text message to connected TAK clients
+	/// Broadcast a Pangea text message to connected TAK clients
 	/// Called when a text message is received from the mesh
 	/// - Parameters:
 	///   - text: The message text
@@ -704,7 +704,7 @@ final class TAKMeshtasticBridge {
 		Logger.tak.info("Broadcast mesh text message to TAK: \(senderName) to \(chatroom)")
 	}
 	
-	/// Broadcast a Meshtastic waypoint to connected TAK clients
+	/// Broadcast a Pangea waypoint to connected TAK clients
 	/// Called when a waypoints is received from the mesh
 	func broadcastMeshWaypointToTAK(waypoint: Waypoint, from nodeNum: UInt32) async {
 		// Lazy initialization of bridge if needed - set on singleton
@@ -742,11 +742,11 @@ final class TAKMeshtasticBridge {
 		let longitude = Double(waypoint.longitudeI) / 1e7
 		
 		let name = waypoint.name.isEmpty ? "Dropped Pin" : waypoint.name
-		let description = waypoint.description_p.isEmpty ? "Meshtastic Waypoint" : waypoint.description_p
+		let description = waypoint.description_p.isEmpty ? "Pangea Waypoint" : waypoint.description_p
 		
 		Logger.tak.info("Broadcasting waypoint: \(name) at \(latitude), \(longitude), sender: \(senderName)")
 		
-		// Map Meshtastic emoji icon to appropriate TAK icon
+		// Map Pangea emoji icon to appropriate TAK icon
 		let (cotType, iconPath, colorArgb) = getTakIconForWaypoint(waypoint: waypoint)
 		let userIconXML = "<usericon iconsetpath='\(iconPath)'/>"
 		Logger.tak.info("Waypoint icon: emoji=0x\(String(format: "%08X", waypoint.icon)) -> \(iconPath)")
@@ -793,7 +793,7 @@ final class TAKMeshtasticBridge {
 		Logger.tak.info("Broadcast mesh waypoint to TAK: \(name) from \(senderName)")
 	}
 	
-	/// Map Meshtastic waypoint emoji to TAK icon
+	/// Map Pangea waypoint emoji to TAK icon
 	/// Returns (cotType, iconPath, colorArgb)
 	/// Icon paths use format: UUID/Category/icon.png
 	/// Priority: Google > Generic Icons (fallback)

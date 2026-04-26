@@ -1,6 +1,6 @@
 //
 //  DeviceMetricsLog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 7/7/22.
 //

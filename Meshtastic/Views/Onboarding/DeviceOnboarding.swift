@@ -24,7 +24,7 @@ struct DeviceOnboarding: View {
 	/// The Title View
 	var title: some View {
 		VStack {
-			Text("Welcome to Meshtastic")
+			Text("Welcome to Pangea")
 				.font(.title.bold())
 				.multilineTextAlignment(.center)
 				.fixedSize(horizontal: false, vertical: true)
@@ -42,7 +42,7 @@ struct DeviceOnboarding: View {
 						makeRow(
 							icon: "person.2.shield",
 							title: String(localized: "User Privacy"),
-							subtitle: String(localized: "Meshtastic does not collect any personal information. We do anonymously collect usage and crash data to improve the app.")
+							subtitle: String(localized: "Pangea does not collect any personal information. We do anonymously collect usage and crash data to improve the app.")
 						)
 						makeRow(
 							icon: "bell.badge",
@@ -57,7 +57,7 @@ struct DeviceOnboarding: View {
 						makeRow(
 							icon: "custom.bluetooth",
 							title: String(localized: "Bluetooth Connectivity"),
-							subtitle: String(localized: "Connect to your Meshtastic node via Bluetooth Low Energy for the best messaging experience.")
+							subtitle: String(localized: "Connect to your Pangea node via Bluetooth Low Energy for the best messaging experience.")
 						)
 						makeRow(
 							icon: "network",
@@ -67,7 +67,7 @@ struct DeviceOnboarding: View {
 						makeRow(
 							icon: "car.fill",
 							title: String(localized: "Siri & CarPlay"),
-							subtitle: String(localized: "Send and receive Meshtastic messages hands-free using Siri and CarPlay.")
+							subtitle: String(localized: "Send and receive Pangea messages hands-free using Siri and CarPlay.")
 						)
 					}
 					.padding(.horizontal)
@@ -199,7 +199,7 @@ struct DeviceOnboarding: View {
 					makeRow(
 						icon: "lines.measurement.horizontal",
 						title: String(localized: "Distance Measurements"),
-						subtitle: String(localized: "Display the distance between your phone and other Meshtastic nodes with positions.")
+						subtitle: String(localized: "Display the distance between your phone and other Pangea nodes with positions.")
 					)
 					makeRow(
 						icon: "line.3.horizontal.decrease.circle",
@@ -247,7 +247,7 @@ struct DeviceOnboarding: View {
 					makeRow(
 						icon: "network",
 						title: "Network-based Nodes".localized,
-						subtitle: "The Meshtastic App can connect to and manage network-enabled nodes.".localized
+						subtitle: "The Pangea App can connect to and manage network-enabled nodes.".localized
 					)
 					makeRow(
 						icon: "person.and.background.dotted",
@@ -338,27 +338,27 @@ struct DeviceOnboarding: View {
 					makeRow(
 						icon: "car.fill",
 						title: String(localized: "CarPlay Messaging"),
-						subtitle: String(localized: "Read and reply to Meshtastic channel and direct messages directly from your car's display using CarPlay.")
+						subtitle: String(localized: "Read and reply to Pangea channel and direct messages directly from your car's display using CarPlay.")
 					)
 					makeRow(
 						icon: "message",
 						title: String(localized: "Send a Group Message"),
-						subtitle: String(localized: "\"Send a Meshtastic group message\" — send a message to a mesh channel.")
+						subtitle: String(localized: "\"Send a Pangea group message\" — send a message to a mesh channel.")
 					)
 					makeRow(
 						icon: "bubble",
 						title: String(localized: "Send a Direct Message"),
-						subtitle: String(localized: "\"Send a Meshtastic direct message\" — send a private message to a node.")
+						subtitle: String(localized: "\"Send a Pangea direct message\" — send a private message to a node.")
 					)
 					makeRow(
 						icon: "power",
 						title: String(localized: "Shut Down / Restart Node"),
-						subtitle: String(localized: "\"Shut down my Meshtastic node\" or \"Restart my Meshtastic node\".")
+						subtitle: String(localized: "\"Shut down my Pangea node\" or \"Restart my Pangea node\".")
 					)
 					makeRow(
 						icon: "antenna.radiowaves.left.and.right.slash",
 						title: String(localized: "Disconnect Node"),
-						subtitle: String(localized: "\"Disconnect Meshtastic\" — disconnect from the connected BLE node.")
+						subtitle: String(localized: "\"Disconnect Pangea\" — disconnect from the connected BLE node.")
 					)
 				}
 				.padding()
@@ -523,7 +523,7 @@ struct DeviceOnboarding: View {
 	
 	// MARK: Formatting
 	func createBackgroundActivityString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic can track your location in the background to keep the mesh map updated and send your position to the mesh even when the app is not in the foreground. You can update this setting at any time from settings.")
+		var fullText = AttributedString("Pangea can track your location in the background to keep the mesh map updated and send your position to the mesh even when the app is not in the foreground. You can update this setting at any time from settings.")
 		if let range = fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
@@ -532,7 +532,7 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createLocationString() -> AttributedString {
-		var fullText = AttributedString(localized: "Meshtastic uses your phone's location to enable a number of features. You can update your location permissions at any time from settings.")
+		var fullText = AttributedString(localized: "Pangea uses your phone's location to enable a number of features. You can update your location permissions at any time from settings.")
 		if let range = fullText.range(of: String(localized: "settings")) {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
@@ -541,7 +541,7 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createLocalNetworkString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic accesses your local network to connect to TCP-based accessories.  You can update the local network permissions at any time from settings.")
+		var fullText = AttributedString("Pangea accesses your local network to connect to TCP-based accessories.  You can update the local network permissions at any time from settings.")
 		if let range = fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
@@ -550,7 +550,7 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createBluetoothString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic uses Bluetooth to connect to BLE-based accessories.  You can update the permissions at any time from settings.")
+		var fullText = AttributedString("Pangea uses Bluetooth to connect to BLE-based accessories.  You can update the permissions at any time from settings.")
 		if let range = fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue
@@ -559,7 +559,7 @@ struct DeviceOnboarding: View {
 	}
 	
 	func createSiriString() -> AttributedString {
-		var fullText = AttributedString("Meshtastic supports Siri, Shortcuts, and CarPlay so you can send and receive messages hands-free. You can update Siri permissions at any time from settings.")
+		var fullText = AttributedString("Pangea supports Siri, Shortcuts, and CarPlay so you can send and receive messages hands-free. You can update Siri permissions at any time from settings.")
 		if let range = fullText.range(of: "settings") {
 			fullText[range].link = URL(string: UIApplication.openSettingsURLString)!
 			fullText[range].foregroundColor = .blue

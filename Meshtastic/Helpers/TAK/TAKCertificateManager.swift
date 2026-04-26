@@ -1,6 +1,6 @@
 //
 //  TAKCertificateManager.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //

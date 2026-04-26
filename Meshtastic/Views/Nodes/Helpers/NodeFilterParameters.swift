@@ -1,6 +1,6 @@
 //
 //  NodeListFilterParameters.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 9/4/25.
 //

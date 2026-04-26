@@ -1,6 +1,6 @@
 //
 //  WifiNetworkListView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Network selection list shown during Wi-Fi provisioning.
 //  Displays scanned networks sorted by signal strength with security and signal indicators.

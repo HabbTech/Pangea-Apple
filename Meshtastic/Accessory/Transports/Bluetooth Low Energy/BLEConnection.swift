@@ -1,6 +1,6 @@
 //
 //  BLEConnection.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 7/10/25.
 //
@@ -299,11 +299,11 @@ actor BLEConnection: Connection {
 		for service in services where service.uuid == meshtasticServiceCBUUID {
 			foundMeshtasticService = true
 			peripheral.discoverCharacteristics([TORADIO_UUID, FROMRADIO_UUID, FROMNUM_UUID, LOGRADIO_UUID], for: service)
-			Logger.transport.info("🛜  [BLE] Service for Meshtastic discovered by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+			Logger.transport.info("🛜  [BLE] Service for Pangea discovered by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 		}
 		
 		if !foundMeshtasticService {
-			self.continueConnectionProcess(throwing: AccessoryError.discoveryFailed("Meshtastic service not found"))
+			self.continueConnectionProcess(throwing: AccessoryError.discoveryFailed("Pangea service not found"))
 		}
 	}
 	
@@ -320,26 +320,26 @@ actor BLEConnection: Connection {
 		for characteristic in characteristics {
 			switch characteristic.uuid {
 			case TORADIO_UUID:
-				Logger.transport.info("🛜 [BLE] did discover TORADIO characteristic for Meshtastic by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+				Logger.transport.info("🛜 [BLE] did discover TORADIO characteristic for Pangea by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 				TORADIO_characteristic = characteristic
 				
 			case FROMRADIO_UUID:
-				Logger.transport.info("🛜 [BLE] did discover FROMRADIO characteristic for Meshtastic by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+				Logger.transport.info("🛜 [BLE] did discover FROMRADIO characteristic for Pangea by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 				FROMRADIO_characteristic = characteristic
 				self.peripheral.setNotifyValue(true, for: characteristic)
 				
 			case FROMNUM_UUID:
-				Logger.transport.info("🛜 [BLE] did discover FROMNUM (Notify) characteristic for Meshtastic by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+				Logger.transport.info("🛜 [BLE] did discover FROMNUM (Notify) characteristic for Pangea by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 				FROMNUM_characteristic = characteristic
 				self.peripheral.setNotifyValue(true, for: characteristic)
 				
 			case LOGRADIO_UUID:
-				Logger.transport.info("🛜 [BLE] did discover LOGRADIO (Notify) characteristic for Meshtastic by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+				Logger.transport.info("🛜 [BLE] did discover LOGRADIO (Notify) characteristic for Pangea by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 				LOGRADIO_characteristic = characteristic
 				self.peripheral.setNotifyValue(true, for: characteristic)
 				
 			default:
-				Logger.transport.info("🛜 [BLE] did discover unsupported \(characteristic.uuid) characteristic for Meshtastic by \(self.peripheral.name ?? "Unknown", privacy: .public)")
+				Logger.transport.info("🛜 [BLE] did discover unsupported \(characteristic.uuid) characteristic for Pangea by \(self.peripheral.name ?? "Unknown", privacy: .public)")
 			}
 		}
 		

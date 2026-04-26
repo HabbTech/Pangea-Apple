@@ -1,6 +1,6 @@
 //
 //  SecurityVersionNag.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 2024.
 //

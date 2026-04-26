@@ -1,6 +1,6 @@
 //
 //  SaveChannelQRCode.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 7/13/22.
 //

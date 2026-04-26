@@ -1,6 +1,6 @@
 //
 //  AddContactIntent.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 5/13/25.
 //
@@ -10,7 +10,7 @@ import MeshtasticProtobufs
 
 struct AddContactIntent: AppIntent {
 	static let title: LocalizedStringResource = "Add Contact"
-	static let description: IntentDescription = "Takes a Meshtastic contact URL and saves it to the nodes database"
+	static let description: IntentDescription = "Takes a Pangea contact URL and saves it to the nodes database"
 
 	@Parameter(title: "Contact URL", description: "The URL for the node to add")
 	var contactUrl: URL
@@ -38,7 +38,7 @@ struct AddContactIntent: AppIntent {
 			// Return a success result
 			return .result()
 		} else {
-			throw AppIntentErrors.AppIntentError.message("The URL is not a valid Meshtastic contact link")
+			throw AppIntentErrors.AppIntentError.message("The URL is not a valid Pangea contact link")
 		}
 	}
 }

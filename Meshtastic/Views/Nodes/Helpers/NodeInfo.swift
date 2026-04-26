@@ -1,6 +1,6 @@
 //
 //  NodeInfoItem.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/9/23.
 //

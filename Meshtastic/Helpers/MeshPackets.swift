@@ -1,6 +1,6 @@
 //
 //  MeshPackets.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Created by Garth Vander Houwen on 5/27/22.
 //

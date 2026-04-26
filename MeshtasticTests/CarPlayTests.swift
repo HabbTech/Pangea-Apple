@@ -72,7 +72,7 @@ struct CarPlayIntentDonationTests {
 			channel: 0
 		)
 		#expect(intent.conversationIdentifier == "dm-1234567890")
-		#expect(intent.serviceName == "Meshtastic")
+		#expect(intent.serviceName == "Pangea")
 		#expect(intent.content == "Hello mesh")
 		#expect(intent.recipients?.count == 1)
 		#expect(intent.speakableGroupName == nil)
@@ -85,7 +85,7 @@ struct CarPlayIntentDonationTests {
 			channel: 2
 		)
 		#expect(intent.conversationIdentifier == "channel-2")
-		#expect(intent.serviceName == "Meshtastic")
+		#expect(intent.serviceName == "Pangea")
 		#expect(intent.content == "Channel message")
 		#expect(intent.recipients == nil)
 		#expect(intent.speakableGroupName?.spokenPhrase == "Channel 2")
@@ -147,7 +147,7 @@ extension CarPlayIntentDonation {
 				content: content,
 				speakableGroupName: nil,
 				conversationIdentifier: "dm-\(toUserNum)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: me,
 				attachments: nil
 			)
@@ -160,7 +160,7 @@ extension CarPlayIntentDonation {
 				content: content,
 				speakableGroupName: groupName,
 				conversationIdentifier: "channel-\(channel)",
-				serviceName: "Meshtastic",
+				serviceName: "Pangea",
 				sender: me,
 				attachments: nil
 			)

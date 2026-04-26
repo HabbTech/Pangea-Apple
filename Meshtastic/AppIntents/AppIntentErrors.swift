@@ -1,6 +1,6 @@
 //
 //  AppIntentErrors.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 8/11/24.
 //

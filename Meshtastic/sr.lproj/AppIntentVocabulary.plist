@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Пошаљи поруку преко Meshtastic</string>
-				<string>Пошаљи Meshtastic поруку Марку</string>
+				<string>Пошаљи поруку преко Pangea</string>
+				<string>Пошаљи Pangea поруку Марку</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Претражи Meshtastic поруке</string>
-				<string>Пронађи поруке на Meshtastic</string>
+				<string>Претражи Pangea поруке</string>
+				<string>Пронађи поруке на Pangea</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>Означи Meshtastic поруку као прочитану</string>
-				<string>Означи Meshtastic поруке као прочитане</string>
+				<string>Означи Pangea поруку као прочитану</string>
+				<string>Означи Pangea поруке као прочитане</string>
 			</array>
 		</dict>
 	</array>

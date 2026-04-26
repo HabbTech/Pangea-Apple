@@ -1,6 +1,6 @@
 //
 //  SearchForMessagesIntentHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Handles INSearchForMessagesIntent for CarPlay and Siri.
 //  Queries Core Data for messages matching the intent criteria

@@ -1,6 +1,6 @@
 //
 //  CannedMessagesConfigEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/10/22.
 //

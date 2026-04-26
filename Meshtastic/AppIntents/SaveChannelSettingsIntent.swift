@@ -1,6 +1,6 @@
 //
 //  SaveChannelSettingsIntent.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 10/6/24.
 //
@@ -12,7 +12,7 @@ import AppIntents
 struct SaveChannelSettingsIntent: AppIntent {
 	// Define a title and description for the intent
 	static let title: LocalizedStringResource = "Save Channel Settings"
-	static let description: IntentDescription = "Takes a Meshtastic channel URL and saves the channel settings."
+	static let description: IntentDescription = "Takes a Pangea channel URL and saves the channel settings."
 
 	// Define the input for the intent (the channel URL)
 	@Parameter(title: "Channel URL", description: "The URL for the channel settings")
@@ -54,7 +54,7 @@ struct SaveChannelSettingsIntent: AppIntent {
 			// Return a success result
 			return .result()
 		} else {
-			throw AppIntentErrors.AppIntentError.message("The URL is not a valid Meshtastic channel link.")
+			throw AppIntentErrors.AppIntentError.message("The URL is not a valid Pangea channel link.")
 		}
 	}
 }

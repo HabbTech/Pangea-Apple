@@ -1,6 +1,6 @@
 //
 //  WaypointForm.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright Garth Vander Houwen 1/10/23.
 //

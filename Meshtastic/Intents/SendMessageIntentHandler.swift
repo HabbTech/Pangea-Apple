@@ -1,9 +1,9 @@
 //
 //  SendMessageIntentHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Handles INSendMessageIntent for CarPlay and Siri messaging.
-//  Meshtastic supports exactly one destination per message: either a single
+//  Pangea supports exactly one destination per message: either a single
 //  direct-message recipient (a mesh node) or a channel (speakableGroupName).
 //  Multiple recipients are not supported.
 //
@@ -25,7 +25,7 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 			return [.needsValue()]
 		}
 
-		// Meshtastic only supports a single direct-message recipient.
+		// Pangea only supports a single direct-message recipient.
 		if recipients.count > 1 {
 			return [.unsupported(forReason: .noAccount)]
 		}

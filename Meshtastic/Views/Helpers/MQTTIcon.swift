@@ -1,6 +1,6 @@
 //
 //  MQTTIcon.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Matthew Davies on 4/1/24.
 //

@@ -1,6 +1,6 @@
 //
 //  OTAEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/22/25.
 //

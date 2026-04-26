@@ -1,6 +1,6 @@
 //
 //  SerialTransport.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 7/22/25.
 //

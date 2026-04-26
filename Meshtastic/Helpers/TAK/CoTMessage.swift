@@ -1,6 +1,6 @@
 //
 //  CoTMessage.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -185,9 +185,9 @@ struct CoTMessage: Identifiable, Sendable {
 		)
 	}
 
-	// MARK: - Create from Meshtastic TAKPacket
+	// MARK: - Create from Pangea TAKPacket
 
-	/// Convert Meshtastic TAKPacket protobuf to CoT message
+	/// Convert Pangea TAKPacket protobuf to CoT message
 	static func fromTAKPacket(_ takPacket: TAKPacket, deviceUid: String? = nil) -> CoTMessage? {
 		let currentDate = Date()
 		let staleDate = currentDate.addingTimeInterval(10 * 60) // 10 minute stale
@@ -444,10 +444,10 @@ extension String {
 	}
 }
 
-// MARK: - Team/Role Extensions for Meshtastic Protobufs
+// MARK: - Team/Role Extensions for Pangea Protobufs
 
 extension Team {
-	/// Convert Meshtastic Team enum to CoT color name
+	/// Convert Pangea Team enum to CoT color name
 	var cotColorName: String {
 		switch self {
 		case .white: return "White"
@@ -492,7 +492,7 @@ extension Team {
 }
 
 extension MemberRole {
-	/// Convert Meshtastic MemberRole enum to CoT role name
+	/// Convert Pangea MemberRole enum to CoT role name
 	var cotRoleName: String {
 		switch self {
 		case .teamMember: return "Team Member"

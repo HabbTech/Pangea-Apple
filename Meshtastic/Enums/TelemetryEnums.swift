@@ -1,6 +1,6 @@
 //
 //  TelemetryEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 4/9/24.
 //

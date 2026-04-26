@@ -1,6 +1,6 @@
 //
 //  EnvironmentDefaultSeries.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 12/11/24.
 //
@@ -524,7 +524,7 @@ extension MetricsSeriesList {
 	}
 }
 
-// From: https://github.com/meshtastic/Meshtastic-Apple/pull/1013/commits/bc932567c742c8fa9fd30752237b10cb762c5ef3
+// From: https://github.com/meshtastic/Pangea-Apple/pull/1013/commits/bc932567c742c8fa9fd30752237b10cb762c5ef3
 // Set up gradient stops relative to the scale of the temperature chart
 func generateStops(minTemp: Double, maxTemp: Double, tempUnit: UnitTemperature, opacity: Double) -> [Gradient.Stop] {
 	var gradientStops = [Gradient.Stop]()

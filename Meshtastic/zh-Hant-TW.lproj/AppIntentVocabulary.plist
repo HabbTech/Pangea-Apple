@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>透過Meshtastic傳送訊息</string>
-				<string>用Meshtastic傳訊息給小明</string>
+				<string>透過Pangea傳送訊息</string>
+				<string>用Pangea傳訊息給小明</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>搜尋Meshtastic訊息</string>
-				<string>尋找Meshtastic訊息</string>
+				<string>搜尋Pangea訊息</string>
+				<string>尋找Pangea訊息</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>將Meshtastic訊息標記為已讀</string>
-				<string>標記Meshtastic訊息為已讀</string>
+				<string>將Pangea訊息標記為已讀</string>
+				<string>標記Pangea訊息為已讀</string>
 			</array>
 		</dict>
 	</array>

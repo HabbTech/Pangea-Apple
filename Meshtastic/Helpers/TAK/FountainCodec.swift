@@ -1,9 +1,9 @@
 //
 //  FountainCodec.swift
-//  Meshtastic
+//  Pangea
 //
 //  Fountain code (LT codes) implementation for reliable transfer over lossy mesh networks
-//  Based on the ATAK Meshtastic plugin protocol
+//  Based on the ATAK Pangea plugin protocol
 //
 
 import Foundation

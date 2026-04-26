@@ -1,6 +1,6 @@
 //
 //  NetworkEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(C) Garth Vander Houwen 11/25/22.
 //

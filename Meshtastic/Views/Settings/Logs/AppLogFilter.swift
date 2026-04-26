@@ -1,6 +1,6 @@
 //
 //  AppLogFilter.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 6/15/24.
 //

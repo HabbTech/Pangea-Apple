@@ -1,6 +1,6 @@
 //
 //  AccessoryManager+Connect.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 7/24/25.
 //

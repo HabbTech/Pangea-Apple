@@ -1,6 +1,6 @@
 //
 //  LoRaConfig.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Copyright (c) by Garth Vander Houwen 6/11/22.
 //

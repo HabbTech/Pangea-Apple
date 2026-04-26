@@ -1,6 +1,6 @@
 //
 //  RateLimitCountdownView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 5/5/25.
 //

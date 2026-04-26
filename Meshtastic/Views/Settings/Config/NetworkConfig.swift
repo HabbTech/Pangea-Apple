@@ -1,6 +1,6 @@
 //
 //  NetworkConfig.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright (c) Garth Vander Houwen 8/1/2022
 //

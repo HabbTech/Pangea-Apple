@@ -1,6 +1,6 @@
 //
 //  FirmwareFile.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/13/25.
 //

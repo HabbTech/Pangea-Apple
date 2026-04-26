@@ -1,6 +1,6 @@
 //
 //  DetectionSensorEnums.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 10/11/24.
 //

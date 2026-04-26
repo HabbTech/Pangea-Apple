@@ -1,6 +1,6 @@
 //
 //  CompassView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 11/14/25.
 //

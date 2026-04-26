@@ -1,6 +1,6 @@
 //
 //  SetMessageAttributeIntentHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Handles INSetMessageAttributeIntent for CarPlay and Siri.
 //  Marks messages as read or unread in Core Data.
@@ -62,7 +62,7 @@ final class SetMessageAttributeIntentHandler: NSObject, INSetMessageAttributeInt
 					case .unread:
 						message.read = false
 					case .flagged, .unflagged:
-						// Meshtastic does not support message flagging
+						// Pangea does not support message flagging
 						break
 					default:
 						break

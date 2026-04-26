@@ -1,6 +1,6 @@
 //
 //  Messages.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 8/29/23.
 //

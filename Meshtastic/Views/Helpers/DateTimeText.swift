@@ -1,6 +1,6 @@
 //
 //  DateTimeText.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 // Copyright(C) Garth Vander Houwen  5/30/22.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 //
 //  LastHeardText.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Created by Garth Vander Houwen on 5/25/22.
 //

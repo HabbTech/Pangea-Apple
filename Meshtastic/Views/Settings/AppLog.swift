@@ -1,6 +1,6 @@
 //
 //  AppLog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 6/4/24.
 //
@@ -171,7 +171,7 @@ struct AppLog: View {
 			isPresented: $isExporting,
 			document: CsvDocument(emptyCsv: exportString),
 			contentType: .commaSeparatedText,
-			defaultFilename: String("Meshtastic Application Logs"),
+			defaultFilename: String("Pangea Application Logs"),
 			onCompletion: { result in
 				switch result {
 				case .success:
@@ -227,7 +227,7 @@ extension AppLog {
 			/// Create an array of predicates to hold our AND predicates
 			var predicates: [NSPredicate] = []
 			/// Subsystem Predicate
-			let subsystemPredicate = NSPredicate(format: "subsystem IN %@", ["com.apple.SwiftUI", "com.apple.coredata", "gvh.MeshtasticClient"])
+			let subsystemPredicate = NSPredicate(format: "subsystem IN %@", ["com.apple.SwiftUI", "com.apple.coredata", "gvh.PangeaClient"])
 			predicates.append(subsystemPredicate)
 			/// Categories
 			if categories.count > 0 {

@@ -1,6 +1,6 @@
 //
 //  WifiProvisioningView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Full-screen sheet that guides the user through provisioning a mPWRD-OS device
 //  (running nymea-networkmanager) onto Wi-Fi via Bluetooth.

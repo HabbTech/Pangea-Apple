@@ -1,6 +1,6 @@
 //
 //  PowerMetricsLog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Matthew Davies on 1/24/25.
 //

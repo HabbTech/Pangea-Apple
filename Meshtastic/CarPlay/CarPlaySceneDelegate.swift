@@ -1,6 +1,6 @@
 //
 //  CarPlaySceneDelegate.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 4/16/26.
 //
@@ -129,7 +129,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 		guard connected else {
 			let statusItem = CPListItem(
 				text: "Not Connected",
-				detailText: "Open Meshtastic to connect",
+				detailText: "Open Pangea to connect",
 				image: UIImage(systemName: "antenna.radiowaves.left.and.right.slash")
 			)
 			statusItem.isEnabled = false
@@ -149,7 +149,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 		guard connected else {
 			let statusItem = CPListItem(
 				text: "Not Connected",
-				detailText: "Open Meshtastic to connect",
+				detailText: "Open Pangea to connect",
 				image: UIImage(systemName: "antenna.radiowaves.left.and.right.slash")
 			)
 			statusItem.isEnabled = false
@@ -400,7 +400,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 			content: nil,
 			speakableGroupName: nil,
 			conversationIdentifier: conversationId,
-			serviceName: "Meshtastic",
+			serviceName: "Pangea",
 			sender: nil,
 			attachments: nil
 		)
@@ -433,7 +433,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 			content: nil,
 			speakableGroupName: groupName,
 			conversationIdentifier: conversationId,
-			serviceName: "Meshtastic",
+			serviceName: "Pangea",
 			sender: nil,
 			attachments: nil
 		)
@@ -492,7 +492,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 
 		guard let connectedNum = AccessoryManager.shared.activeDeviceNum else { return }
 		let connectedNode = getNodeInfo(id: connectedNum, context: context)
-		let nodeName = connectedNode?.user?.longName ?? "Meshtastic"
+		let nodeName = connectedNode?.user?.longName ?? "Pangea"
 		let nodeShortName = connectedNode?.user?.shortName ?? "?"
 
 		// Fetch latest local stats telemetry

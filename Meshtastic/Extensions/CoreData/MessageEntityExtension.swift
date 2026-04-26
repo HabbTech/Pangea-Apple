@@ -1,6 +1,6 @@
 //
 //  MessageEntityExtension.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Ben on 8/22/23.
 //

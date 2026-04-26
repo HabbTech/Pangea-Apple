@@ -1,6 +1,6 @@
 //
 //  PositionPopover.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 9/17/23.
 //

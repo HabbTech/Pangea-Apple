@@ -1,5 +1,5 @@
 //  ShareContactQRDialog.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by GitHub Copilot on 5/13/25.
 
@@ -60,9 +60,9 @@ struct ShareContactQRDialog: View {
                 .foregroundColor(.secondary)
 			ShareLink("Share QR Code & Link",
 						item: Image(uiImage: qrImage),
-					  subject: Text("Add Meshtastic Node \(node.user.shortName) as a contact"),
+					  subject: Text("Add Pangea Node \(node.user.shortName) as a contact"),
 					  message: Text(qrString),
-					  preview: SharePreview("Add Meshtastic Node \(node.user.shortName) as a contact",
+					  preview: SharePreview("Add Pangea Node \(node.user.shortName) as a contact",
 						image: Image(uiImage: qrImage))
 			)
             Button("Done") { dismiss() }

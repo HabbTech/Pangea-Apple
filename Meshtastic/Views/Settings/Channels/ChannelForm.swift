@@ -1,6 +1,6 @@
 //
 //  ChannelForm.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 3/17/24.
 //

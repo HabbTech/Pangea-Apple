@@ -1,6 +1,6 @@
 //
 //  TelemetryConfig.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Copyright (c) Garth Vander Houwen 6/13/22.
 //

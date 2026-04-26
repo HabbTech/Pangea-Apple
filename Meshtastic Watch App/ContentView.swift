@@ -1,13 +1,13 @@
 //
 //  ContentView.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import SwiftUI
 
-/// Root view of the Meshtastic Watch App.
+/// Root view of the Pangea Watch App.
 ///
 /// Uses a tab-based layout:
 /// 1. **Foxhunt** – nearby nodes list → compass

@@ -1,6 +1,6 @@
 //
 //  TAKConnection.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by niccellular 12/26/25
 //
@@ -26,7 +26,7 @@ actor TAKConnection {
 
 	// Protocol state
 	private var protocolNegotiated = false
-	private let serverUID = "Meshtastic-TAK-Server-\(UUID().uuidString.prefix(8))"
+	private let serverUID = "Pangea-TAK-Server-\(UUID().uuidString.prefix(8))"
 
 	// Keepalive interval (30 seconds)
 	private let keepaliveInterval: UInt64 = 30_000_000_000  // nanoseconds

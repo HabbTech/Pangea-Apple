@@ -1,6 +1,6 @@
 //
 //  TraceRouteEntityExtension.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 12/7/23.
 //

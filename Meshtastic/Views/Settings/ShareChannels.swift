@@ -200,9 +200,9 @@ struct ShareChannels: View {
 
 							ShareLink("Share QR Code & Link",
 										item: Image(uiImage: qrImage),
-										subject: Text("Meshtastic Node \(node?.user?.shortName ?? "????") has shared channels with you"),
+										subject: Text("Pangea Node \(node?.user?.shortName ?? "????") has shared channels with you"),
 										message: Text(channelsUrl),
-										preview: SharePreview("Meshtastic Node \(node?.user?.shortName ?? "????") has shared channels with you",
+										preview: SharePreview("Pangea Node \(node?.user?.shortName ?? "????") has shared channels with you",
 															image: Image(uiImage: qrImage))
 							)
 							.buttonStyle(.bordered)

@@ -1,6 +1,6 @@
 //
 //  URLHandler.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 6/27/25.
 //

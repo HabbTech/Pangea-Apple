@@ -1,6 +1,6 @@
 //
 //  DistanceCompactWidget.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Jake Bordens on 3/14/25.
 //

@@ -1,6 +1,6 @@
 //
 //  Double.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen on 4/25/23.
 //

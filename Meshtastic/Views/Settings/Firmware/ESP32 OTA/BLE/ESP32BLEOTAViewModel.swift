@@ -1,6 +1,6 @@
 //
 //  ESP32BLEOTAViewModel2.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/21/25.
 //

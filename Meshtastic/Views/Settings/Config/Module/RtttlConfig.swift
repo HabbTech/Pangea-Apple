@@ -1,6 +1,6 @@
 //
 //  RingtoneConfig.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 3/25/23.
 //

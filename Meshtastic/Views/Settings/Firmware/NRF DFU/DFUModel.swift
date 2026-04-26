@@ -1,6 +1,6 @@
 //
 //  to.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/2/25.
 //
@@ -32,9 +32,9 @@ class DFUViewModel: NSObject, ObservableObject {
 	var rotatingMessageIndex = -1
 	let rotatingMessages = [
 		"Keep your device close to your phone during the update.",
-		"Meshtastic uses LoRa to communicate without internet or cell service.",
+		"Pangea uses LoRa to communicate without internet or cell service.",
 		"nRF52 devices are more power efficient than ESP32, ideal for solar deployments.",
-		"Meshtastic is 100% GPL V3 open source and community driven.",
+		"Pangea is 100% GPL V3 open source and community driven.",
 		"Do not close the app while the firmware update is in progress.",
 		"All messages on the mesh are encrypted by default.",
 		"Each device supports one connected phone at a time via Bluetooth.",

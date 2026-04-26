@@ -1,6 +1,6 @@
 //
 //  QueryCoreData.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created(c) Garth Vander Houwen 1/16/23.
 //

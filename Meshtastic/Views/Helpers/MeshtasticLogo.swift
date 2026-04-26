@@ -1,6 +1,6 @@
 //
 //  MeshtasticLogo.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 10/6/22.
 //

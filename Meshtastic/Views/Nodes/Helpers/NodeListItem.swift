@@ -1,6 +1,6 @@
 //
 //  NodeListItem.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Garth Vander Houwen on 9/8/23.
 //

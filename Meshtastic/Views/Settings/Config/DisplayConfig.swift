@@ -1,6 +1,6 @@
 //
 //  DeviceSettings.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Copyright (c) Garth Vander Houwen 6/7/22.
 //

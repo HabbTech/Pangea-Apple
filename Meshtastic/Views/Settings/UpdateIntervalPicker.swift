@@ -1,6 +1,6 @@
 //
 //  UpdateIntervalPicker.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 10/4/25.
 //

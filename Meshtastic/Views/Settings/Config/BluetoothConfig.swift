@@ -1,6 +1,6 @@
 //
 //  BluetoothConfig.swift
-//  Meshtastic Apple
+//  Pangea Apple
 //
 //  Copyright (c) Garth Vander Houwen 8/18/22.
 //

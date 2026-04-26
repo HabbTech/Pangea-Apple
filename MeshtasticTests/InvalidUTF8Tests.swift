@@ -82,7 +82,7 @@ struct InvalidUTF8Tests {
 	@Test func fromRadioWithLoneLeadBytesThrows() throws {
 		var user = User()
 		user.id = "!11223344"
-		user.longName = "Meshtastic 37e2" // valid placeholder
+		user.longName = "Pangea 37e2" // valid placeholder
 		user.shortName = "MS"
 
 		var nodeInfo = NodeInfo()
@@ -96,7 +96,7 @@ struct InvalidUTF8Tests {
 		var data = try fromRadio.serializedData()
 
 		// Corrupt: replace "Meshtastic" with "Mesht\xe1\xf3tic" (lone lead multibyte bytes)
-		let validName = Array("Meshtastic 37e2".utf8)
+		let validName = Array("Pangea 37e2".utf8)
 		let corruptName: [UInt8] = Array("Mesht".utf8) + [0xE1, 0xF3] + Array("tic 37e2".utf8)
 
 		let patched = patchProtobufBytes(data: data, find: validName, replace: corruptName)

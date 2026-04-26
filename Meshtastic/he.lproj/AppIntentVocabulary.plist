@@ -9,8 +9,8 @@
 			<string>INSendMessageIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>שלח הודעה ב-Meshtastic</string>
-				<string>שלח הודעת Meshtastic לדוד</string>
+				<string>שלח הודעה ב-Pangea</string>
+				<string>שלח הודעת Pangea לדוד</string>
 			</array>
 		</dict>
 		<dict>
@@ -18,8 +18,8 @@
 			<string>INSearchForMessagesIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>חפש הודעות Meshtastic</string>
-				<string>מצא הודעות ב-Meshtastic</string>
+				<string>חפש הודעות Pangea</string>
+				<string>מצא הודעות ב-Pangea</string>
 			</array>
 		</dict>
 		<dict>
@@ -27,8 +27,8 @@
 			<string>INSetMessageAttributeIntent</string>
 			<key>IntentExamples</key>
 			<array>
-				<string>סמן הודעת Meshtastic כנקראה</string>
-				<string>סמן הודעות Meshtastic כנקראו</string>
+				<string>סמן הודעת Pangea כנקראה</string>
+				<string>סמן הודעות Pangea כנקראו</string>
 			</array>
 		</dict>
 	</array>

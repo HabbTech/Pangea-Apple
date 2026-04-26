@@ -1,6 +1,6 @@
 //
 //  UpdateCoreData.swift
-//  Meshtastic
+//  Pangea
 //
 //  Copyright(c) Garth Vander Houwen 10/3/22.
 

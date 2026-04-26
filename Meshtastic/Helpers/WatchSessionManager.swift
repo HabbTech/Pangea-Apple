@@ -1,8 +1,8 @@
 //
 //  WatchSessionManager.swift
-//  Meshtastic
+//  Pangea
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import Foundation
@@ -19,7 +19,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
 	static let shared = WatchSessionManager()
 
-	private let logger = Logger(subsystem: "gvh.MeshtasticClient", category: "⌚ Watch")
+	private let logger = Logger(subsystem: "gvh.PangeaClient", category: "⌚ Watch")
 	private var session: WCSession?
 
 	override init() {
@@ -37,7 +37,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
 	// MARK: - Public API
 
-	/// Whether a paired Watch with the Meshtastic app installed is available.
+	/// Whether a paired Watch with the Pangea app installed is available.
 	var isWatchAvailable: Bool {
 		guard let session, session.activationState == .activated else { return false }
 		return session.isPaired && session.isWatchAppInstalled

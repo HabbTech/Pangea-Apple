@@ -1,6 +1,6 @@
 //
 //  CircularProgressView.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by jake on 12/18/25.
 //

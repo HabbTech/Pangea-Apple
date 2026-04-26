@@ -1,8 +1,8 @@
 //
 //  DeviceConnectionView.swift
-//  Meshtastic Watch App
+//  Pangea Watch App
 //
-//  Copyright(c) Meshtastic 2025.
+//  Copyright(c) Pangea 2025.
 //
 
 import SwiftUI
@@ -61,7 +61,7 @@ struct DeviceConnectionView: View {
 				.font(.caption2)
 				.foregroundStyle(.secondary)
 		} else {
-			Text("Open Meshtastic on your iPhone to sync node data.")
+			Text("Open Pangea on your iPhone to sync node data.")
 				.font(.caption2)
 				.foregroundStyle(.secondary)
 				.multilineTextAlignment(.center)

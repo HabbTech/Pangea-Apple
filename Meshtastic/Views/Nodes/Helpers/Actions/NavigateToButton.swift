@@ -1,6 +1,6 @@
 //
 //  NavigateToButton.swift
-//  Meshtastic
+//  Pangea
 //
 //  Created by Benjamin Faershtein on 2/8/25.
 //

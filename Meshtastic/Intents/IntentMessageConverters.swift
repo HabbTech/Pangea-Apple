@@ -1,6 +1,6 @@
 //
 //  IntentMessageConverters.swift
-//  Meshtastic
+//  Pangea
 //
 //  Helpers for converting Core Data entities to SiriKit intent objects (INPerson, INMessage)
 //  used by the CarPlay messaging intent handlers.
