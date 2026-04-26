@@ -12,6 +12,7 @@ struct DeviceOnboarding: View {
 		case bluetooth
 		case localNetwork
 		case siri
+		case expertMode
 	}
 	
 	@EnvironmentObject var accessoryManager: AccessoryManager
@@ -19,6 +20,7 @@ struct DeviceOnboarding: View {
 	@State var navigationPath: [SetupGuide] = []
 	@State var locationStatus = LocationsHandler.shared.manager.authorizationStatus
 	@AppStorage("provideLocation") private var provideLocation: Bool = false
+	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 	@AppStorage("provideLocationInterval") private var provideLocationInterval: Int = 30
 	@Environment(\.dismiss) var dismiss
 	/// The Title View
@@ -378,6 +380,65 @@ struct DeviceOnboarding: View {
 		}
 	}
 	
+	var expertModeView: some View {
+		VStack {
+			ScrollView(.vertical) {
+				VStack {
+					Text("Expert Mode")
+						.font(.largeTitle.bold())
+						.multilineTextAlignment(.center)
+						.fixedSize(horizontal: false, vertical: true)
+				}
+				.padding(.horizontal)
+				VStack(alignment: .leading, spacing: 16) {
+					makeRow(
+						icon: "person",
+						title: String(localized: "Standard User"),
+						subtitle: String(localized: "You use Pangea for messaging, sharing locations, and staying connected. You don't need to adjust radio or device settings.")
+					)
+					makeRow(
+						icon: "wrench.and.screwdriver",
+						title: String(localized: "Advanced User"),
+						subtitle: String(localized: "You configure LoRa parameters, MQTT, serial modules, and other device-level settings. You understand mesh networking concepts.")
+					)
+					makeRow(
+						icon: "eye.slash",
+						title: String(localized: "Hidden Options"),
+						subtitle: String(localized: "Some settings are hidden when Expert Mode is off. They are still available — just tucked away to keep the interface clean for everyday use.")
+					)
+					makeRow(
+						icon: "hand.tap",
+						title: String(localized: "Change Anytime"),
+						subtitle: String(localized: "Go to Settings → App Settings to toggle Expert Mode on or off at any time.")
+					)
+					Toggle(isOn: $expertModeEnabled) {
+						Label {
+							Text("I'm an advanced user")
+								.font(.subheadline.weight(.semibold))
+						} icon: {
+							Image(systemName: "bolt.shield")
+						}
+					}
+					.tint(.orange)
+					.padding(.top, 8)
+					.padding(.horizontal, 4)
+				}
+				.padding()
+			}
+			Spacer()
+			Button {
+				Task {
+					await goToNextStep(after: .expertMode)
+				}
+			} label: {
+				Text("Continue")
+					.frame(maxWidth: 400)
+			}
+			.capsuleButtonStyle()
+			.padding(.bottom)
+		}
+	}
+
 	var body: some View {
 		NavigationStack(path: $navigationPath) {
 			welcomeView
@@ -393,6 +454,8 @@ struct DeviceOnboarding: View {
 						localNetworkView
 					case .siri:
 						siriView
+					case .expertMode:
+						expertModeView
 					}
 				}
 		}
@@ -501,6 +564,8 @@ struct DeviceOnboarding: View {
 		case .localNetwork:
 			return .siri
 		case .siri:
+			return .expertMode
+		case .expertMode:
 			return nil
 		}
 	}
