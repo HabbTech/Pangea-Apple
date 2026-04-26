@@ -59,7 +59,7 @@ struct AboutMeshtastic: View {
 					Link("Documentation", destination: URL(string: "https://meshtastic.org/docs/getting-started")!)
 						.font(.title2)
 				}
-				Text("Pangea® Copyright Pangea LLC")
+				Text("Pangea® Copyright HABB")
 					.font(.caption)
 			}
 		}

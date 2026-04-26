@@ -38242,48 +38242,48 @@
         }
       }
     },
-    "Pangea® Copyright Pangea LLC" : {
+    "Pangea® Copyright HABB" : {
       "localizations" : {
         "da" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® er copyright Pangea LLC"
+            "value" : "Pangea® er copyright HABB"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Copyright Pangea LLC"
+            "value" : "Pangea® Copyright HABB"
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Copyright Pangea LLC"
+            "value" : "Pangea® Copyright HABB"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Copyright Pangea LLC"
+            "value" : "Pangea® Copyright HABB"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Copyright Pangea LLC"
+            "value" : "Pangea® Copyright HABB"
           }
         },
         "sr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Ауторска права Pangea LLC"
+            "value" : "Pangea® Ауторска права HABB"
           }
         },
         "zh-Hant-TW" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pangea® Copyright Pangea LLC"
+            "value" : "Pangea® Copyright HABB"
           }
         }
       }
