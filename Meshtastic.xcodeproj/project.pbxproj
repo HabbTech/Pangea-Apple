@@ -2939,14 +2939,14 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Pangea;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Meshtastic needs your location to calculate distance and bearing to mesh nodes during foxhunt.";
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = gvh.MeshtasticClient;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = gvh.PangeaClient;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.7.11;
-				PRODUCT_BUNDLE_IDENTIFIER = gvh.MeshtasticClient.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -2973,14 +2973,14 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Pangea;
 				INFOPLIST_KEY_CFBundleIconName = AppIcon;
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Meshtastic needs your location to calculate distance and bearing to mesh nodes during foxhunt.";
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = gvh.MeshtasticClient;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = gvh.PangeaClient;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.7.11;
-				PRODUCT_BUNDLE_IDENTIFIER = gvh.MeshtasticClient.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;

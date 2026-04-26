@@ -75,6 +75,7 @@
 			<string>org.pangea</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>meshtastic</string>
 				<string>pangea</string>
 			</array>
 		</dict>
