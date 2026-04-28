@@ -80,35 +80,44 @@ struct Settings: View {
 	// MARK: Views
 
 	var radioConfigurationSection: some View {
-		Section("Radio Configuration") {
-			let node = nodes.first(where: { $0.num == preferredNodeNum })
-			if let node,
-				let loRaConfig = node.loRaConfig,
-				let rc = RegionCodes(rawValue: Int(loRaConfig.regionCode)),
-				let user = node.user,
-				!user.isLicensed,
-				rc.dutyCycle > 0 && rc.dutyCycle < 100 {
-				Label {
-					Text("Hourly Duty Cycle")
-				} icon: {
-					Image(systemName: "clock.arrow.circlepath")
-						.symbolRenderingMode(.hierarchical)
-						.foregroundColor(.red)
+		Section(expertModeEnabled ? "Radio Configuration" : "Radio") {
+			if expertModeEnabled {
+				let node = nodes.first(where: { $0.num == preferredNodeNum })
+				if let node,
+					let loRaConfig = node.loRaConfig,
+					let rc = RegionCodes(rawValue: Int(loRaConfig.regionCode)),
+					let user = node.user,
+					!user.isLicensed,
+					rc.dutyCycle > 0 && rc.dutyCycle < 100 {
+					Label {
+						Text("Hourly Duty Cycle")
+					} icon: {
+						Image(systemName: "clock.arrow.circlepath")
+							.symbolRenderingMode(.hierarchical)
+							.foregroundColor(.red)
+					}
+					Text("Your region has a \(rc.dutyCycle)% hourly duty cycle, your radio will stop sending packets when it reaches the hourly limit.")
+						.foregroundColor(.orange)
+						.font(.caption)
+					Text("Limit all periodic broadcast intervals especially telemetry and position. If you need to increase hops, do it on nodes at the edges, not the ones in the middle. MQTT is not advised when you are duty cycle restricted because the gateway node is then doing all the work.")
+						.font(.caption2)
+						.foregroundColor(.gray)
 				}
-				Text("Your region has a \(rc.dutyCycle)% hourly duty cycle, your radio will stop sending packets when it reaches the hourly limit.")
-					.foregroundColor(.orange)
-					.font(.caption)
-				Text("Limit all periodic broadcast intervals especially telemetry and position. If you need to increase hops, do it on nodes at the edges, not the ones in the middle. MQTT is not advised when you are duty cycle restricted because the gateway node is then doing all the work.")
-					.font(.caption2)
-					.foregroundColor(.gray)
 			}
 
-			NavigationLink(value: SettingsNavigationState.lora) {
-				Label {
-					Text("LoRa")
-				} icon: {
-					Image(systemName: "dot.radiowaves.left.and.right")
-						.rotationEffect(.degrees(-90))
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.lora) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("LoRa")
+						} icon: {
+							Image(systemName: "dot.radiowaves.left.and.right")
+								.rotationEffect(.degrees(-90))
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
@@ -121,11 +130,18 @@ struct Settings: View {
 			}
 			.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
-			NavigationLink(value: SettingsNavigationState.security) {
-				Label {
-					Text("Security")
-				} icon: {
-					Image(systemName: "lock.shield")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.security) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Security")
+						} icon: {
+							Image(systemName: "lock.shield")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
@@ -141,7 +157,7 @@ struct Settings: View {
 	}
 
 	var deviceConfigurationSection: some View {
-		Section("Device Configuration") {
+		Section(expertModeEnabled ? "Device Configuration" : "Device") {
 			NavigationLink(value: SettingsNavigationState.user) {
 				Label {
 					Text("User")
@@ -150,19 +166,33 @@ struct Settings: View {
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.bluetooth) {
-				Label {
-					Text("Bluetooth")
-				} icon: {
-					Image(systemName: "antenna.radiowaves.left.and.right")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.bluetooth) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Bluetooth")
+						} icon: {
+							Image(systemName: "antenna.radiowaves.left.and.right")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.device) {
-				Label {
-					Text("Device")
-				} icon: {
-					Image(systemName: "flipphone")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.device) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Device")
+						} icon: {
+							Image(systemName: "flipphone")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
@@ -174,27 +204,48 @@ struct Settings: View {
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.network) {
-				Label {
-					Text("Network")
-				} icon: {
-					Image(systemName: "network")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.network) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Network")
+						} icon: {
+							Image(systemName: "network")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.position) {
-				Label {
-					Text("Position")
-				} icon: {
-					Image(systemName: "location")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.position) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Position")
+						} icon: {
+							Image(systemName: "location")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.power) {
-				Label {
-					Text("Power")
-				} icon: {
-					Image(systemName: "bolt.fill")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.power) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Power")
+						} icon: {
+							Image(systemName: "bolt.fill")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 		}
@@ -212,130 +263,196 @@ struct Settings: View {
 				}
 			}
 
-			if isModuleSupported(.cannedmsgConfig) {
+			if expertModeEnabled && isModuleSupported(.cannedmsgConfig) {
 				NavigationLink(value: SettingsNavigationState.cannedMessages) {
-					Label {
-						Text("Canned Messages")
-					} icon: {
-						Image(systemName: "list.bullet.rectangle.fill")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Canned Messages")
+						} icon: {
+							Image(systemName: "list.bullet.rectangle.fill")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.detectionsensorConfig) {
+			if expertModeEnabled && isModuleSupported(.detectionsensorConfig) {
 				NavigationLink(value: SettingsNavigationState.detectionSensor) {
-					Label {
-						Text("Detection Sensor")
-					} icon: {
-						Image(systemName: "sensor")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Detection Sensor")
+						} icon: {
+							Image(systemName: "sensor")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.extnotifConfig) {
+			if expertModeEnabled && isModuleSupported(.extnotifConfig) {
 				NavigationLink(value: SettingsNavigationState.externalNotification) {
-					Label {
-						Text("External Notification")
-					} icon: {
-						Image(systemName: "megaphone")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("External Notification")
+						} icon: {
+							Image(systemName: "megaphone")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.mqttConfig) {
+			if expertModeEnabled && isModuleSupported(.mqttConfig) {
 				NavigationLink(value: SettingsNavigationState.mqtt) {
-					Label {
-						Text("MQTT")
-					} icon: {
-						Image(systemName: "dot.radiowaves.up.forward")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("MQTT")
+						} icon: {
+							Image(systemName: "dot.radiowaves.up.forward")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.rangetestConfig) {
+			if expertModeEnabled && isModuleSupported(.rangetestConfig) {
 				NavigationLink(value: SettingsNavigationState.rangeTest) {
-					Label {
-						Text("Range Test")
-					} icon: {
-						Image(systemName: "point.3.connected.trianglepath.dotted")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Range Test")
+						} icon: {
+							Image(systemName: "point.3.connected.trianglepath.dotted")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.paxcounterConfig) {
+			if expertModeEnabled && isModuleSupported(.paxcounterConfig) {
 				NavigationLink(value: SettingsNavigationState.paxCounter) {
-					Label {
-						Text("PAX Counter")
-					} icon: {
-						Image(systemName: "figure.walk.motion")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("PAX Counter")
+						} icon: {
+							Image(systemName: "figure.walk.motion")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.extnotifConfig) {
+			if expertModeEnabled && isModuleSupported(.extnotifConfig) {
 				NavigationLink(value: SettingsNavigationState.ringtone) {
-					Label {
-						Text("Ringtone")
-					} icon: {
-						Image(systemName: "music.note.list")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Ringtone")
+						} icon: {
+							Image(systemName: "music.note.list")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.serialConfig) {
+			if expertModeEnabled && isModuleSupported(.serialConfig) {
 				NavigationLink(value: SettingsNavigationState.serial) {
-					Label {
-						Text("Serial")
-					} icon: {
-						Image(systemName: "terminal")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Serial")
+						} icon: {
+							Image(systemName: "terminal")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if isModuleSupported(.storeforwardConfig) {
+			if expertModeEnabled && isModuleSupported(.storeforwardConfig) {
 				NavigationLink(value: SettingsNavigationState.storeAndForward) {
-					Label {
-						Text("Store & Forward")
-					} icon: {
-						Image(systemName: "envelope.arrow.triangle.branch")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Store & Forward")
+						} icon: {
+							Image(systemName: "envelope.arrow.triangle.branch")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			NavigationLink(value: SettingsNavigationState.tak) {
-				Label {
-					Text("TAK Server")
-				} icon: {
-					Image(systemName: "target")
+			if expertModeEnabled {
+				NavigationLink(value: SettingsNavigationState.tak) {
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("TAK Server")
+						} icon: {
+							Image(systemName: "target")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
+					}
 				}
 			}
 
-			if isModuleSupported(.telemetryConfig) {
+			if expertModeEnabled && isModuleSupported(.telemetryConfig) {
 				NavigationLink(value: SettingsNavigationState.telemetry) {
-					Label {
-						Text("Telemetry")
-					} icon: {
-						Image(systemName: "chart.xyaxis.line")
+					VStack(alignment: .leading, spacing: 2) {
+						Label {
+							Text("Telemetry")
+						} icon: {
+							Image(systemName: "chart.xyaxis.line")
+						}
+						Text("Expert Mode")
+							.font(.caption2)
+							.foregroundStyle(.orange)
 					}
 				}
 			}
 
-			if !showsAnyModuleConfiguration {
+			if expertModeEnabled && !showsAnyModuleConfiguration {
 				Text("This node does not support any configurable modules.")
 					.foregroundColor(.secondary)
 			}
 		} header: {
-			Text("Module Configuration")
+			Text(expertModeEnabled ? "Module Configuration" : "Modules")
 		}
 	}
 
 	var loggingSection: some View {
-		Section(header: Text("Logging")) {
-			NavigationLink(value: SettingsNavigationState.debugLogs) {
-				Label {
-					Text("Logs")
-				} icon: {
-					Image(systemName: "scroll")
+		Group {
+			if expertModeEnabled {
+				Section(header: Text("Logging")) {
+					NavigationLink(value: SettingsNavigationState.debugLogs) {
+						VStack(alignment: .leading, spacing: 2) {
+							Label {
+								Text("Logs")
+							} icon: {
+								Image(systemName: "scroll")
+							}
+							Text("Expert Mode")
+								.font(.caption2)
+								.foregroundStyle(.orange)
+						}
+					}
 				}
 			}
 		}
@@ -418,16 +535,14 @@ struct Settings: View {
 							.foregroundColor(.red)
 					}
 				}
-				if expertModeEnabled {
-					NavigationLink(value: SettingsNavigationState.firmwareUpdates) {
-						Label {
-							Text("Firmware Updates")
-						} icon: {
-							Image(systemName: "arrow.up.arrow.down.square")
-						}
+				NavigationLink(value: SettingsNavigationState.firmwareUpdates) {
+					Label {
+						Text("Firmware Updates")
+					} icon: {
+						Image(systemName: "arrow.up.arrow.down.square")
 					}
-					.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 				}
+				.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
 				if !(node?.deviceConfig?.isManaged ?? false) {
 					if accessoryManager.isConnected {
@@ -507,26 +622,13 @@ struct Settings: View {
 							}
 						}
 					}
-					if expertModeEnabled {
-						radioConfigurationSection
-						deviceConfigurationSection
-						moduleConfigurationSection
-						loggingSection
+					radioConfigurationSection
+					deviceConfigurationSection
+					moduleConfigurationSection
+					loggingSection
 #if DEBUG
-						developersSection
+					developersSection
 #endif
-					} else {
-						Section {
-							Label {
-								Text("Advanced radio, device, and module configuration is hidden. Enable Expert Mode in App Settings to unlock.")
-									.font(.caption)
-									.foregroundStyle(.secondary)
-							} icon: {
-								Image(systemName: "wand.and.stars")
-									.foregroundColor(.orange)
-							}
-						}
-					}
 				}
 			}
 			.navigationDestination(for: SettingsNavigationState.self) { destination in
