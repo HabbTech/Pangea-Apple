@@ -21,7 +21,16 @@ struct AppSettings: View {
 	@AppStorage("enableAdministration") private var  enableAdministration: Bool = false
 	@AppStorage("usageDataAndCrashReporting") private var usageDataAndCrashReporting: Bool = true
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
-	
+
+	@StateObject private var powerManager = PowerManager.shared
+
+	private var powerModeBinding: Binding<PowerMode> {
+		Binding(
+			get: { powerManager.selectedMode },
+			set: { powerManager.setSelectedMode($0) }
+		)
+	}
+
 	let autoconnectBinding = Binding<Bool>(get: {
 		return UserDefaults.autoconnectOnDiscovery
 	}, set: { newValue in
@@ -77,6 +86,28 @@ struct AppSettings: View {
 							.presentationDetents([.medium])
 					}
 #endif
+				}
+				Section(header: Text("Battery")) {
+					Picker(selection: powerModeBinding) {
+						ForEach(PowerMode.allCases) { mode in
+							Label(mode.displayName, systemImage: mode.systemImage).tag(mode)
+						}
+					} label: {
+						Label("Power Mode", systemImage: "battery.100")
+					}
+					Text(powerManager.selectedMode.summary)
+						.font(.caption)
+						.foregroundStyle(.secondary)
+					if powerManager.systemLowPowerMode {
+						Label {
+							Text("iOS Low Power Mode is active — bumped to Expedition until it turns off.")
+								.font(.caption)
+								.foregroundStyle(.orange)
+						} icon: {
+							Image(systemName: "battery.25percent")
+								.foregroundColor(.orange)
+						}
+					}
 				}
 				Section(header: Text("Environment")) {
 					VStack(alignment: .leading) {
