@@ -62,7 +62,8 @@ extension AccessoryManager {
 						}
 						
 						if self.shouldAutomaticallyConnectToPreferredPeripheralAfterError, !userRequestedConnectionCancellation,
-						   UserDefaults.autoconnectOnDiscovery, UserDefaults.preferredPeripheralId == newDevice.id.uuidString {
+						   UserDefaults.autoconnectOnDiscovery, PowerManager.shared.allowsBackgroundAutoConnect,
+						   UserDefaults.preferredPeripheralId == newDevice.id.uuidString {
 							Logger.transport.debug("🔎 [Discovery] Found preferred peripheral \(newDevice.name)")
 							self.connectToPreferredDevice(device: newDevice)
 						}

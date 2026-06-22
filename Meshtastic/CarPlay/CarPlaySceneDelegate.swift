@@ -479,6 +479,10 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 
 #if canImport(ActivityKit) && !targetEnvironment(macCatalyst)
 	private func startLiveActivityIfNeeded() {
+		guard PowerManager.shared.allowsLiveActivities else {
+			Logger.services.info("🚗 [CarPlay] Live Activities suppressed by Power Mode")
+			return
+		}
 		guard ActivityAuthorizationInfo().areActivitiesEnabled else {
 			Logger.services.info("🚗 [CarPlay] Live Activities not enabled")
 			return

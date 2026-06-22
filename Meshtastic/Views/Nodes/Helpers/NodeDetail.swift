@@ -251,7 +251,7 @@ struct NodeDetail: View {
 							}
 						}
 					}
-					if node.hasPositions && UserDefaults.environmentEnableWeatherKit
+					if node.hasPositions && UserDefaults.environmentEnableWeatherKit && PowerManager.shared.allowsWeatherKit
 						|| node.hasDataForLatestEnvironmentMetrics(attributes: ["iaq", "temperature", "relativeHumidity", "barometricPressure", "windSpeed", "radiation", "weight", "Distance", "soilTemperature", "soilMoisture"]) {
 						Section("Environment") {
 							VStack(spacing: 0) {

@@ -430,6 +430,10 @@ struct Connect: View {
 #if !targetEnvironment(macCatalyst)
 #if canImport(ActivityKit)
 	func startNodeActivity() {
+		guard PowerManager.shared.allowsLiveActivities else {
+			Logger.services.info("Live Activity suppressed by Power Mode")
+			return
+		}
 		liveActivityStarted = true
 		// 15 Minutes Local Stats Interval
 		let timerSeconds = 900
