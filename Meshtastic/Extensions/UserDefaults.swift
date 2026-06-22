@@ -86,6 +86,7 @@ extension UserDefaults {
 		case lastDeviceAPIUpdate
 		case lastFirmwareAPIUpdate
 		case expertModeEnabled
+		case powerMode
 	}
 
 	func reset() {
@@ -225,6 +226,9 @@ extension UserDefaults {
 
 	@UserDefault(.expertModeEnabled, defaultValue: false)
 	static var expertModeEnabled: Bool
+
+	@UserDefault(.powerMode, defaultValue: .standard)
+	static var powerMode: PowerMode
 }
 
 enum TestIntEnum: Int, Decodable {
