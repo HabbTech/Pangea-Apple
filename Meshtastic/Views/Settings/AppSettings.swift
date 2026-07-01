@@ -13,7 +13,6 @@ struct AppSettings: View {
 	@State var totalDownloadedTileSize = ""
 	@State private var isPresentingCoreDataResetConfirm = false
 	@State private var isPresentingDeleteMapTilesConfirm = false
-	@State private var isPresentingAppIconSheet = false
 	@State private var purgeStaleNodes: Bool = false
 	@State private var showAutoConnect: Bool = false
 	@AppStorage("purgeStaleNodeDays") private var  purgeStaleNodeDays: Double = 0
@@ -73,19 +72,6 @@ struct AppSettings: View {
 						}
 						.tint(.accentColor)
 					}
-#if targetEnvironment(macCatalyst)
-					// App Icon Picker is disabled on macOS Catalyst
-#else
-					Button {
-						isPresentingAppIconSheet.toggle()
-					} label: {
-						Label("App Icon", systemImage: "app")
-					}
-					.sheet(isPresented: $isPresentingAppIconSheet) {
-						AppIconPicker(isPresenting: self.$isPresentingAppIconSheet)
-							.presentationDetents([.medium])
-					}
-#endif
 				}
 				Section(header: Text("Battery")) {
 					Picker(selection: powerModeBinding) {
