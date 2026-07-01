@@ -1,62 +1,77 @@
-# Meshtastic Apple Clients
+# Pangea for Apple
 
-## Overview
+A SwiftUI client for the LoRa mesh — designed for hikers, backcountry travellers, emergency communicators, and anyone else who needs to keep talking when the towers don't. Runs on iOS, iPadOS, macOS, visionOS, and watchOS.
 
-SwiftUI client applications for iOS, iPadOS, macOS, visionOS and watchOS.
+Pangea is a downstream distribution of the open-source LoRa mesh client for Apple platforms. It ships the same core radio stack with a distinct identity, a beginner-safe **Expert Mode**, and a battery-first **Power Mode** system tailored for multi-day off-grid use.
 
 ## Getting Started
 
-This project always uses the latest release version of XCode.
+Requires the latest release of Xcode.
 
 1. Clone the repo.
     ```sh
-    git clone git@github.com:meshtastic/Meshtastic-Apple.git
+    git clone git@github.com:HabbTech/Pangea-Apple.git
     ```
-2. Open the local directory.
+2. Enter the project directory.
     ```sh
-    cd Meshtastic-Apple
+    cd Pangea-Apple
     ```
-3. Set up git hooks to automatically lint the project when you commit changes.
+3. Set up git hooks to lint the project on commit.
     ```sh
     ./scripts/setup-hooks.sh
     ```
-4. Open `Meshtastic.xcworkspace`
+4. Open the Xcode workspace.
     ```sh
     open Meshtastic.xcworkspace
     ```
-5. Build and run the `Meshtastic` target.
+    > The workspace and project files retain their upstream names to keep the shared codebase easy to sync with the maintainer's public releases.
+5. Build and run the primary target on any supported destination.
 
-## Technical Standards
+## Supported Operating Systems
 
-### Supported Operating Systems
+The last two major releases of iOS, iPadOS, and macOS are supported.
 
-The last two major operating system versions are supported on iOS, iPadOS and macOS.
+## What's Distinct About Pangea
 
-### Code Standards
+### Expert Mode
 
-- Use SwiftUI
-- Use SFSymbols for icons
-- Use Core Data for persistence
+Pangea ships an **Expert Mode** toggle in `App Settings`. When off, the settings tree only shows the handful of controls a casual user actually needs (User info, Display, Channels, Share QR Code, Ambient Lighting, Firmware Updates). When on, the tree expands to the full radio/device/module configuration surface and any items gated behind Expert Mode are tagged with an orange `Expert Mode` caption so contributors know they were intentionally hidden.
 
-## Updating Protobufs:
+An informational Expert Mode screen appears once during onboarding — it explains the trade-off and points users at the toggle. Enabling Expert Mode is always a deliberate action taken from Settings.
 
-1. run
+### Power Mode
+
+A three-tier battery profile lives in `App Settings → Battery` and is also reachable from the logo in the top-left corner of every main tab.
+
+| Mode | Behaviour |
+|---|---|
+| **Standard** | All features on. Default. |
+| **Trail** | Smart Position only, cached weather, slower map refresh, lower BLE keep-alive cadence. Best for day trips. |
+| **Expedition** | Continuous GPS off, WeatherKit off, Live Activities off, background auto-connect off. Best for multi-day off-grid trips. |
+
+Pangea watches `ProcessInfo.processInfo.isLowPowerModeEnabled` and temporarily bumps the effective mode up to **Expedition** while iOS's own Low Power Mode is active. The App Settings picker shows an orange indicator during those bumps and reverts to the user's choice when the OS drops out of LPM.
+
+Feature sites (WeatherKit rendering, BLE auto-connect on discovery, CarPlay and node Live Activities) consult a shared `PowerManager` before doing work, so the ceiling is enforced consistently without touching individual feature toggles.
+
+## Updating Protobufs
+
 ```bash
 ./scripts/gen_protos.sh
 ```
-2. Build, test, and commit the changes.
+
+Build, test, and commit the result.
 
 ## Deep Links
 
-The app supports deep links using the `meshtastic:///` URL scheme, for use with shortcuts, intents, and web pages.
+Pangea registers two URL schemes on iOS: the legacy `meshtastic://` scheme (still used by internal navigation and existing shortcuts) and the forward-facing `pangea://` scheme. Both resolve to the same routes.
 
 ### Messages
 
 | URL | Description |
 |-----|-------------|
 | `meshtastic:///messages` | Messages tab |
-| `meshtastic:///messages?channelId={channelId}&messageId={messageId}` | Channel messages (`messageId` is optional) |
-| `meshtastic:///messages?userNum={userNum}&messageId={messageId}` | Direct messages (`messageId` is optional) |
+| `meshtastic:///messages?channelId={channelId}&messageId={messageId}` | Channel messages (`messageId` optional) |
+| `meshtastic:///messages?userNum={userNum}&messageId={messageId}` | Direct messages (`messageId` optional) |
 
 ### Connect
 
@@ -81,11 +96,11 @@ The app supports deep links using the `meshtastic:///` URL scheme, for use with 
 
 ### Settings
 
-Each settings item has an associated deep link. No parameters are supported for settings URLs.
+Each settings entry has a deep link. Parameters are not supported for settings URLs.
 
 | URL | Description |
 |-----|-------------|
-| `meshtastic:///settings/about` | About Meshtastic |
+| `meshtastic:///settings/about` | About Pangea |
 | `meshtastic:///settings/appSettings` | App Settings |
 | `meshtastic:///settings/routes` | Routes |
 | `meshtastic:///settings/routeRecorder` | Route Recorder |
@@ -124,71 +139,69 @@ Each settings item has an associated deep link. No parameters are supported for 
 
 ## CarPlay
 
-The app supports Apple CarPlay for **hands-free mesh messaging** while driving. The CarPlay interface integrates with the iOS messaging system and Siri so that users can send and receive Meshtastic messages without looking at their phone.
+Pangea supports Apple CarPlay for hands-free mesh messaging while driving. The CarPlay interface integrates with the iOS messaging system and Siri so you can send and receive Pangea messages without looking at your phone.
 
 ### Requirements
 
 - iPhone running iOS 16 or later
 - A supported CarPlay head unit or the CarPlay Simulator in Xcode
-- A Meshtastic device connected via Bluetooth, TCP, or serial
-- Siri enabled — the app requests Siri authorization during onboarding and again on subsequent launches
+- A Pangea device connected via Bluetooth, TCP, or serial
+- Siri enabled — Pangea requests Siri authorization during onboarding
 
 ### Interface
 
-The CarPlay screen presents a **two-tab interface**:
+The CarPlay screen presents a two-tab interface:
 
 | Tab | Description |
 |-----|-------------|
 | **Channels** | Lists all active mesh channels |
 | **Direct Messages** | Lists recent and favorite contacts |
 
-When no Meshtastic device is connected, both tabs show a **"Not Connected"** status item with a prompt to open the Meshtastic app.
+When no device is connected, both tabs show a **Not Connected** status item and a prompt to open the app.
 
 #### Channels Tab
 
 Each channel row shows:
-- The channel name (or "Primary Channel" for index 0)
+- The channel name (or `Primary Channel` for index 0)
 - An unread message badge when there are unread messages
-- "Primary" or "Ch N" as detail text
+- `Primary` or `Ch N` as detail text
 
-Tapping a channel row starts a Siri compose session for that channel.
+Tapping a row starts a Siri compose session for that channel.
 
 #### Direct Messages Tab
 
-The Direct Messages tab is divided into two sections:
+Two sections:
 
-- **Favorites** — Nodes marked as favorites (⭐ icon), sorted by last heard
-- **Recent** — All other messageable contacts with history, sorted by last heard (capped at 24 entries)
+- **Favorites** — nodes marked as favorites (⭐), sorted by last heard
+- **Recent** — all other messageable contacts with history, sorted by last heard (capped at 24 entries)
 
 Each contact row shows:
 - Contact name and a person icon
 - Unread message count when applicable
-- Time since last heard (e.g., "Just now", "5m ago", "2h ago", "3d ago")
+- Time since last heard (`Just now`, `5m ago`, `2h ago`, `3d ago`)
 
 ### Siri Voice Commands
 
-Use these Siri voice commands in CarPlay to interact with Meshtastic:
-
 | Voice Command | Example Phrase | Description |
 |---|---|---|
-| Send Message | "Send a message on Meshtastic" | Composes and sends a text message to a contact or channel |
-| Search Messages | "Search Meshtastic messages" | Searches message history |
-| Mark as Read | "Mark Meshtastic message as read" | Marks a conversation as read |
+| Send Message | "Send a message on Pangea" | Composes and sends a text message to a contact or channel |
+| Search Messages | "Search Pangea messages" | Searches message history |
+| Mark as Read | "Mark Pangea message as read" | Marks a conversation as read |
 
 **Limitations:**
-- Messages are limited to **200 bytes** (UTF-8). Siri will not send messages that exceed this limit.
-- Only a **single recipient** per message is supported — no group direct messages.
-- Emoji-only messages and admin messages are excluded from CarPlay.
+- Messages are capped at **200 bytes** (UTF-8). Siri will not send messages that exceed the limit.
+- Only a **single recipient** per message — no group direct messages.
+- Emoji-only and admin messages are excluded from CarPlay.
 
 ### Incoming Message Announcements
 
-When CarPlay is connected and **Announce Notifications** is enabled in iOS Settings → Siri, Siri reads incoming Meshtastic messages aloud. Only non-emoji, non-admin text messages trigger announcements.
+When CarPlay is connected and **Announce Notifications** is on in iOS Settings → Siri, Siri reads incoming messages aloud. Only non-emoji, non-admin text messages trigger announcements.
 
 Up to 50 unread messages that arrived before the CarPlay session started are donated to Siri at connection time so they can be read back on demand.
 
 ### Live Activity
 
-When a Meshtastic device connects during a CarPlay session, a **Dynamic Island / Lock Screen Live Activity** starts automatically (iOS only, not available on macOS). It displays:
+When a device connects during a CarPlay session, a Dynamic Island / Lock Screen Live Activity starts automatically (iOS only, not macOS). It displays:
 
 - Node name and short name
 - Uptime, channel utilization, and air-time TX percentage
@@ -196,7 +209,7 @@ When a Meshtastic device connects during a CarPlay session, a **Dynamic Island /
 - Online and total node counts
 - A 15-minute countdown timer synced with the telemetry reporting interval
 
-The Live Activity ends automatically when CarPlay disconnects.
+The Live Activity ends automatically when CarPlay disconnects — and while Power Mode is set to **Trail** or **Expedition**, or while iOS Low Power Mode is on, the Live Activity is suppressed to save battery.
 
 ### Architecture Notes (For Developers)
 
@@ -204,20 +217,28 @@ The Live Activity ends automatically when CarPlay disconnects.
 |---|---|---|
 | `CarPlaySceneDelegate` | `Meshtastic/CarPlay/CarPlaySceneDelegate.swift` | `CPTemplateApplicationSceneDelegate` that builds and manages the two-tab UI |
 | `CarPlayIntentDonation` | `Meshtastic/CarPlay/CarPlayIntentDonation.swift` | Donates incoming and outgoing `INSendMessageIntent` interactions so conversations appear in CarPlay Messages and Siri can read them aloud |
-| `SendMessageIntentHandler` | `Meshtastic/Intents/SendMessageIntentHandler.swift` | Handles `INSendMessageIntent` — resolves recipients/channels and sends the message over the active transport |
+| `SendMessageIntentHandler` | `Meshtastic/Intents/SendMessageIntentHandler.swift` | Handles `INSendMessageIntent` — resolves recipients/channels and sends over the active transport |
 | `SearchForMessagesIntentHandler` | `Meshtastic/Intents/SearchForMessagesIntentHandler.swift` | Handles `INSearchForMessagesIntent` |
 | `SetMessageAttributeIntentHandler` | `Meshtastic/Intents/SetMessageAttributeIntentHandler.swift` | Handles `INSetMessageAttributeIntent` (mark as read) |
 | `IntentHandler` | `Meshtastic/Intents/IntentHandler.swift` | Routes `INIntent`s to the appropriate handler |
+| `PowerManager` | `Meshtastic/Helpers/PowerManager.swift` | Central source of truth for Power Mode. Feature sites read `allowsWeatherKit`, `allowsLiveActivities`, `allowsBackgroundAutoConnect`, and `locationIntervalFloor` instead of branching on the raw enum. |
 
 The scene delegate subscribes to `AccessoryManager.shared.$isConnected` with a 300 ms debounce and calls `updateSections(_:)` on the existing `CPListTemplate` instances (rather than rebuilding the whole template tree) to minimise flicker during reconnects.
 
 Intent donations are de-duplicated per CarPlay session using an in-memory set to avoid repeated IPC calls to the intents daemon on every list refresh.
 
-
 ## Release Process
 
-For more information on how a new release of Meshtastic is managed, please refer to [RELEASING.md](./RELEASING.md)
+See [RELEASING.md](./RELEASING.md).
+
+## Code Standards
+
+- SwiftUI for all views
+- SF Symbols for icons
+- Core Data for persistence
 
 ## License
 
-This project is licensed under the GPL v3. See the [LICENSE](LICENSE) file for details.
+GPL v3. See the [LICENSE](LICENSE) file for details.
+
+Pangea is a downstream distribution of the open-source LoRa mesh client for Apple platforms. Credit and gratitude to the upstream maintainers whose work made this possible; app-level bugs unique to Pangea should be reported here rather than upstream.
