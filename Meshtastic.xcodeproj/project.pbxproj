@@ -152,7 +152,7 @@
 		AA0005WTCH00000000BF0007 /* NearbyNodesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0007 /* NearbyNodesListView.swift */; };
 		AA0005WTCH00000000BF0008 /* DeviceConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0008 /* DeviceConnectionView.swift */; };
 		AA0005WTCH00000000BF0009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0009 /* Assets.xcassets */; };
-		AA0005WTCH00000000BF0011 /* Meshtastic Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0012 /* Meshtastic Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		AA0005WTCH00000000BF0011 /* Pangea Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0012 /* Pangea Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AA0005WTCH00000000BF0013 /* WatchCircleText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0005WTCH00000000FR0013 /* WatchCircleText.swift */; };
 		AB4622DCF4B1D4115ED00312 /* SendMessageIntentHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FCB3877F157D9011FA5C6CF /* SendMessageIntentHandler.swift */; };
 		B0E4EEF2D2C41A884A5E949C /* SearchForMessagesIntentHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E644AE784C52500A9241481 /* SearchForMessagesIntentHandler.swift */; };
@@ -410,7 +410,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
 			dstSubfolderSpec = 16;
 			files = (
-				AA0005WTCH00000000BF0011 /* Meshtastic Watch App.app in Embed Watch Content */,
+				AA0005WTCH00000000BF0011 /* Pangea Watch App.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -581,7 +581,7 @@
 		AA0005WTCH00000000FR0008 /* DeviceConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceConnectionView.swift; sourceTree = "<group>"; };
 		AA0005WTCH00000000FR0009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA0005WTCH00000000FR0010 /* Meshtastic Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Meshtastic Watch App.entitlements"; sourceTree = "<group>"; };
-		AA0005WTCH00000000FR0012 /* Meshtastic Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Meshtastic Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0005WTCH00000000FR0012 /* Pangea Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Pangea Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0005WTCH00000000FR0013 /* WatchCircleText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCircleText.swift; sourceTree = "<group>"; };
 		B399E8A32B6F486400E4488E /* RetryButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryButton.swift; sourceTree = "<group>"; };
 		B3E905B02B71F7F300654D07 /* TextMessageField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextMessageField.swift; sourceTree = "<group>"; };
@@ -1650,7 +1650,7 @@
 				DDC2E15426CE248E0042C5E4 /* Pangea.app */,
 				DDDE59F429AF163D00490C6C /* WidgetsExtension.appex */,
 				25F5D5C72C4375A8008036E3 /* MeshtasticTests.xctest */,
-				AA0005WTCH00000000FR0012 /* Meshtastic Watch App.app */,
+				AA0005WTCH00000000FR0012 /* Pangea Watch App.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -1955,7 +1955,7 @@
 			);
 			name = "Meshtastic Watch App";
 			productName = "Meshtastic Watch App";
-			productReference = AA0005WTCH00000000FR0012 /* Meshtastic Watch App.app */;
+			productReference = AA0005WTCH00000000FR0012 /* Pangea Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
 		DDC2E15326CE248E0042C5E4 /* Meshtastic */ = {
@@ -2648,7 +2648,7 @@
 				);
 				MARKETING_VERSION = 2.7.11;
 				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient.watchkitapp;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Pangea Watch App";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "watchos watchsimulator";
@@ -2682,7 +2682,7 @@
 				);
 				MARKETING_VERSION = 2.7.11;
 				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient.watchkitapp;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Pangea Watch App";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "watchos watchsimulator";
