@@ -39,7 +39,7 @@
 	<true/>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)gvh.MeshtasticClient</string>
+		<string>$(AppIdentifierPrefix)gvh.PangeaClient</string>
 	</array>
 </dict>
 </plist>

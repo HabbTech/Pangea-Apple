@@ -148,6 +148,9 @@ struct MeshtasticAppleApp: App {
 				appState: appState,
 				router: appState.router
 			)
+			// The AccentColor asset alone doesn't reach every SwiftUI surface, so
+			// tint the scene explicitly to keep the Fossil primary consistent.
+			.tint(Color.pangeaPrimary)
 			.sheet(item: $saveChannelLink
 			) { link in
 				SaveChannelQRCode(
@@ -236,6 +239,7 @@ struct MeshtasticAppleApp: App {
 
 		WindowGroup("Mesh Map", id: "meshmap-window") {
 			MapWindow()
+				.tint(Color.pangeaPrimary)
 				.environment(\.managedObjectContext, persistenceController.container.viewContext)
 				.environmentObject(appState)
 				.environmentObject(accessoryManager)

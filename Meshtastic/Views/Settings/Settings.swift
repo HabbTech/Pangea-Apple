@@ -116,7 +116,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -140,7 +140,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -176,7 +176,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -191,7 +191,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -214,7 +214,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -229,7 +229,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -244,7 +244,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -273,7 +273,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -288,7 +288,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -303,7 +303,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -318,7 +318,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -333,7 +333,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -348,7 +348,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -363,7 +363,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -378,7 +378,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -393,7 +393,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -408,7 +408,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -423,7 +423,7 @@ struct Settings: View {
 						}
 						Text("Expert Mode")
 							.font(.caption2)
-							.foregroundStyle(.orange)
+							.foregroundStyle(Color.pangeaTertiary)
 					}
 				}
 			}
@@ -450,7 +450,7 @@ struct Settings: View {
 							}
 							Text("Expert Mode")
 								.font(.caption2)
-								.foregroundStyle(.orange)
+								.foregroundStyle(Color.pangeaTertiary)
 						}
 					}
 				}
