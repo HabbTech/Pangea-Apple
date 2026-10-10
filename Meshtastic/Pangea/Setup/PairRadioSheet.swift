@@ -42,6 +42,7 @@ struct PairRadioSheet: View {
 struct RadioStatusBanner: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@State private var showPairing = false
+	@State private var isReconnecting = false
 
 	private enum Status {
 		case hidden
@@ -52,7 +53,7 @@ struct RadioStatusBanner: View {
 
 	private var status: Status {
 		if accessoryManager.state == .subscribed { return .hidden }
-		if accessoryManager.isConnecting || accessoryManager.isConnected { return .connecting }
+		if isReconnecting || accessoryManager.isConnecting || accessoryManager.isConnected { return .connecting }
 		return UserDefaults.preferredPeripheralId.isEmpty ? .notPaired : .searching
 	}
 
@@ -62,11 +63,20 @@ struct RadioStatusBanner: View {
 			case .hidden:
 				EmptyView()
 			case .connecting:
-				pill(icon: nil, text: String(localized: "Connecting to your radio…"), action: nil)
+				pill(icon: nil, text: String(localized: "Connecting to your radio…"), action: nil) {}
 			case .searching:
-				pill(icon: "antenna.radiowaves.left.and.right.slash", text: String(localized: "Looking for your radio…"), action: String(localized: "Pair"))
+				pill(icon: "antenna.radiowaves.left.and.right.slash", text: String(localized: "Radio disconnected"), action: String(localized: "Reconnect")) {
+					Task {
+						isReconnecting = true
+						let found = await RadioPairing.reconnect(accessoryManager: accessoryManager)
+						isReconnecting = false
+						if !found { showPairing = true }
+					}
+				}
 			case .notPaired:
-				pill(icon: "antenna.radiowaves.left.and.right", text: String(localized: "No radio paired"), action: String(localized: "Pair Radio"))
+				pill(icon: "antenna.radiowaves.left.and.right", text: String(localized: "No radio paired"), action: String(localized: "Pair Radio")) {
+					showPairing = true
+				}
 			}
 		}
 		.animation(.snappy, value: status == .hidden)
@@ -75,7 +85,7 @@ struct RadioStatusBanner: View {
 		}
 	}
 
-	private func pill(icon: String?, text: String, action: String?) -> some View {
+	private func pill(icon: String?, text: String, action: String?, perform: @escaping () -> Void) -> some View {
 		HStack(spacing: 10) {
 			if let icon {
 				Image(systemName: icon)
@@ -88,7 +98,7 @@ struct RadioStatusBanner: View {
 				.font(.subheadline)
 			if let action {
 				Spacer(minLength: 8)
-				Button(action) { showPairing = true }
+				Button(action, action: perform)
 					.font(.subheadline.bold())
 					.buttonStyle(.borderedProminent)
 					.buttonBorderShape(.capsule)

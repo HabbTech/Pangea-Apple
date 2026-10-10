@@ -208,7 +208,11 @@ struct PairRadioView: View {
 			return String(localized: "Your radio's software is too old for Pangea. Update it from Settings → Firmware Updates after turning on Expert Mode, or contact us for help.")
 		}
 		if text.localizedCaseInsensitiveContains("pair") || text.localizedCaseInsensitiveContains("peer removed") {
+			#if targetEnvironment(macCatalyst)
+			return String(localized: "Your Mac forgot this radio. Open System Settings → Bluetooth, click ⓘ next to the radio, choose Forget This Device, then try again.")
+			#else
 			return String(localized: "Your phone forgot this radio. Open the iPhone Settings app → Bluetooth, tap ⓘ next to the radio, choose Forget This Device, then try again.")
+			#endif
 		}
 		return String(localized: "Make sure the radio is on and nearby.")
 	}
