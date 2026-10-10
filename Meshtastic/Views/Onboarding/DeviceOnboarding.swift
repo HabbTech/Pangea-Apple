@@ -98,11 +98,13 @@ struct DeviceOnboarding: View {
 						title: String(localized: "Incoming Messages"),
 						subtitle: String(localized: "Know right away when someone messages you.")
 					)
+					#if !targetEnvironment(macCatalyst)
 					makeRow(
 						icon: "car.fill",
 						title: String(localized: "Siri & CarPlay"),
 						subtitle: String(localized: "Read and reply to messages hands-free. We'll ask for Siri access next.")
 					)
+					#endif
 					makeRow(
 						icon: "battery.25percent",
 						title: String(localized: "Low Battery"),
@@ -671,7 +673,10 @@ struct DeviceOnboarding: View {
 			Logger.services.info("Skipping Siri permission request while running tests")
 			return
 		}
-
+		#if targetEnvironment(macCatalyst)
+		// No Siri or CarPlay messaging on Mac; the request never calls back there.
+		return
+		#else
 		await withCheckedContinuation { continuation in
 			INPreferences.requestSiriAuthorization { status in
 				switch status {
@@ -685,6 +690,7 @@ struct DeviceOnboarding: View {
 				continuation.resume()
 			}
 		}
+		#endif
 	}
 
 }
