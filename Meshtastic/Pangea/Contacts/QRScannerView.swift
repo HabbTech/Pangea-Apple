@@ -9,6 +9,7 @@ import SwiftUI
 import VisionKit
 import AVFoundation
 
+#if !targetEnvironment(macCatalyst)
 struct QRScannerView: UIViewControllerRepresentable {
 	var onScan: (String) -> Void
 
@@ -59,6 +60,8 @@ struct QRScannerView: UIViewControllerRepresentable {
 	}
 }
 
+#endif
+
 /// Full-screen scanner with a cancel button and a hint.
 struct QRScannerSheet: View {
 	@Environment(\.dismiss) private var dismiss
@@ -68,6 +71,14 @@ struct QRScannerSheet: View {
 	var body: some View {
 		NavigationStack {
 			Group {
+				#if targetEnvironment(macCatalyst)
+				// VisionKit's live scanner doesn't exist on Mac.
+				ContentUnavailableView(
+					"Scanning Isn't Available on Mac",
+					systemImage: "qrcode.viewfinder",
+					description: Text("Paste the person's code or invite link instead.")
+				)
+				#else
 				if cameraAllowed == nil {
 					ProgressView()
 				} else if cameraAllowed == true && QRScannerView.isAvailable {
@@ -83,6 +94,7 @@ struct QRScannerSheet: View {
 						description: Text("Allow camera access for Pangea in the Settings app to scan codes.")
 					)
 				}
+				#endif
 			}
 			.safeAreaInset(edge: .bottom) {
 				Text("Point your camera at a Pangea code")
@@ -97,9 +109,11 @@ struct QRScannerSheet: View {
 					Button("Cancel") { dismiss() }
 				}
 			}
+			#if !targetEnvironment(macCatalyst)
 			.task {
 				cameraAllowed = await AVCaptureDevice.requestAccess(for: .video)
 			}
+			#endif
 		}
 	}
 }
