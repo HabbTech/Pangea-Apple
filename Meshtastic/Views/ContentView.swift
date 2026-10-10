@@ -27,13 +27,19 @@ struct ContentView: View {
 
 	var body: some View {
 		TabView(selection: $appState.router.selectedTab) {
-			Messages(
-				router: appState.router,
-				unreadChannelMessages: $appState.unreadChannelMessages,
-				unreadDirectMessages: $appState.unreadDirectMessages
-			)
+			Group {
+				if expertModeEnabled {
+					Messages(
+						router: appState.router,
+						unreadChannelMessages: $appState.unreadChannelMessages,
+						unreadDirectMessages: $appState.unreadDirectMessages
+					)
+				} else {
+					ChatsView(router: appState.router)
+				}
+			}
 			.tabItem {
-				Label("Messages", systemImage: "message")
+				Label(expertModeEnabled ? "Messages" : "Chats", systemImage: "message")
 			}
 			.tag(NavigationState.Tab.messages)
 			.badge(appState.totalUnreadMessages)
@@ -88,6 +94,19 @@ struct ContentView: View {
 		)
 		.sheet(isPresented: $inbox.isComposing) {
 			NewMessageSheet(router: appState.router)
+		}
+		.sheet(item: $inbox.joinRequest) { invite in
+			JoinGroupSheet(router: appState.router, invite: invite)
+				.presentationDetents([.medium, .large])
+		}
+		.sheet(isPresented: $inbox.isScanning) {
+			QRScannerSheet { value in
+				// Let the scanner finish closing before the next sheet opens.
+				Task {
+					try? await Task.sleep(for: .milliseconds(700))
+					inbox.handle(scanned: value)
+				}
+			}
 		}
 		.onAppear {
 			if UserDefaults.firstLaunch {

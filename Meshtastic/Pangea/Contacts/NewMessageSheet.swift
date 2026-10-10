@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreData
 
 /// App-wide hand-off for invites that arrive from outside the sheet (links, mentions).
 @MainActor
@@ -14,6 +15,13 @@ final class PangeaInbox: ObservableObject {
 
 	@Published var pendingInvite: PangeaCode.Invite?
 	@Published var isComposing = false
+	@Published var isScanning = false
+
+	/// Group waiting for the user to confirm joining, and the stored invite it came from.
+	@Published var joinRequest: GroupInvite?
+	var joinRequestSource: GroupInviteStore.Pending?
+	/// Set after a successful join so the chat list can open the group.
+	@Published var openedGroup: Int32?
 
 	/// Opens New Message with an invite already filled in.
 	func open(_ invite: PangeaCode.Invite) {
@@ -21,15 +29,53 @@ final class PangeaInbox: ObservableObject {
 		isComposing = true
 	}
 
+	/// - Parameter afterDismissal: wait for a sheet that's closing, so SwiftUI can present the next one.
+	func openJoin(_ invite: GroupInvite, pending: GroupInviteStore.Pending? = nil, afterDismissal: Bool = false) {
+		joinRequestSource = pending
+		guard afterDismissal else {
+			joinRequest = invite
+			return
+		}
+		Task {
+			try? await Task.sleep(for: .milliseconds(700))
+			joinRequest = invite
+		}
+	}
+
 	/// Handles pangea:// links. Returns false for anything that isn't ours.
 	@discardableResult
 	func handle(url: URL) -> Bool {
 		guard url.scheme?.lowercased() == PangeaCode.scheme else { return false }
-		if let invite = PangeaCode.invite(from: url) {
+		if let group = GroupInvite(url: url) {
+			openJoin(group)
+		} else if let invite = PangeaCode.invite(from: url) {
 			open(invite)
 		}
 		return true
 	}
+
+	/// Anything scanned or pasted: a person's code or a group invite.
+	@discardableResult
+	func handle(scanned text: String) -> Bool {
+		if let url = URL(string: text), let group = GroupInvite(url: url) {
+			openJoin(group)
+			return true
+		}
+		if let invite = PangeaCode.invite(from: text) {
+			open(invite)
+			return true
+		}
+		return false
+	}
+}
+
+/// Fetch without creating; upstream's getUser inserts a blank user when none exists.
+@MainActor
+func existingUser(num: Int64, context: NSManagedObjectContext) -> UserEntity? {
+	let request = UserEntity.fetchRequest()
+	request.predicate = NSPredicate(format: "num == %lld", num)
+	request.fetchLimit = 1
+	return try? context.fetch(request).first
 }
 
 struct NewMessageSheet: View {
@@ -76,7 +122,10 @@ struct NewMessageSheet: View {
 			}
 			.sheet(isPresented: $showScanner) {
 				QRScannerSheet { value in
-					if let scanned = PangeaCode.invite(from: value) {
+					if let url = URL(string: value), let group = GroupInvite(url: url) {
+						dismiss()
+						inbox.openJoin(group, afterDismissal: true)
+					} else if let scanned = PangeaCode.invite(from: value) {
 						scanError = nil
 						invite = scanned
 						input = scanned.code

@@ -652,7 +652,7 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 				case .zpsApp:
 					Logger.mesh.info("🕸️ MESH PACKET received for Zero Positioning System App UNHANDLED")
 				case .privateApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Private App UNHANDLED UNHANDLED")
+					GroupChats.handlePrivateAppPacket(packet)
 				case .atakForwarder:
 					handleATAKForwarderPacket(packet)
 				case .simulatorApp:

@@ -19,6 +19,7 @@ struct TextMessageField: View {
 	var body: some View {
 		SessionReplayPrivacyView(textAndInputPrivacy: .maskAllInputs) {
 			VStack(spacing: 0) {
+				MentionSuggestionBar(text: $typingMessage, destination: destination)
 				HStack(alignment: .bottom) {
 					if replyMessageId != 0 || isFocused {
 						Button {

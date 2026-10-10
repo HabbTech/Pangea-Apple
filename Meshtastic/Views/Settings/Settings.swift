@@ -625,7 +625,10 @@ struct Settings: View {
 							}
 						}
 					}
-					radioConfigurationSection
+					// Standard mode uses group chats instead of channels, so the whole radio section is expert-only.
+					if expertModeEnabled {
+						radioConfigurationSection
+					}
 					deviceConfigurationSection
 					moduleConfigurationSection
 					loggingSection

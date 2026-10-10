@@ -106,7 +106,7 @@ struct MessageText: View {
 	}
 
 	private var baseMessageContent: some View {
-		let markdownText = LocalizedStringKey(message.displayedMarkdownPayload)
+		let markdownText = LocalizedStringKey(Mentions.linkify(message.displayedMarkdownPayload))
 		return Group {
 			Text(markdownText)
 		}
