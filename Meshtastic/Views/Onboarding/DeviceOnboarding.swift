@@ -13,6 +13,9 @@ struct DeviceOnboarding: View {
 		case localNetwork
 		case siri
 		case expertMode
+		case pairRadio
+		case profile
+		case done
 	}
 	
 	@EnvironmentObject var accessoryManager: AccessoryManager
@@ -41,34 +44,19 @@ struct DeviceOnboarding: View {
 						.padding(.top)
 					VStack(alignment: .leading, spacing: 16) {
 						makeRow(
-							icon: "person.2.shield",
-							title: String(localized: "User Privacy"),
-							subtitle: String(localized: "Pangea does not collect any personal information. We do anonymously collect usage and crash data to improve the app.")
+							icon: "message.badge.waveform",
+							title: String(localized: "Message Without Cell Service"),
+							subtitle: String(localized: "Pangea radios talk to each other directly, so you can chat where phones have no signal.")
 						)
 						makeRow(
-							icon: "bell.badge",
-							title: String(localized: "Message Notifications"),
-							subtitle: String(localized: "Receive notifications for incoming messages and critical alerts even when the app is in the background.")
+							icon: "lock.shield",
+							title: String(localized: "Private by Default"),
+							subtitle: String(localized: "Your chats are encrypted. Pangea does not collect personal information; anonymous usage and crash data helps us improve the app.")
 						)
 						makeRow(
-							icon: "location",
-							title: String(localized: "Track and Share Locations"),
-							subtitle: String(localized: "Share your location in real-time and keep your group coordinated with integrated GPS features.")
-						)
-						makeRow(
-							icon: "custom.bluetooth",
-							title: String(localized: "Bluetooth Connectivity"),
-							subtitle: String(localized: "Connect to your Pangea node via Bluetooth Low Energy for the best messaging experience.")
-						)
-						makeRow(
-							icon: "network",
-							title: String(localized: "Local Network Access"),
-							subtitle: String(localized: "Connect to nodes on your local Wi-Fi network.")
-						)
-						makeRow(
-							icon: "car.fill",
-							title: String(localized: "Siri & CarPlay"),
-							subtitle: String(localized: "Send and receive Pangea messages hands-free using Siri and CarPlay.")
+							icon: "bolt.horizontal.circle",
+							title: String(localized: "Ready in Minutes"),
+							subtitle: String(localized: "We'll pair your radio and set it up for you. No technical settings needed.")
 						)
 					}
 					.padding(.horizontal)
@@ -108,12 +96,12 @@ struct DeviceOnboarding: View {
 					makeRow(
 						icon: "message",
 						title: String(localized: "Incoming Messages"),
-						subtitle: String(localized: "Notifications for channel and direct messages.")
+						subtitle: String(localized: "Know right away when someone messages you.")
 					)
 					makeRow(
-						icon: "flipphone",
-						title: String(localized: "New Nodes"),
-						subtitle: String(localized: "Notifications for newly discovered nodes.")
+						icon: "car.fill",
+						title: String(localized: "Siri & CarPlay"),
+						subtitle: String(localized: "Read and reply to messages hands-free. We'll ask for Siri access next.")
 					)
 					makeRow(
 						icon: "battery.25percent",
@@ -135,6 +123,7 @@ struct DeviceOnboarding: View {
 			Button {
 				Task {
 					await requestNotificationsPermissions()
+					await requestSiriPermissions()
 					await goToNextStep(after: .notifications)
 				}
 			} label: {
@@ -310,6 +299,7 @@ struct DeviceOnboarding: View {
 			Button {
 				Task {
 					await requestBluetoothPermissions()
+					await requestLocalNetworkPermissions()
 					await goToNextStep(after: .bluetooth)
 				}
 			} label: {
@@ -427,6 +417,20 @@ struct DeviceOnboarding: View {
 		}
 	}
 
+	var pairRadioView: some View {
+		VStack(spacing: 0) {
+			PairRadioView {
+				navigationPath.append(.profile)
+			}
+			Button("I don't have my radio yet") {
+				dismiss()
+			}
+			.font(.callout)
+			.padding(.bottom)
+		}
+		.navigationBarBackButtonHidden()
+	}
+
 	var body: some View {
 		NavigationStack(path: $navigationPath) {
 			welcomeView
@@ -444,6 +448,18 @@ struct DeviceOnboarding: View {
 						siriView
 					case .expertMode:
 						expertModeView
+					case .pairRadio:
+						pairRadioView
+					case .profile:
+						SetupProfileView {
+							navigationPath.append(.done)
+						}
+						.navigationBarBackButtonHidden()
+					case .done:
+						SetupDoneView {
+							dismiss()
+						}
+						.navigationBarBackButtonHidden()
 					}
 				}
 		}
@@ -533,27 +549,24 @@ struct DeviceOnboarding: View {
 			if locationStatus == .notDetermined || locationStatus == .restricted || locationStatus == .denied {
 				return .location
 			}
-			if locationStatus == .authorizedWhenInUse || locationStatus == .authorizedAlways {
-				return .bluetooth
-			}
-			return nil
+			return .bluetooth
 		case .notifications:
 			if locationStatus == .notDetermined || locationStatus == .restricted || locationStatus == .denied {
 				return .location
 			}
-			if locationStatus == .authorizedWhenInUse || locationStatus == .authorizedAlways {
-				return .bluetooth
-			}
-			return nil
+			return .bluetooth
 		case .location:
 			return .bluetooth
 		case .bluetooth:
-			return .localNetwork
-		case .localNetwork:
-			return .siri
-		case .siri:
-			return .expertMode
-		case .expertMode:
+			return .pairRadio
+		// No longer part of the standard flow.
+		case .localNetwork, .siri, .expertMode:
+			return .pairRadio
+		case .pairRadio:
+			return .profile
+		case .profile:
+			return .done
+		case .done:
 			return nil
 		}
 	}
@@ -569,7 +582,7 @@ struct DeviceOnboarding: View {
 			locationStatus: locationStatus
 		) {
 			navigationPath.append(next)
-		} else if step == .expertMode {
+		} else if step == .done {
 			dismiss()
 		}
 	}

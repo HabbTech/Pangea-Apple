@@ -504,6 +504,9 @@ struct Settings: View {
 		) {
 			let node = nodes.first(where: { $0.num == preferredNodeNum })
 			List {
+				if !expertModeEnabled {
+					MyRadioSection()
+				}
 				NavigationLink(value: SettingsNavigationState.about) {
 					Label {
 						Text("About Pangea")
@@ -629,6 +632,9 @@ struct Settings: View {
 #if DEBUG
 					developersSection
 #endif
+				}
+				if !expertModeEnabled {
+					ExpertModeHintSection()
 				}
 			}
 			.navigationDestination(for: SettingsNavigationState.self) { destination in

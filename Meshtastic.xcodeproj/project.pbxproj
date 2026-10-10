@@ -926,6 +926,7 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		236CA20D2EE3036A00A47F96 /* images */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (236CA24C2EE3071A00A47F96 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = images; sourceTree = "<group>"; };
 		DD4C11E02E8099C3003F2F2E /* PreferenceKeys */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = PreferenceKeys; sourceTree = "<group>"; };
+		AA0006PNGA000000SETUP001 /* Pangea */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Pangea; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1658,6 +1659,7 @@
 		DDC2E15626CE248E0042C5E4 /* Meshtastic */ = {
 			isa = PBXGroup;
 			children = (
+				AA0006PNGA000000SETUP001 /* Pangea */,
 				234D99E82F96FD3F00D26B89 /* Provisioning */,
 				237AEB8D2E1FE120003B7CE3 /* Accessory */,
 				23148E2E2EE1CCB100F0DB2C /* API */,
@@ -1980,6 +1982,7 @@
 			fileSystemSynchronizedGroups = (
 				236CA20D2EE3036A00A47F96 /* images */,
 				DD4C11E02E8099C3003F2F2E /* PreferenceKeys */,
+				AA0006PNGA000000SETUP001 /* Pangea */,
 			);
 			name = Meshtastic;
 			packageProductDependencies = (
@@ -2866,6 +2869,7 @@
 					SwiftUI,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient;
+				PRODUCT_MODULE_NAME = Meshtastic;
 				PRODUCT_NAME = Pangea;
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -2915,6 +2919,7 @@
 					SwiftUI,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = gvh.PangeaClient;
+				PRODUCT_MODULE_NAME = Meshtastic;
 				PRODUCT_NAME = Pangea;
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
