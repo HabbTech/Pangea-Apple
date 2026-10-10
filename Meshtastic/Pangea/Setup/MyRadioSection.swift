@@ -43,6 +43,15 @@ struct MyRadioSection: View {
 		.sheet(isPresented: $showPairing) {
 			PairRadioSheet()
 		}
+		if accessoryManager.state == .subscribed {
+			Section {
+				MyCodeCard()
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(Color.clear)
+			} footer: {
+				Text("Give this code to friends so they can message you.")
+			}
+		}
 	}
 }
 

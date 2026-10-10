@@ -88,12 +88,6 @@
 		<string>INSearchForMessagesIntent</string>
 		<string>INSetMessageAttributeIntent</string>
 	</array>
-	<key>NSUserActivityTypes</key>
-	<array>
-		<string>INSendMessageIntent</string>
-		<string>INSearchForMessagesIntent</string>
-		<string>INSetMessageAttributeIntent</string>
-	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>
@@ -122,11 +116,9 @@
 		<string>_pangea._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>We use the camera to share channels using a QR Code</string>
+	<string>Pangea uses the camera to scan codes so you can add friends and join chats.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>We use local networking to connect to network-based nodes.</string>
-	<key>NSSiriUsageDescription</key>
-	<string>Siri and Shortcuts let you control Pangea hands-free — send messages, disconnect, restart, or shut down your node with your voice.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>We use your location to display it on the mesh map, show and filter by distance as well as to have GPS coordinates to send to the connected device. Route Recording uses location in the background.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
@@ -139,6 +131,12 @@
 	<string>Siri is used for messaging to send and receive Pangea messages by voice and through CarPlay.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+		<string>INSearchForMessagesIntent</string>
+		<string>INSetMessageAttributeIntent</string>
+	</array>
 	<key>Privacy – Bluetooth Always Usage Description</key>
 	<string>We use bluetooth to connect to nearby Pangea Devices</string>
 	<key>UIApplicationSceneManifest</key>
@@ -147,13 +145,6 @@
 		<true/>
 		<key>UISceneConfigurations</key>
 		<dict>
-			<key>UIWindowSceneSessionRoleApplication</key>
-			<array>
-				<dict>
-					<key>UISceneConfigurationName</key>
-					<string>Default Configuration</string>
-				</dict>
-			</array>
 			<key>CPTemplateApplicationSceneSessionRoleApplication</key>
 			<array>
 				<dict>
@@ -163,6 +154,13 @@
 					<string>CarPlay</string>
 					<key>UISceneDelegateClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+				</dict>
+			</array>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
 				</dict>
 			</array>
 		</dict>

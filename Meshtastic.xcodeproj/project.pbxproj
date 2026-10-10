@@ -927,6 +927,7 @@
 		236CA20D2EE3036A00A47F96 /* images */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (236CA24C2EE3071A00A47F96 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = images; sourceTree = "<group>"; };
 		DD4C11E02E8099C3003F2F2E /* PreferenceKeys */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = PreferenceKeys; sourceTree = "<group>"; };
 		AA0006PNGA000000SETUP001 /* Pangea */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Pangea; sourceTree = "<group>"; };
+		AA0006PNGA000000TESTS001 /* Pangea */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Pangea; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1272,6 +1273,7 @@
 		25F5D5C82C4375A8008036E3 /* MeshtasticTests */ = {
 			isa = PBXGroup;
 			children = (
+				AA0006PNGA000000TESTS001 /* Pangea */,
 				AA00010022E2730EC0060000 /* ConnectViewTests.swift */,
 				DD9C70112E9F2A0000029299 /* DeviceOnboardingTests.swift */,
 				25F5D5D02C4375DF008036E3 /* RouterTests.swift */,
@@ -1937,6 +1939,9 @@
 			);
 			dependencies = (
 				25F5D5CC2C4375A8008036E3 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA0006PNGA000000TESTS001 /* Pangea */,
 			);
 			name = MeshtasticTests;
 			productName = MeshtasticTests;

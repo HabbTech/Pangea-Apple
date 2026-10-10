@@ -182,8 +182,14 @@ struct MeshtasticAppleApp: App {
 				Logger.mesh.debug("Some sort of URL was received \(url, privacy: .public)")
 				self.incomingUrl = url
 				
-				if url.absoluteString.lowercased().contains("meshtastic.org/v/#") {
-					ContactURLHandler.handleContactUrl(url: url, accessoryManager: accessoryManager)
+				if PangeaInbox.shared.handle(url: url) {
+					return
+				} else if url.absoluteString.lowercased().contains("meshtastic.org/v/#") {
+					if let invite = PangeaCode.invite(from: url) {
+						PangeaInbox.shared.open(invite)
+					} else {
+						ContactURLHandler.handleContactUrl(url: url, accessoryManager: accessoryManager)
+					}
 				} else if url.absoluteString.lowercased().contains("meshtastic.org/e/") {
 					// **Consolidated Call for Open URL**
 					handleChannelLinkURL(url, fromActivity: false)

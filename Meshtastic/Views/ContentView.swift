@@ -10,6 +10,7 @@ struct ContentView: View {
 	@State var router: Router
 	@State var isShowingDeviceOnboardingFlow: Bool = false
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
+	@ObservedObject private var inbox = PangeaInbox.shared
 
 	/// Standard mode only has Messages and Settings; anything routed elsewhere lands on Messages.
 	private func keepSelectionVisible() {
@@ -85,6 +86,9 @@ struct ContentView: View {
 				DeviceOnboarding()
 			}
 		)
+		.sheet(isPresented: $inbox.isComposing) {
+			NewMessageSheet(router: appState.router)
+		}
 		.onAppear {
 			if UserDefaults.firstLaunch {
 				isShowingDeviceOnboardingFlow = true
