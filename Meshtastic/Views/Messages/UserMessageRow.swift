@@ -144,17 +144,17 @@ struct UserMessageRow: View {
 						if isCurrentUser && message.receivedACK {
 							// Ack Received
 							if message.realACK {
-								Text("\(ackErrorVal?.display ?? "Empty Ack Error")")
+								Text(DeliveryStatus.text(for: ackErrorVal, isDirect: true))
 									.font(.caption2)
 									.foregroundStyle(ackErrorVal?.color ?? Color.secondary)
 							} else {
-								Text("Acknowledged by another node").font(.caption2).foregroundColor(.orange)
+								Text(DeliveryStatus.relayedOnly).font(.caption2).foregroundColor(.orange)
 							}
 						} else if isCurrentUser && message.ackError == 0 {
 							// Empty Error
-							Text("Waiting to be acknowledged. . .").font(.caption2).foregroundColor(.yellow)
+							Text(DeliveryStatus.waiting).font(.caption2).foregroundColor(.yellow)
 						} else if isCurrentUser && message.ackError > 0 {
-							Text("\(ackErrorVal?.display ?? "Empty Ack Error")").fixedSize(horizontal: false, vertical: true)
+							Text(DeliveryStatus.text(for: ackErrorVal, isDirect: true)).fixedSize(horizontal: false, vertical: true)
 								.foregroundStyle(ackErrorVal?.color ?? Color.red)
 								.font(.caption2)
 						}

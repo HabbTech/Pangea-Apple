@@ -135,6 +135,10 @@ enum RadioAutoConfig {
 			owner.longName = longName
 			owner.shortName = shortName(for: longName)
 			_ = try await accessoryManager.saveUser(config: owner, fromUser: user, toUser: user)
+			// The radio only reports the new name after it reconnects; show it now.
+			user.longName = owner.longName
+			user.shortName = owner.shortName
+			try? accessoryManager.context.save()
 			Logger.services.info("🧭 [Setup] Saved owner name")
 		}
 

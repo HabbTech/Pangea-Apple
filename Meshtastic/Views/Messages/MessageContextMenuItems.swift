@@ -128,7 +128,7 @@ struct MessageContextMenuItems: View {
 				Text("Waiting")
 			} else if isCurrentUser && message.ackError > 0 {
 				let ackErrorVal = RoutingError(rawValue: Int(message.ackError))
-				Text("\(ackErrorVal?.display ?? "Empty Ack Error")")
+				Text(DeliveryStatus.text(for: ackErrorVal, isDirect: { if case .user = tapBackDestination { return true } else { return false } }()))
 					.fixedSize(horizontal: false, vertical: true)
 			}
 

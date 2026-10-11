@@ -15,6 +15,12 @@ struct MyRadioSection: View {
 	@State private var isReconnecting = false
 	@State private var reconnectFailed = false
 	@State private var isPaired = RadioPairing.isPaired
+	@State private var editingName = false
+
+	private var myName: String? {
+		guard let num = accessoryManager.activeDeviceNum else { return nil }
+		return getNodeInfo(id: num, context: accessoryManager.context)?.user?.longName
+	}
 
 	private var pairedDevice: Device? {
 		accessoryManager.activeConnection?.device
@@ -92,6 +98,30 @@ struct MyRadioSection: View {
 			isPaired = RadioPairing.isPaired
 		}
 		if accessoryManager.state == .subscribed {
+			Section {
+				Button {
+					editingName = true
+				} label: {
+					HStack {
+						Text("Name")
+							.foregroundStyle(.primary)
+						Spacer()
+						Text(myName ?? "")
+							.foregroundStyle(.secondary)
+							.lineLimit(1)
+						Image(systemName: "chevron.right")
+							.font(.footnote.weight(.semibold))
+							.foregroundStyle(.tertiary)
+					}
+				}
+			} header: {
+				Text("You")
+			} footer: {
+				Text("The name other people see when you message them.")
+			}
+			.sheet(isPresented: $editingName) {
+				EditNameSheet(currentName: myName ?? "")
+			}
 			Section {
 				MyCodeCard()
 					.listRowInsets(EdgeInsets())

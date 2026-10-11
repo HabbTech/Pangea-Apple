@@ -6,6 +6,7 @@
 import SwiftUI
 
 struct ConnectedDevice: View {
+	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 
 	let deviceConnected: Bool
 	let name: String
@@ -37,6 +38,13 @@ struct ConnectedDevice: View {
 	}
 
 	var body: some View {
+		// Standard mode shows connection problems in the banner above the tab bar instead.
+		if expertModeEnabled {
+			indicator
+		}
+	}
+
+	private var indicator: some View {
 		HStack {
 			if showActivityLights {
 				RXTXIndicatorWidget()
