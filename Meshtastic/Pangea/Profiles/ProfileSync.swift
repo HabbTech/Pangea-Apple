@@ -273,22 +273,30 @@ enum ProfileSync {
 		let store = ProfileStore.shared
 		guard request.photoVersion == store.me.photoVersion, let photo = store.myPhotoData else { return }
 		// One full send per person every few minutes; re-requests for missing pieces are allowed.
-		let isRetry = request.wanted != PhotoRequest.everything
-		if !isRetry, let last = lastPhotoSend[num], Date().timeIntervalSince(last) < 5 * 60 { return }
+		if request.wanted == nil, let last = lastPhotoSend[num], Date().timeIntervalSince(last) < 5 * 60 { return }
 		lastPhotoSend[num] = Date()
 
-		let chunks = PhotoChunk.split(photo).filter { request.wanted & (1 << UInt16($0.index)) != 0 }
-		Task {
+		let chunks = PhotoChunk.split(photo).filter { request.wants($0.index) }
+		// One photo on the air at a time, spaced out so regular messages still get through.
+		let previous = photoSendQueue
+		photoSendQueue = Task {
+			await previous?.value
 			for chunk in chunks {
 				await send(chunk.payload, to: num, route: route, description: "👤 [Profiles] Sent photo piece \(chunk.index + 1)/\(chunk.count)")
-				try? await Task.sleep(for: .milliseconds(1500))
+				try? await Task.sleep(for: .seconds(3))
 			}
 		}
 	}
 
+	private static var photoSendQueue: Task<Void, Never>?
+
 	private static func received(_ chunk: PhotoChunk, from num: Int64) {
 		guard var transfer = transfers[num], transfer.version == chunk.photoVersion else { return }
 		transfer.count = chunk.count
+		if transfer.chunks[chunk.index] == nil {
+			// Still making progress, so don't count earlier retries against it.
+			transfer.attempts = 1
+		}
 		transfer.chunks[chunk.index] = chunk.bytes
 		transfer.lastActivity = Date()
 		if let photo = PhotoChunk.assemble(transfer.chunks, count: chunk.count, version: chunk.photoVersion) {
@@ -297,27 +305,26 @@ enum ProfileSync {
 			Logger.services.info("👤 [Profiles] Photo received")
 		} else {
 			transfers[num] = transfer
+			ProfileStore.shared.downloadProgress[num] = Double(transfer.chunks.count) / Double(chunk.count)
 		}
 	}
 
-	/// Re-asks for missing pieces, and gives up after a few tries.
+	/// Re-asks for missing pieces, and gives up after a few quiet tries.
 	private static func startWatchdog() {
 		guard watchdog == nil else { return }
 		watchdog = Task {
 			while !transfers.isEmpty {
 				try? await Task.sleep(for: .seconds(10))
-				for (num, transfer) in transfers where Date().timeIntervalSince(transfer.lastActivity) > 45 {
-					if transfer.attempts >= 3 {
+				for (num, transfer) in transfers where Date().timeIntervalSince(transfer.lastActivity) > 60 {
+					if transfer.attempts >= 4 {
 						transfers[num] = nil
 						ProfileStore.shared.downloading.remove(num)
+						ProfileStore.shared.downloadProgress[num] = nil
 						continue
 					}
-					var wanted = PhotoRequest.everything
+					var wanted: Set<UInt8>?
 					if let count = transfer.count {
-						wanted = 0
-						for index in 0..<count where transfer.chunks[index] == nil {
-							wanted |= 1 << UInt16(index)
-						}
+						wanted = Set((0..<count).filter { transfer.chunks[$0] == nil })
 					}
 					transfers[num]?.attempts += 1
 					transfers[num]?.lastActivity = Date()

@@ -27,15 +27,15 @@ enum AvatarPalette {
 }
 
 enum PhotoCompressor {
-	/// Fits in 15 radio packets (~30 seconds to download, once).
-	static let limit = 2400
+	/// 256 px, in up to ~70 radio packets: a few minutes to download, once, when asked.
+	static let limit = 12_000
 
 	/// Square and small enough to send over the radio. HEIC holds up far better
-	/// than JPEG at this size: 128 px usually fits where JPEG only managed 64.
+	/// than JPEG at this size, so it's tried first.
 	static func avatarData(from image: UIImage, limit: Int = PhotoCompressor.limit) -> Data? {
 		let side = min(image.size.width, image.size.height)
 		guard side > 0 else { return nil }
-		for pixels in [128, 112, 96, 80, 64, 48] {
+		for pixels in [256, 224, 192, 160, 128, 96] {
 			guard let scaled = square(image, side: side, pixels: pixels) else { continue }
 			for type in [UTType.heic, .jpeg] {
 				for quality in [0.5, 0.4, 0.3] {
@@ -168,7 +168,21 @@ struct PhotoUpdateBanner: View {
 
 	var body: some View {
 		let offers = self.offers
-		if let first = offers.first {
+		if let busy = nums.first(where: { store.downloading.contains($0) }) {
+			let name = store.name(num: busy, radioName: existingUser(num: busy, context: context)?.longName)
+			HStack(spacing: 12) {
+				ProgressView(value: store.downloadProgress[busy] ?? 0)
+					.progressViewStyle(.circular)
+				Text("Getting \(name)'s photo… \(Int((store.downloadProgress[busy] ?? 0) * 100))%")
+					.font(.subheadline)
+					.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			.padding(.horizontal, 16)
+			.padding(.vertical, 10)
+			.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+			.padding(.horizontal)
+			.padding(.top, 4)
+		} else if let first = offers.first {
 			let name = store.name(num: first, radioName: existingUser(num: first, context: context)?.longName)
 			HStack(spacing: 12) {
 				Image(systemName: "person.crop.circle.badge.plus")

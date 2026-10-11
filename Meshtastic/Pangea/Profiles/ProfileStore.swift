@@ -54,6 +54,8 @@ final class ProfileStore: ObservableObject {
 	@Published private(set) var contacts: [Int64: ContactProfile] = [:]
 	/// People whose photo is downloading right now.
 	@Published var downloading: Set<Int64> = []
+	/// 0...1 while a photo downloads.
+	@Published var downloadProgress: [Int64: Double] = [:]
 	/// Profile sheet to show, by node number.
 	@Published var presentedProfile: Int64?
 
@@ -167,6 +169,7 @@ final class ProfileStore: ObservableObject {
 		contacts[num] = profile
 		photoCache[num] = nil
 		downloading.remove(num)
+		downloadProgress[num] = nil
 		save()
 	}
 

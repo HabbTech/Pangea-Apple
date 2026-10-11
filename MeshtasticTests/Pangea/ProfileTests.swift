@@ -42,14 +42,19 @@ struct ProfileWireTests {
 	}
 
 	@Test func requestRoundTrips() {
-		let request = PhotoRequest(photoVersion: 42, wanted: 0b1010)
-		#expect(PhotoRequest(payload: request.payload) == request)
+		let some = PhotoRequest(photoVersion: 42, wanted: [1, 3, 9, 70])
+		#expect(PhotoRequest(payload: some.payload) == some)
+		let all = PhotoRequest(photoVersion: 42)
+		#expect(PhotoRequest(payload: all.payload) == all)
+		#expect(all.wants(77))
+		#expect(!some.wants(2))
 	}
 
 	@Test func photoSplitsAndReassembles() throws {
 		let photo = Data((0..<1100).map { UInt8($0 % 251) })
 		let chunks = PhotoChunk.split(photo)
 		#expect(chunks.count == 7)
+		#expect(PhotoChunk.split(Data(count: PhotoCompressor.limit)).count <= PhotoChunk.maxChunks)
 		#expect(chunks.allSatisfy { $0.payload.count <= PhotoChunk.maxBytes + 10 })
 
 		// Arrive out of order, through the wire format.
@@ -59,10 +64,10 @@ struct ProfileWireTests {
 			received[decoded.index] = decoded.bytes
 		}
 		let version = PangeaWire.hash(photo)
-		#expect(PhotoChunk.assemble(received, count: 7, version: version) == photo)
+		#expect(PhotoChunk.assemble(received, count: UInt8(chunks.count), version: version) == photo)
 
 		received[3] = nil
-		#expect(PhotoChunk.assemble(received, count: 7, version: version) == nil)
+		#expect(PhotoChunk.assemble(received, count: UInt8(chunks.count), version: version) == nil)
 	}
 
 	@Test func corruptPhotoIsRejected() {
@@ -91,9 +96,9 @@ struct ProfileStoreTests {
 		}
 		let data = try #require(PhotoCompressor.avatarData(from: image))
 		#expect(data.count <= PhotoCompressor.limit)
-		#expect(PhotoChunk.split(data).count <= 15)
+		#expect(PhotoChunk.split(data).count <= PhotoChunk.maxChunks)
 		let decoded = try #require(UIImage(data: data))
-		#expect(decoded.size.width >= 96) // sharp enough for the big profile avatar
+		#expect(decoded.size.width >= 192) // close to 256 px for a simple image
 	}
 
 	@Test func namePriorityIsNicknameThenCardThenRadio() throws {

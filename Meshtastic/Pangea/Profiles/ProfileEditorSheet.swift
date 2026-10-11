@@ -8,6 +8,7 @@
 
 import SwiftUI
 import PhotosUI
+import UniformTypeIdentifiers
 import OSLog
 
 struct ProfileEditorSheet: View {
@@ -24,6 +25,8 @@ struct ProfileEditorSheet: View {
 	@State private var isSaving = false
 	@State private var error: String?
 	@State private var showAllEmoji = false
+	@State private var showFileImporter = false
+	@State private var showPhotosPicker = false
 
 	private let originalName: String
 
@@ -63,12 +66,30 @@ struct ProfileEditorSheet: View {
 				Section {
 					VStack(spacing: 14) {
 						MyAvatar(photo: previewPhoto, useSavedPhoto: false, emoji: emoji, color: color, initials: trimmedName.isEmpty ? "" : RadioAutoConfig.shortName(for: trimmedName), size: 110)
+							.dropDestination(for: Data.self) { items, _ in
+								guard let data = items.first else { return false }
+								usePhoto(data)
+								return true
+							}
 						HStack(spacing: 12) {
+							#if targetEnvironment(macCatalyst)
+							// On a Mac most pictures live in Finder, not the Photos library.
+							Menu {
+								Button("Choose File…") { showFileImporter = true }
+								Button("Photos Library…") { showPhotosPicker = true }
+							} label: {
+								Text(hasPhoto ? "Change Photo" : "Add Photo")
+							}
+							.menuStyle(.button)
+							.buttonStyle(.bordered)
+							.buttonBorderShape(.capsule)
+							#else
 							PhotosPicker(selection: $pickerItem, matching: .images) {
 								Text(hasPhoto ? "Change Photo" : "Add Photo")
 							}
 							.buttonStyle(.bordered)
 							.buttonBorderShape(.capsule)
+							#endif
 							if hasPhoto {
 								Button("Remove", role: .destructive) {
 									photo = .some(nil)
@@ -184,23 +205,40 @@ struct ProfileEditorSheet: View {
 					emoji = picked
 				}
 			}
+			.photosPicker(isPresented: $showPhotosPicker, selection: $pickerItem, matching: .images)
+			.fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image]) { result in
+				guard case .success(let url) = result else { return }
+				let access = url.startAccessingSecurityScopedResource()
+				defer { if access { url.stopAccessingSecurityScopedResource() } }
+				if let data = try? Data(contentsOf: url) {
+					usePhoto(data)
+				} else {
+					error = String(localized: "Couldn't open that file. Try a different one.")
+				}
+			}
 			.onChange(of: pickerItem) { _, item in
 				guard let item else { return }
 				Task {
-					guard let data = try? await item.loadTransferable(type: Data.self),
-						  let image = UIImage(data: data),
-						  let small = PhotoCompressor.avatarData(from: image) else {
+					if let data = try? await item.loadTransferable(type: Data.self) {
+						usePhoto(data)
+					} else {
 						error = String(localized: "Couldn't use that photo. Try a different one.")
-						return
 					}
-					error = nil
-					photo = .some(small)
 				}
 			}
 		}
 	}
 
-	private func save() async {
+	private func usePhoto(_ data: Data) {
+		guard let image = UIImage(data: data), let small = PhotoCompressor.avatarData(from: image) else {
+			error = String(localized: "Couldn't use that photo. Try a different one.")
+			return
+		}
+		error = nil
+		photo = .some(small)
+	}
+
+		private func save() async {
 		isSaving = true
 		defer { isSaving = false }
 		if trimmedName != originalName {

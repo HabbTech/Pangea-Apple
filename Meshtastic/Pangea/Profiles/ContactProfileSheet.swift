@@ -61,10 +61,9 @@ struct ContactProfileSheet: View {
 				if profile?.canUpdatePhoto == true || store.downloading.contains(num) {
 					Section {
 						if store.downloading.contains(num) {
-							HStack {
-								Text("Downloading photo…")
-								Spacer()
-								ProgressView()
+							VStack(alignment: .leading, spacing: 8) {
+								Text("Downloading photo… \(Int((store.downloadProgress[num] ?? 0) * 100))%")
+								ProgressView(value: store.downloadProgress[num] ?? 0)
 							}
 						} else if ProfileSync.canRequestPhoto(from: num) {
 							Button("Update Profile Photo") {
@@ -75,7 +74,7 @@ struct ContactProfileSheet: View {
 								.foregroundStyle(.secondary)
 						}
 					} footer: {
-						Text("Photos are small and download over the radio in about a minute.")
+						Text("Photos download over the radio in a few minutes. You can keep chatting while it does.")
 					}
 				}
 

@@ -6,7 +6,7 @@
 //  carry it. Everything rides on PRIVATE_APP, which other Meshtastic apps ignore.
 //
 //  Card     "PGP1" color(1) photoVersion(4) emojiLen(1) emoji nameLen(1) name   ≤ ~115 bytes
-//  Request  "PGQ1" photoVersion(4) wantedMask(2)
+//  Request  "PGQ2" photoVersion(4) [bitmap of wanted chunks; none = all]
 //  Chunk    "PGC1" photoVersion(4) index(1) count(1) bytes
 //
 
@@ -76,16 +76,23 @@ struct ProfileCard: Equatable, Codable {
 
 struct PhotoRequest: Equatable {
 	var photoVersion: UInt32
-	/// Bit i set = please send chunk i.
-	var wanted: UInt16
+	/// Chunk indexes wanted; nil means the whole photo.
+	var wanted: Set<UInt8>?
 
-	static let everything: UInt16 = .max
-
+	/// Bitmap of wanted chunks after the version; no bitmap means everything.
 	var payload: Data {
-		PangeaWire.requestMagic + PangeaWire.bytes(photoVersion) + PangeaWire.bytes(wanted)
+		var data = PangeaWire.requestMagic + PangeaWire.bytes(photoVersion)
+		if let wanted, let highest = wanted.max() {
+			var bitmap = [UInt8](repeating: 0, count: Int(highest) / 8 + 1)
+			for index in wanted {
+				bitmap[Int(index) / 8] |= 1 << (index % 8)
+			}
+			data.append(contentsOf: bitmap)
+		}
+		return data
 	}
 
-	init(photoVersion: UInt32, wanted: UInt16 = PhotoRequest.everything) {
+	init(photoVersion: UInt32, wanted: Set<UInt8>? = nil) {
 		self.photoVersion = photoVersion
 		self.wanted = wanted
 	}
@@ -93,8 +100,24 @@ struct PhotoRequest: Equatable {
 	init?(payload: Data) {
 		guard payload.starts(with: PangeaWire.requestMagic) else { return nil }
 		var reader = PangeaWire.Reader(Data(payload.dropFirst(PangeaWire.requestMagic.count)))
-		guard let version = reader.uint32(), let wanted = reader.uint16() else { return nil }
+		guard let version = reader.uint32() else { return nil }
+		let bitmap = reader.rest()
+		guard bitmap.count <= (PhotoChunk.maxChunks + 7) / 8 else { return nil }
+		var wanted: Set<UInt8>?
+		if !bitmap.isEmpty {
+			var set = Set<UInt8>()
+			for (byteIndex, byte) in bitmap.enumerated() {
+				for bit in 0..<8 where byte & (1 << bit) != 0 {
+					set.insert(UInt8(byteIndex * 8 + bit))
+				}
+			}
+			wanted = set
+		}
 		self.init(photoVersion: version, wanted: wanted)
+	}
+
+	func wants(_ index: UInt8) -> Bool {
+		wanted?.contains(index) ?? true
 	}
 }
 
@@ -105,8 +128,9 @@ struct PhotoChunk: Equatable {
 	var bytes: Data
 
 	/// Leaves room for PKI overhead inside a single LoRa packet.
-	static let maxBytes = 160
-	static let maxChunks = 16
+	static let maxBytes = 180
+	/// 80 × 180 bytes ≈ 14 KB, enough for a 256 px photo.
+	static let maxChunks = 80
 
 	var payload: Data {
 		PangeaWire.chunkMagic + PangeaWire.bytes(photoVersion) + Data([index, count]) + bytes
@@ -150,7 +174,7 @@ struct PhotoChunk: Equatable {
 
 enum PangeaWire {
 	static let cardMagic = Data("PGP1".utf8)
-	static let requestMagic = Data("PGQ1".utf8)
+	static let requestMagic = Data("PGQ2".utf8)
 	static let chunkMagic = Data("PGC1".utf8)
 
 	/// First four bytes of SHA-256, never 0 (0 means "no photo").
