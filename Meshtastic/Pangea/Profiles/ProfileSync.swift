@@ -66,6 +66,7 @@ enum ProfileSync {
 		Task {
 			do {
 				_ = try await RadioAutoConfig.apply(name: name, region: nil, accessoryManager: accessoryManager)
+				pushUpdatedCard()
 			} catch {
 				pendingRadioName = name
 				Logger.services.error("👤 [Profiles] Couldn't apply saved name: \(error.localizedDescription, privacy: .public)")

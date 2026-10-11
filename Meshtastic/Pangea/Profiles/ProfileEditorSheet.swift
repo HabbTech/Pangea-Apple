@@ -22,9 +22,9 @@ struct ProfileEditorSheet: View {
 	/// nil = unchanged, .some(nil) = removed, .some(data) = new photo
 	@State private var photo: Data??
 	@State private var pickerItem: PhotosPickerItem?
-	@State private var isSaving = false
 	@State private var error: String?
 	@State private var showAllEmoji = false
+	@State private var isLoadingPhoto = false
 	@State private var showFileImporter = false
 	@State private var showPhotosPicker = false
 
@@ -66,6 +66,17 @@ struct ProfileEditorSheet: View {
 				Section {
 					VStack(spacing: 14) {
 						MyAvatar(photo: previewPhoto, useSavedPhoto: false, emoji: emoji, color: color, initials: trimmedName.isEmpty ? "" : RadioAutoConfig.shortName(for: trimmedName), size: 110)
+							.overlay {
+								if isLoadingPhoto {
+									ZStack {
+										Circle().fill(.black.opacity(0.35))
+										ProgressView()
+											.controlSize(.large)
+											.tint(.white)
+									}
+									.frame(width: 110, height: 110)
+								}
+							}
 							.dropDestination(for: Data.self) { items, _ in
 								guard let data = items.first else { return false }
 								usePhoto(data)
@@ -192,12 +203,8 @@ struct ProfileEditorSheet: View {
 					Button("Cancel") { dismiss() }
 				}
 				ToolbarItem(placement: .confirmationAction) {
-					if isSaving {
-						ProgressView()
-					} else {
-						Button("Save") { Task { await save() } }
-							.disabled(trimmedName.isEmpty)
-					}
+					Button("Save") { save() }
+						.disabled(trimmedName.isEmpty || isLoadingPhoto)
 				}
 			}
 			.sheet(isPresented: $showAllEmoji) {
@@ -229,38 +236,35 @@ struct ProfileEditorSheet: View {
 		}
 	}
 
+	/// Shrinks the photo off the main thread, with a spinner on the avatar meanwhile.
 	private func usePhoto(_ data: Data) {
-		guard let image = UIImage(data: data), let small = PhotoCompressor.avatarData(from: image) else {
-			error = String(localized: "Couldn't use that photo. Try a different one.")
-			return
-		}
+		isLoadingPhoto = true
 		error = nil
-		photo = .some(small)
+		Task {
+			let small = await Task.detached(priority: .userInitiated) {
+				UIImage(data: data).flatMap { PhotoCompressor.avatarData(from: $0) }
+			}.value
+			isLoadingPhoto = false
+			if let small {
+				photo = .some(small)
+			} else {
+				error = String(localized: "Couldn't use that photo. Try a different one.")
+			}
+		}
 	}
 
-		private func save() async {
-		isSaving = true
-		defer { isSaving = false }
-		if trimmedName != originalName {
-			guard accessoryManager.state == .subscribed else {
-				// Saved here now; the radio gets it the next time it connects.
-				ProfileSync.pendingRadioName = trimmedName
-				store.updateMe(displayName: trimmedName, emoji: emoji, color: color, photo: photo)
-				dismiss()
-				return
-			}
-			ProfileSync.pendingRadioName = nil
-			do {
-				_ = try await RadioAutoConfig.apply(name: trimmedName, region: nil, accessoryManager: accessoryManager)
-			} catch {
-				Logger.services.error("👤 [Profiles] Name change failed: \(error.localizedDescription, privacy: .public)")
-				self.error = String(localized: "Couldn't save your name. Make sure your radio is connected and try again.")
-				return
-			}
-		}
+	private func save() {
+		// Everything is kept on this device first, so nothing is lost if the radio
+		// drops the connection (it restarts to apply a new name).
 		let before = store.me
 		store.updateMe(displayName: trimmedName, emoji: emoji, color: color, photo: photo)
-		if store.me != before && accessoryManager.state == .subscribed {
+		let nameChanged = trimmedName != originalName
+		if nameChanged {
+			ProfileSync.pendingRadioName = trimmedName
+		}
+		if nameChanged && accessoryManager.state == .subscribed {
+			ProfileSync.radioDidConnect()
+		} else if store.me != before && accessoryManager.state == .subscribed {
 			ProfileSync.pushUpdatedCard()
 		}
 		dismiss()
