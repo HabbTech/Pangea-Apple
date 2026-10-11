@@ -24,6 +24,8 @@ struct ProfileEditorSheet: View {
 	@State private var isSaving = false
 	@State private var error: String?
 	@FocusState private var emojiFocused: Bool
+	@State private var typedEmoji = ""
+	@State private var showAllEmoji = false
 
 	private let originalName: String
 
@@ -107,18 +109,23 @@ struct ProfileEditorSheet: View {
 					}
 					.padding(.vertical, 4)
 					HStack {
-						TextField("Or type any emoji", text: $emoji)
+						// Its own text, so the field never rewrites itself mid-typing
+						// (the Mac emoji picker loses input when it does).
+						TextField("Or type any emoji", text: $typedEmoji)
 							.focused($emojiFocused)
-							.onChange(of: emoji) { _, value in
-								// Keep just the last emoji typed; drop letters and numbers.
-								guard let last = value.last else { return }
-								let isEmoji = last.unicodeScalars.contains { $0.properties.isEmojiPresentation || ($0.properties.isEmoji && $0.value > 0xFF) }
-								let cleaned = isEmoji ? String(last) : ""
-								if cleaned != value { emoji = cleaned }
+							.onChange(of: typedEmoji) { _, value in
+								if let found = ProfileEmoji.last(in: value) {
+									emoji = found
+								}
 							}
+						Button("More") { showAllEmoji = true }
+							.buttonStyle(.borderless)
 						if !emoji.isEmpty {
-							Button("Clear") { emoji = "" }
-								.buttonStyle(.borderless)
+							Button("Clear") {
+								emoji = ""
+								typedEmoji = ""
+							}
+							.buttonStyle(.borderless)
 						}
 					}
 				} header: {
@@ -174,6 +181,12 @@ struct ProfileEditorSheet: View {
 						Button("Save") { Task { await save() } }
 							.disabled(trimmedName.isEmpty)
 					}
+				}
+			}
+			.sheet(isPresented: $showAllEmoji) {
+				EmojiPickerSheet { picked in
+					emoji = picked
+					typedEmoji = ""
 				}
 			}
 			.onChange(of: pickerItem) { _, item in

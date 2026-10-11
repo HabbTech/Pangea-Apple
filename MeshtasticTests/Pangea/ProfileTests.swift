@@ -129,3 +129,32 @@ struct ProfileStoreTests {
 		#expect(store.profile(5)?.lastChannel == 2)
 	}
 }
+
+@Suite("Profile emoji")
+struct ProfileEmojiTests {
+
+	@Test func picksTheLastEmojiTyped() {
+		#expect(ProfileEmoji.last(in: "🔥") == "🔥")
+		#expect(ProfileEmoji.last(in: "🏕️🔥") == "🔥")
+		#expect(ProfileEmoji.last(in: "hi 👍🏽 there") == "👍🏽")
+		#expect(ProfileEmoji.last(in: "❤️") == "❤️")
+		#expect(ProfileEmoji.last(in: "🏳️‍🌈") == "🏳️‍🌈")
+		#expect(ProfileEmoji.last(in: "🇺🇸") == "🇺🇸")
+		#expect(ProfileEmoji.last(in: "1️⃣") == "1️⃣")
+	}
+
+	@Test func ignoresPlainText() {
+		#expect(ProfileEmoji.last(in: "") == nil)
+		#expect(ProfileEmoji.last(in: "abc") == nil)
+		#expect(ProfileEmoji.last(in: "123 #*") == nil)
+	}
+
+	@Test func everyBuiltInEmojiIsAccepted() {
+		for (_, items) in ProfileEmoji.sections {
+			for item in items {
+				#expect(ProfileEmoji.last(in: item) == item, "\(item)")
+				#expect(item.utf8.count <= ProfileCard.maxEmojiBytes, "\(item)")
+			}
+		}
+	}
+}
