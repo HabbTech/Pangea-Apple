@@ -16,6 +16,7 @@ struct MyRadioSection: View {
 	@State private var reconnectFailed = false
 	@State private var isPaired = RadioPairing.isPaired
 	@State private var editingName = false
+	@ObservedObject private var profiles = ProfileStore.shared
 
 	private var myName: String? {
 		guard let num = accessoryManager.activeDeviceNum else { return nil }
@@ -25,6 +26,14 @@ struct MyRadioSection: View {
 	private var pairedDevice: Device? {
 		accessoryManager.activeConnection?.device
 			?? accessoryManager.devices.first { $0.id.uuidString == UserDefaults.preferredPeripheralId }
+	}
+
+	private var myRealName: String {
+		profiles.me.displayName.isEmpty ? (myName ?? "") : profiles.me.displayName
+	}
+
+	private var myDisplayName: String {
+		myRealName.isEmpty ? String(localized: "Set Up Your Profile") : myRealName
 	}
 
 	private var radioName: String {
@@ -38,6 +47,34 @@ struct MyRadioSection: View {
 	}
 
 	var body: some View {
+		Section {
+			Button {
+				editingName = true
+			} label: {
+				HStack(spacing: 14) {
+					MyAvatar(initials: myRealName.isEmpty ? "" : RadioAutoConfig.shortName(for: myRealName), size: 56)
+					VStack(alignment: .leading, spacing: 2) {
+						Text(myDisplayName)
+							.font(.headline)
+							.foregroundStyle(myRealName.isEmpty ? Color.accentColor : Color.primary)
+						Text("Photo, name and emoji")
+							.font(.subheadline)
+							.foregroundStyle(.secondary)
+					}
+					Spacer()
+					Image(systemName: "chevron.right")
+						.font(.footnote.weight(.semibold))
+						.foregroundStyle(.tertiary)
+				}
+			}
+		} header: {
+			Text("You")
+		} footer: {
+			Text("Friends using Pangea see your photo and name. Everyone else sees your name.")
+		}
+		.sheet(isPresented: $editingName) {
+			ProfileEditorSheet(currentName: myName ?? profiles.me.displayName)
+		}
 		Section {
 			HStack(spacing: 12) {
 				Image(systemName: accessoryManager.isConnected ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
@@ -98,30 +135,6 @@ struct MyRadioSection: View {
 			isPaired = RadioPairing.isPaired
 		}
 		if accessoryManager.state == .subscribed {
-			Section {
-				Button {
-					editingName = true
-				} label: {
-					HStack {
-						Text("Name")
-							.foregroundStyle(.primary)
-						Spacer()
-						Text(myName ?? "")
-							.foregroundStyle(.secondary)
-							.lineLimit(1)
-						Image(systemName: "chevron.right")
-							.font(.footnote.weight(.semibold))
-							.foregroundStyle(.tertiary)
-					}
-				}
-			} header: {
-				Text("You")
-			} footer: {
-				Text("The name other people see when you message them.")
-			}
-			.sheet(isPresented: $editingName) {
-				EditNameSheet(currentName: myName ?? "")
-			}
 			Section {
 				MyCodeCard()
 					.listRowInsets(EdgeInsets())

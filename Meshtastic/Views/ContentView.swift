@@ -11,6 +11,7 @@ struct ContentView: View {
 	@State var isShowingDeviceOnboardingFlow: Bool = false
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 	@ObservedObject private var inbox = PangeaInbox.shared
+	@ObservedObject private var profiles = ProfileStore.shared
 
 	/// Standard mode only has Messages and Settings; anything routed elsewhere lands on Messages.
 	private func keepSelectionVisible() {
@@ -99,6 +100,11 @@ struct ContentView: View {
 			JoinGroupSheet(router: appState.router, invite: invite)
 				.presentationDetents([.medium, .large])
 		}
+		.sheet(isPresented: Binding(get: { profiles.presentedProfile != nil }, set: { if !$0 { profiles.presentedProfile = nil } })) {
+			if let num = profiles.presentedProfile {
+				ContactProfileSheet(router: appState.router, num: num)
+			}
+		}
 		.sheet(isPresented: $inbox.isScanning) {
 			QRScannerSheet { value in
 				// Let the scanner finish closing before the next sheet opens.
@@ -116,6 +122,9 @@ struct ContentView: View {
 		}
 		.onChange(of: appState.router.selectedTab) {
 			keepSelectionVisible()
+		}
+		.onChange(of: accessoryManager.state) { _, state in
+			if state == .subscribed { ProfileSync.radioDidConnect() }
 		}
 		.onChange(of: expertModeEnabled) {
 			keepSelectionVisible()

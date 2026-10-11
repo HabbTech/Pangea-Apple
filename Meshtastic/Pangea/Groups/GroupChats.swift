@@ -227,6 +227,7 @@ enum GroupChats {
 	/// Called for every PRIVATE_APP packet. Only PKI-encrypted DMs count, so an
 	/// invite can't be broadcast to everyone on a public channel.
 	static func handlePrivateAppPacket(_ packet: MeshPacket) {
+		if ProfileSync.handle(packet) { return }
 		guard case let .decoded(data) = packet.payloadVariant,
 			  packet.pkiEncrypted,
 			  packet.to != UInt32.max,

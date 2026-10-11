@@ -102,11 +102,14 @@ struct UserMessageRow: View {
 				
 				// Node Detail Tap
 				if !isCurrentUser {
-					CircleText(text: message.fromUser?.shortName ?? "?", color: Color(UIColor(hex: UInt32(message.fromUser?.num ?? 0))), circleSize: 50)
+					PangeaAvatar(user: message.fromUser, size: 50)
 						.onTapGesture(count: 2) {
-							if let nodeNum = message.fromUser?.num {
+							if UserDefaults.expertModeEnabled, let nodeNum = message.fromUser?.num {
 								appState.router.navigateToNodeDetail(nodeNum: Int64(nodeNum))
 							}
+						}
+						.onTapGesture {
+							ProfileStore.shared.presentedProfile = message.fromUser?.num
 						}
 						.padding(.all, 5).offset(y: -7)
 				}

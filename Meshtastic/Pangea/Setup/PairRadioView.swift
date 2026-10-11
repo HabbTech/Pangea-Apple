@@ -243,6 +243,7 @@ struct PairRadioView: View {
 		}
 		await MeshPackets.shared.clearCoreDataDatabase(includeRoutes: false)
 		clearNotifications()
+		ProfileStore.shared.resetSentCards()
 		try? await accessoryManager.connect(to: device)
 	}
 

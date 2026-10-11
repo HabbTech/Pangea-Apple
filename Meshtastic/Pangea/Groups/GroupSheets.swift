@@ -189,8 +189,8 @@ struct GroupInviteContent: View {
 				}
 				ForEach(contacts.filter { $0.num != accessoryManager.activeDeviceNum }, id: \.num) { user in
 					HStack {
-						CircleText(text: user.shortName ?? "?", color: Color(UIColor(hex: UInt32(truncatingIfNeeded: user.num))), circleSize: 36)
-						Text(user.longName ?? PangeaCode.code(for: user.num))
+						PangeaAvatar(user: user, size: 36)
+						Text(ProfileStore.shared.name(for: user))
 						Spacer()
 						if sent.contains(user.num) {
 							Label("Sent", systemImage: "checkmark")
@@ -355,8 +355,16 @@ struct GroupChatScreen: View {
 	@State private var showInvite = false
 	@State private var confirmLeave = false
 
+	private var recentSenders: [Int64] {
+		var seen = Set<Int64>()
+		return channel.allPrivateMessages.reversed().prefix(200).compactMap { $0.fromUser?.num }.filter { seen.insert($0).inserted }
+	}
+
 	var body: some View {
 		ChannelMessageList(myInfo: myInfo, channel: channel)
+			.safeAreaInset(edge: .top) {
+				PhotoUpdateBanner(nums: recentSenders)
+			}
 			.toolbar {
 				if !GroupChats.isEveryone(channel) {
 					ToolbarItem(placement: .topBarTrailing) {

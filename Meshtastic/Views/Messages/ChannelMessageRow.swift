@@ -95,11 +95,14 @@ struct ChannelMessageRow: View {
 				if isCurrentUser { Spacer(minLength: 50) }
 				// Node Detail Tap
 				if !isCurrentUser {
-					CircleText(text: message.fromUser?.shortName ?? "?", color: Color(UIColor(hex: UInt32(message.fromUser?.num ?? 0))), circleSize: 50)
+					PangeaAvatar(user: message.fromUser, size: 50)
 						.onTapGesture(count: 2) {
-							if let nodeNum = message.fromUser?.num {
+							if UserDefaults.expertModeEnabled, let nodeNum = message.fromUser?.num {
 								appState.router.navigateToNodeDetail(nodeNum: Int64(nodeNum))
 							}
+						}
+						.onTapGesture {
+							ProfileStore.shared.presentedProfile = message.fromUser?.num
 						}
 						.padding(.all, 5).offset(y: -7)
 				}
@@ -109,7 +112,13 @@ struct ChannelMessageRow: View {
 					
 					// Sender Name Header
 					if !isCurrentUser && message.fromUser != nil {
-						Text("\(message.fromUser?.longName ?? "Unknown".localized ) (\(message.fromUser?.userId ?? "?"))")
+						Group {
+							if UserDefaults.expertModeEnabled {
+								Text("\(message.fromUser?.longName ?? "Unknown".localized ) (\(message.fromUser?.userId ?? "?"))")
+							} else if let sender = message.fromUser {
+								PangeaName(user: sender)
+							}
+						}
 							.font(.caption).foregroundColor(.gray).offset(y: 8)
 					}
 					

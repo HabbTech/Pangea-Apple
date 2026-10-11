@@ -48,6 +48,7 @@ enum RadioPairing {
 		UserDefaults.preferredPeripheralNum = 0
 		await MeshPackets.shared.clearCoreDataDatabase(includeRoutes: false)
 		clearNotifications()
+		ProfileStore.shared.resetSentCards()
 		accessoryManager.startDiscovery()
 		Logger.transport.info("📻 [Pangea] Forgot paired radio")
 	}

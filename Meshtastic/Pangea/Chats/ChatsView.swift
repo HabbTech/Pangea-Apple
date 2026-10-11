@@ -20,6 +20,7 @@ struct ChatsView: View {
 	@ObservedObject var router: Router
 	@ObservedObject private var invites = GroupInviteStore.shared
 	@ObservedObject private var inbox = PangeaInbox.shared
+	@ObservedObject private var profiles = ProfileStore.shared
 
 	@FetchRequest(
 		sortDescriptors: [NSSortDescriptor(keyPath: \UserEntity.lastMessage, ascending: false)],
@@ -150,6 +151,9 @@ struct ChatsView: View {
 		case .dm(let num):
 			if let user = existingUser(num: num, context: context) {
 				UserMessageList(user: user)
+					.safeAreaInset(edge: .top) {
+						PhotoUpdateBanner(nums: [num])
+					}
 			} else {
 				ContentUnavailableView("Chat Not Found", systemImage: "person", description: Text("Connect your radio to see this chat."))
 			}
@@ -235,7 +239,7 @@ enum ChatSummary: Identifiable {
 	var title: String {
 		switch self {
 		case .group(let channel): return GroupChats.displayName(channel)
-		case .dm(let user): return user.longName ?? PangeaCode.code(for: user.num)
+		case .dm(let user): return ProfileStore.shared.name(for: user)
 		}
 	}
 
@@ -313,8 +317,9 @@ struct ChatRow: View {
 				return String(localized: "Say hello")
 			}
 		}
-		if case .group = chat, let sender = message.fromUser?.shortName, !sender.isEmpty {
-			return "\(sender): \(text)"
+		if case .group = chat, let sender = message.fromUser {
+			let name = ProfileStore.shared.name(for: sender).split(separator: " ").first.map(String.init) ?? ""
+			if !name.isEmpty { return "\(name): \(text)" }
 		}
 		return text
 	}
@@ -329,7 +334,7 @@ struct ChatRow: View {
 				.frame(width: 46, height: 46)
 				.background(GroupChats.isEveryone(channel) ? Color.pangeaTertiary : Color.accentColor, in: Circle())
 		case .dm(let user):
-			CircleText(text: user.shortName ?? "?", color: Color(UIColor(hex: UInt32(truncatingIfNeeded: user.num))), circleSize: 46)
+			PangeaAvatar(user: user, size: 46)
 		}
 	}
 }
@@ -341,7 +346,7 @@ struct InviteRow: View {
 	var onDecline: () -> Void
 
 	private var sender: String {
-		existingUser(num: pending.fromNum, context: accessoryManager.context)?.longName ?? PangeaCode.code(for: pending.fromNum)
+		ProfileStore.shared.name(num: pending.fromNum, radioName: existingUser(num: pending.fromNum, context: accessoryManager.context)?.longName)
 	}
 
 	var body: some View {

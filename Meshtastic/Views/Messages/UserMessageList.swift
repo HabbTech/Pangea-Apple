@@ -156,10 +156,16 @@ struct UserMessageList: View {
 				}
 			}
 			ToolbarItem(placement: .principal) {
-				HStack {
-					CircleText(text: user.shortName ?? "?", color: Color(UIColor(hex: UInt32(user.num))), circleSize: 44)
-					Text(user.longName ?? "Unknown").font(.headline)
+				Button {
+					ProfileStore.shared.presentedProfile = user.num
+				} label: {
+					HStack {
+						PangeaAvatar(user: user, size: 44)
+						PangeaName(user: user).font(.headline)
+					}
 				}
+				.buttonStyle(.plain)
+				.accessibilityHint("Shows their profile")
 			}
 			ToolbarItem(placement: .navigationBarTrailing) {
 				ZStack {

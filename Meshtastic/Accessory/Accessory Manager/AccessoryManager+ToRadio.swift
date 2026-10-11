@@ -376,6 +376,7 @@ extension AccessoryManager {
 					do {
 						try context.save()
 						Logger.data.info("💾 Saved a new sent message from \(self.activeDeviceNum?.toHex() ?? "0", privacy: .public) to \(toUserNum.toHex(), privacy: .public)")
+						Task { @MainActor in ProfileSync.didSendMessage(toUserNum: toUserNum, channel: channel) }
 						// Donate outgoing message to SiriKit for CarPlay
 						if !isEmoji {
 							#if os(iOS)
