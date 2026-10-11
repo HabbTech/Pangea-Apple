@@ -5,7 +5,7 @@
 //  What Pangea users share about themselves, and the small binary messages that
 //  carry it. Everything rides on PRIVATE_APP, which other Meshtastic apps ignore.
 //
-//  Card     "PGP1" color(1) photoVersion(4) emojiLen(1) emoji nameLen(1) name   ≤ ~90 bytes
+//  Card     "PGP1" color(1) photoVersion(4) emojiLen(1) emoji nameLen(1) name   ≤ ~115 bytes
 //  Request  "PGQ1" photoVersion(4) wantedMask(2)
 //  Chunk    "PGC1" photoVersion(4) index(1) count(1) bytes
 //
@@ -21,7 +21,8 @@ struct ProfileCard: Equatable, Codable {
 	var photoVersion: UInt32
 
 	static let maxNameBytes = 64
-	static let maxEmojiBytes = 16
+	/// Room for skin-tone pairs like 🧑🏻‍🤝‍🧑🏿.
+	static let maxEmojiBytes = 40
 
 	static func clamp(_ text: String, bytes: Int) -> String {
 		var value = text

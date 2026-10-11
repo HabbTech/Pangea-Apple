@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import ImageIO
+import UniformTypeIdentifiers
 
 enum AvatarPalette {
 	static let colors: [Color] = [
@@ -25,26 +27,46 @@ enum AvatarPalette {
 }
 
 enum PhotoCompressor {
-	/// Square, tiny, and small enough to send in a handful of radio packets.
-	static func avatarData(from image: UIImage, limit: Int = 1200) -> Data? {
+	/// Fits in 15 radio packets (~30 seconds to download, once).
+	static let limit = 2400
+
+	/// Square and small enough to send over the radio. HEIC holds up far better
+	/// than JPEG at this size: 128 px usually fits where JPEG only managed 64.
+	static func avatarData(from image: UIImage, limit: Int = PhotoCompressor.limit) -> Data? {
 		let side = min(image.size.width, image.size.height)
 		guard side > 0 else { return nil }
-		for pixels in [64, 56, 48, 40, 32] {
-			let format = UIGraphicsImageRendererFormat()
-			format.scale = 1
-			let size = CGSize(width: pixels, height: pixels)
-			let scaled = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-				let scale = CGFloat(pixels) / side
-				let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-				image.draw(in: CGRect(x: (size.width - drawSize.width) / 2, y: (size.height - drawSize.height) / 2, width: drawSize.width, height: drawSize.height))
-			}
-			for quality in [0.6, 0.5, 0.4, 0.3] {
-				if let data = scaled.jpegData(compressionQuality: quality), data.count <= limit {
-					return data
+		for pixels in [128, 112, 96, 80, 64, 48] {
+			guard let scaled = square(image, side: side, pixels: pixels) else { continue }
+			for type in [UTType.heic, .jpeg] {
+				for quality in [0.5, 0.4, 0.3] {
+					if let data = encode(scaled, type: type, quality: quality), data.count <= limit {
+						return data
+					}
 				}
 			}
 		}
 		return nil
+	}
+
+	private static func square(_ image: UIImage, side: CGFloat, pixels: Int) -> CGImage? {
+		let format = UIGraphicsImageRendererFormat()
+		format.scale = 1
+		format.opaque = true
+		let size = CGSize(width: pixels, height: pixels)
+		// Drawing the UIImage applies its orientation, so phone photos come out upright.
+		return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+			let scale = CGFloat(pixels) / side
+			let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+			image.draw(in: CGRect(x: (size.width - drawSize.width) / 2, y: (size.height - drawSize.height) / 2, width: drawSize.width, height: drawSize.height))
+		}.cgImage
+	}
+
+	private static func encode(_ image: CGImage, type: UTType, quality: Double) -> Data? {
+		let data = NSMutableData()
+		guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
+		CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+		guard CGImageDestinationFinalize(destination), data.length > 0 else { return nil }
+		return data as Data
 	}
 }
 

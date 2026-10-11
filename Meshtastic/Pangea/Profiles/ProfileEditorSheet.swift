@@ -23,8 +23,6 @@ struct ProfileEditorSheet: View {
 	@State private var pickerItem: PhotosPickerItem?
 	@State private var isSaving = false
 	@State private var error: String?
-	@FocusState private var emojiFocused: Bool
-	@State private var typedEmoji = ""
 	@State private var showAllEmoji = false
 
 	private let originalName: String
@@ -37,6 +35,12 @@ struct ProfileEditorSheet: View {
 		_name = State(initialValue: me.displayName.isEmpty ? currentName : me.displayName)
 		_emoji = State(initialValue: me.emoji)
 		_color = State(initialValue: me.color)
+	}
+
+	/// The suggestions, with a pick from the full list shown first.
+	private var quickEmoji: [String] {
+		guard !emoji.isEmpty, !Self.suggestedEmoji.contains(emoji) else { return Self.suggestedEmoji }
+		return [emoji] + Self.suggestedEmoji.dropLast()
 	}
 
 	private var trimmedName: String {
@@ -95,7 +99,7 @@ struct ProfileEditorSheet: View {
 
 				Section {
 					LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
-						ForEach(Self.suggestedEmoji, id: \.self) { item in
+						ForEach(quickEmoji, id: \.self) { item in
 							Button {
 								emoji = emoji == item ? "" : item
 							} label: {
@@ -109,25 +113,17 @@ struct ProfileEditorSheet: View {
 					}
 					.padding(.vertical, 4)
 					HStack {
-						// Its own text, so the field never rewrites itself mid-typing
-						// (the Mac emoji picker loses input when it does).
-						TextField("Or type any emoji", text: $typedEmoji)
-							.focused($emojiFocused)
-							.onChange(of: typedEmoji) { _, value in
-								if let found = ProfileEmoji.last(in: value) {
-									emoji = found
-								}
-							}
-						Button("More") { showAllEmoji = true }
-							.buttonStyle(.borderless)
+						Button {
+							showAllEmoji = true
+						} label: {
+							Label("All Emoji", systemImage: "face.smiling")
+						}
+						Spacer()
 						if !emoji.isEmpty {
-							Button("Clear") {
-								emoji = ""
-								typedEmoji = ""
-							}
-							.buttonStyle(.borderless)
+							Button("Remove", role: .destructive) { emoji = "" }
 						}
 					}
+					.buttonStyle(.borderless)
 				} header: {
 					Text("Emoji")
 				} footer: {
@@ -186,7 +182,6 @@ struct ProfileEditorSheet: View {
 			.sheet(isPresented: $showAllEmoji) {
 				EmojiPickerSheet { picked in
 					emoji = picked
-					typedEmoji = ""
 				}
 			}
 			.onChange(of: pickerItem) { _, item in

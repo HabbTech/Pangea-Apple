@@ -2,65 +2,61 @@
 //  EmojiPicker.swift
 //  Pangea
 //
-//  A built-in emoji grid, so picking an avatar never depends on the keyboard.
+//  Every emoji, searchable, with skin tones. Picking never depends on the
+//  keyboard, so it works the same on iPhone and Mac.
 //
 
 import SwiftUI
-
-enum ProfileEmoji {
-	/// The last emoji in typed text, ignoring letters, numbers and punctuation.
-	static func last(in text: String) -> String? {
-		text.reversed().first(where: isEmoji).map { String($0) }
-	}
-
-	static func isEmoji(_ character: Character) -> Bool {
-		let scalars = character.unicodeScalars
-		if scalars.contains(where: { $0.properties.isEmojiPresentation }) { return true }
-		// Text-style symbols like ❤ or ☀ count when followed by the emoji selector,
-		// and keycaps like 1️⃣; a bare digit or # does not.
-		return scalars.contains { $0.value == 0xFE0F || $0.value == 0x20E3 }
-			&& scalars.contains { $0.properties.isEmoji }
-	}
-
-	static let sections: [(String, [String])] = [
-		("Smileys", ["😀", "😃", "😄", "😁", "😆", "😊", "🙂", "😉", "😍", "🥰", "😘", "😋", "😛", "😜", "🤪", "😎", "🤓", "🧐", "🤠", "🥳", "😇", "🤗", "🤔", "🤫", "😴", "🤯", "😬", "🙃", "😏", "😤", "👻", "🤖", "👽", "💀", "🤡", "😺"]),
-		("People", ["👋", "👍", "✌️", "🤙", "💪", "🙏", "👀", "🧠", "🧑‍🚀", "🧑‍🚒", "🧑‍🌾", "🧑‍🍳", "🧑‍🔧", "🧑‍⚕️", "🥷", "🧙", "🏃", "🧗", "🚴", "🏄", "🎣", "⛷️", "🏂", "🤿"]),
-		("Animals", ["🐶", "🐱", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🦅", "🦉", "🐺", "🐗", "🐴", "🦄", "🐝", "🦋", "🐢", "🐍", "🦖", "🐙", "🦈", "🐬", "🐳", "🦌", "🦬", "🐿️"]),
-		("Outdoors", ["⛰️", "🏔️", "🗻", "🏕️", "🏞️", "🌲", "🌳", "🌵", "🍁", "🍄", "🌊", "🏝️", "🏜️", "🌋", "☀️", "🌙", "⭐️", "🌈", "⚡️", "❄️", "🔥", "💧", "🌍", "🧭"]),
-		("Things", ["🚙", "🛻", "🏍️", "🚲", "⛵️", "🛶", "✈️", "🚁", "🚀", "🛰️", "📡", "📻", "🔦", "🎒", "⛺️", "🪓", "🗺️", "⚓️", "🎸", "🎮", "📷", "☕️", "🍕", "🌮", "🍔", "🍺", "⚽️", "🏀", "🏈", "🎯"]),
-		("Symbols", ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💯", "✅", "⚠️", "☮️", "♻️", "🔱", "⚜️", "🏴‍☠️", "🏳️‍🌈", "🇺🇸", "🇨🇦", "🇲🇽", "🇬🇧", "🇦🇺"])
-	]
-}
 
 struct EmojiPickerSheet: View {
 	@Environment(\.dismiss) private var dismiss
 	var onPick: (String) -> Void
 
+	@State private var search = ""
+	@State private var choosingVariant: EmojiCatalog.Emoji?
+
+	private var results: [EmojiCatalog.Group] {
+		let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+		guard !query.isEmpty else { return EmojiCatalog.groups }
+		let matches = EmojiCatalog.groups.flatMap(\.emoji).filter { $0.name.lowercased().contains(query) || $0.emoji == query }
+		return matches.isEmpty ? [] : [EmojiCatalog.Group(name: String(localized: "Results"), emoji: matches)]
+	}
+
 	var body: some View {
 		NavigationStack {
 			ScrollView {
-				LazyVStack(alignment: .leading, spacing: 18) {
-					ForEach(ProfileEmoji.sections, id: \.0) { title, items in
-						Text(title)
-							.font(.headline)
-							.foregroundStyle(.secondary)
-						LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 6)], spacing: 6) {
-							ForEach(items, id: \.self) { item in
-								Button {
-									onPick(item)
-									dismiss()
-								} label: {
-									Text(item)
-										.font(.system(size: 30))
-										.frame(width: 44, height: 44)
+				LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
+					ForEach(results) { group in
+						Section {
+							LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 4)], spacing: 4) {
+								ForEach(group.emoji) { item in
+									cell(item)
 								}
-								.buttonStyle(.plain)
 							}
+							.padding(.bottom, 12)
+						} header: {
+							Text(group.name)
+								.font(.subheadline.weight(.semibold))
+								.foregroundStyle(.secondary)
+								.frame(maxWidth: .infinity, alignment: .leading)
+								.padding(.vertical, 6)
+								.background(.background)
 						}
 					}
+					if results.isEmpty {
+						ContentUnavailableView.search(text: search)
+					}
 				}
-				.padding()
+				.padding(.horizontal)
 			}
+			.safeAreaInset(edge: .bottom) {
+				if let item = choosingVariant {
+					VariantBar(item: item, onPick: pick) { choosingVariant = nil }
+						.transition(.move(edge: .bottom).combined(with: .opacity))
+				}
+			}
+			.animation(.snappy, value: choosingVariant)
+			.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search emoji")
 			.navigationTitle("Choose Emoji")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -69,6 +65,79 @@ struct EmojiPickerSheet: View {
 				}
 			}
 		}
-		.presentationDetents([.medium, .large])
+	}
+
+	private func cell(_ item: EmojiCatalog.Emoji) -> some View {
+		Button {
+			if item.variants.isEmpty {
+				pick(item.emoji)
+			} else {
+				choosingVariant = item
+			}
+		} label: {
+			Text(item.emoji)
+				.font(.system(size: 32))
+				.frame(width: 44, height: 44)
+				.overlay(alignment: .bottomTrailing) {
+					if !item.variants.isEmpty {
+						// Hint that more versions are available, like the keyboard.
+						Image(systemName: "triangle.fill")
+							.font(.system(size: 5))
+							.rotationEffect(.degrees(135))
+							.foregroundStyle(.tertiary)
+					}
+				}
+		}
+		.buttonStyle(.plain)
+		.background(choosingVariant == item ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+		.accessibilityLabel(item.name)
+	}
+
+	private func pick(_ emoji: String) {
+		choosingVariant = nil
+		onPick(emoji)
+		dismiss()
+	}
+}
+
+/// The base emoji plus every skin tone (and, for pairs, every combination).
+private struct VariantBar: View {
+	let item: EmojiCatalog.Emoji
+	var onPick: (String) -> Void
+	var onClose: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 6) {
+			HStack {
+				Text(item.name.capitalized(with: .current))
+					.font(.subheadline.weight(.semibold))
+				Spacer()
+				Button(action: onClose) {
+					Image(systemName: "xmark.circle.fill")
+						.font(.title3)
+						.foregroundStyle(.secondary)
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel("Close")
+			}
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack(spacing: 4) {
+					ForEach([item.emoji] + item.variants, id: \.self) { emoji in
+						Button {
+							onPick(emoji)
+						} label: {
+							Text(emoji)
+								.font(.system(size: 36))
+								.frame(width: 52, height: 52)
+						}
+						.buttonStyle(.plain)
+					}
+				}
+			}
+		}
+		.padding(14)
+		.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+		.padding(.horizontal)
+		.padding(.bottom, 8)
 	}
 }

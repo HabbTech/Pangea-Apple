@@ -90,8 +90,10 @@ struct ProfileStoreTests {
 			}
 		}
 		let data = try #require(PhotoCompressor.avatarData(from: image))
-		#expect(data.count <= 1200)
-		#expect(PhotoChunk.split(data).count <= 8)
+		#expect(data.count <= PhotoCompressor.limit)
+		#expect(PhotoChunk.split(data).count <= 15)
+		let decoded = try #require(UIImage(data: data))
+		#expect(decoded.size.width >= 96) // sharp enough for the big profile avatar
 	}
 
 	@Test func namePriorityIsNicknameThenCardThenRadio() throws {
@@ -130,30 +132,35 @@ struct ProfileStoreTests {
 	}
 }
 
-@Suite("Profile emoji")
-struct ProfileEmojiTests {
+@Suite("Emoji catalog")
+struct EmojiCatalogTests {
 
-	@Test func picksTheLastEmojiTyped() {
-		#expect(ProfileEmoji.last(in: "🔥") == "🔥")
-		#expect(ProfileEmoji.last(in: "🏕️🔥") == "🔥")
-		#expect(ProfileEmoji.last(in: "hi 👍🏽 there") == "👍🏽")
-		#expect(ProfileEmoji.last(in: "❤️") == "❤️")
-		#expect(ProfileEmoji.last(in: "🏳️‍🌈") == "🏳️‍🌈")
-		#expect(ProfileEmoji.last(in: "🇺🇸") == "🇺🇸")
-		#expect(ProfileEmoji.last(in: "1️⃣") == "1️⃣")
+	private var all: [EmojiCatalog.Emoji] { EmojiCatalog.groups.flatMap(\.emoji) }
+
+	@Test func hasTheFullSet() {
+		#expect(EmojiCatalog.groups.count == 9)
+		#expect(all.count > 1800)
+		#expect(all.contains { $0.emoji == "🏳️‍🌈" })
+		#expect(all.contains { $0.emoji == "🇺🇸" })
 	}
 
-	@Test func ignoresPlainText() {
-		#expect(ProfileEmoji.last(in: "") == nil)
-		#expect(ProfileEmoji.last(in: "abc") == nil)
-		#expect(ProfileEmoji.last(in: "123 #*") == nil)
+	@Test func skinTonesAreVariantsOfTheirBase() throws {
+		let wave = try #require(all.first { $0.emoji == "👋" })
+		#expect(wave.variants == ["👋🏻", "👋🏼", "👋🏽", "👋🏾", "👋🏿"])
+		let astronaut = try #require(all.first { $0.emoji == "🧑‍🚀" })
+		#expect(astronaut.variants.count == 5)
+		let handshake = try #require(all.first { $0.emoji == "🤝" })
+		#expect(handshake.variants.count >= 5)
+		// Variants aren't listed again on their own.
+		#expect(!all.contains { $0.emoji == "👋🏽" })
 	}
 
-	@Test func everyBuiltInEmojiIsAccepted() {
-		for (_, items) in ProfileEmoji.sections {
-			for item in items {
-				#expect(ProfileEmoji.last(in: item) == item, "\(item)")
-				#expect(item.utf8.count <= ProfileCard.maxEmojiBytes, "\(item)")
+	@Test func everyEmojiFitsOnACard() throws {
+		for item in all {
+			for emoji in [item.emoji] + item.variants {
+				let card = ProfileCard(displayName: "Sam", emoji: emoji, color: 0, photoVersion: 0)
+				let payload = try #require(card.payload)
+				#expect(ProfileCard(payload: payload)?.emoji == emoji, "\(item.name)")
 			}
 		}
 	}
