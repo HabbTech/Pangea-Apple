@@ -127,14 +127,16 @@ struct ChannelMessageRow: View {
 							}
 						}
 					} label: {
-						Text(replyMessage?.displayedPayload ?? "EMPTY MESSAGE").foregroundColor(.accentColor).font(.caption2)
+						// Pangea: the quoted message can be missing (cleared, or sent before this device heard it).
+						Text(replyMessage?.displayedPayload ?? String(localized: "Original message not available"))
+							.foregroundColor(replyMessage == nil ? .secondary : .accentColor).font(.caption2)
 							.padding(10)
 							.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
 						Image(systemName: "arrowshape.turn.up.left.fill")
 							.symbolRenderingMode(.hierarchical).imageScale(.large)
 							.foregroundColor(.accentColor).padding(.trailing)
 					}
-					.accessibilityLabel(String(localized: "Replying to: \(replyMessage?.displayedPayload ?? "EMPTY MESSAGE")", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
+					.accessibilityLabel(String(localized: "Replying to: \(replyMessage?.displayedPayload ?? String(localized: "Original message not available"))", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
 					if !isCurrentUser { Spacer(minLength: 50) }
 				}
 			}
