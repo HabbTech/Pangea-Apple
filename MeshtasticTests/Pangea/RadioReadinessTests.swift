@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import Testing
 import MeshtasticProtobufs
 @testable import Meshtastic
@@ -23,7 +23,8 @@ private actor ReadinessLink: Connection {
 }
 
 /// One readiness value, worked out from every input, in one place. Nothing here touches the
-/// app's own database: each test has an in-memory one.
+/// app's own database: the tests use the shared in-memory test store, each with node numbers
+/// of its own.
 @Suite("Radio readiness", .serialized)
 @MainActor
 struct RadioReadinessTests {
@@ -48,21 +49,36 @@ struct RadioReadinessTests {
 		}
 	}
 
-	/// My node, with its user, saved from a background context the way a NodeInfo packet is.
-	private func saveMyNode(_ num: Int64, in container: NSPersistentContainer) async throws {
-		let background = container.newBackgroundContext()
-		try await background.perform {
-			let node = NodeInfoEntity(context: background)
-			node.num = num
-			let user = UserEntity(context: background)
-			user.num = num
-			user.userId = "!\(String(num, radix: 16))"
-			user.longName = "Readiness \(num)"
-			user.shortName = "RD"
-			user.hwModel = "UNSET"
-			node.user = user
-			try background.save()
+	private static func freshNum() -> Int64 { Int64.random(in: 100_000...4_000_000_000) }
+
+	/// My node, with its user, saved from a context of its own the way a NodeInfo packet is.
+	private func saveMyNode(_ num: Int64) throws {
+		let background = ModelContext(sharedModelContainer)
+		let node = NodeInfoEntity()
+		node.num = num
+		background.insert(node)
+		let user = UserEntity()
+		user.num = num
+		user.userId = "!\(String(num, radix: 16))"
+		user.longName = "Readiness \(num)"
+		user.shortName = "RD"
+		user.hwModel = "UNSET"
+		background.insert(user)
+		node.user = user
+		try background.save()
+	}
+
+	/// My node removed from another context, as the packet handler's context does. (A full data
+	/// clear also replaces the container and drops the link, which refreshes readiness on its own.)
+	private func deleteNode(_ num: Int64) throws {
+		let background = ModelContext(sharedModelContainer)
+		for user in try background.fetch(FetchDescriptor<UserEntity>(predicate: #Predicate { $0.num == num })) {
+			background.delete(user)
 		}
+		for node in try background.fetch(FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == num })) {
+			background.delete(node)
+		}
+		try background.save()
 	}
 
 	// MARK: T1, the reducer
@@ -90,16 +106,16 @@ struct RadioReadinessTests {
 
 	/// The tracker's value is the radio predicate of its inputs, for every input.
 	@Test func readyIsExactlyThePredicate() async throws {
-		let persistence = PersistenceController(inMemory: true)
-		try await saveMyNode(31, in: persistence.container)
-		let tracker = RadioReadinessTracker(context: persistence.container.viewContext)
+		let mine = Self.freshNum()
+		try saveMyNode(mine)
+		let tracker = RadioReadinessTracker(context: sharedModelContainer.mainContext)
 		for state in Self.states {
 			for hasConnection in [false, true] {
 				for known in [false, true] {
-					tracker.refresh(hasConnection: hasConnection, state: state, deviceNum: known ? 31 : 32)
+					tracker.refresh(hasConnection: hasConnection, state: state, deviceNum: known ? mine : mine + 1)
 					let expected = ProfileRules.radioReady(hasConnection: hasConnection, state: state, hasMyUser: known)
 					#expect(tracker.value.ready == expected, "\(state) \(hasConnection) \(known)")
-					#expect(tracker.isReady(hasConnection: hasConnection, state: state, deviceNum: known ? 31 : 32) == expected)
+					#expect(tracker.isReady(hasConnection: hasConnection, state: state, deviceNum: known ? mine : mine + 1) == expected)
 					#expect((tracker.value.awaySince == nil) == expected)
 				}
 			}
@@ -108,48 +124,44 @@ struct RadioReadinessTests {
 
 	// MARK: T2, the funnel against a real database
 
-	/// Linked and subscribed with my node unknown; then my node is saved from a background
-	/// context, with nothing else changing: ready, once. Then the app's data is cleared by a
-	/// batch delete in a background context: away, once.
+	/// Linked and subscribed with my node unknown; then my node is saved from another
+	/// context, with nothing else changing: ready, once. Then the app's data is cleared from
+	/// another context: away, once.
 	@Test func myNodeComingAndGoingIsSeenWithoutAnyOtherChange() async throws {
-		let persistence = PersistenceController(inMemory: true)
-		let tracker = RadioReadinessTracker(context: persistence.container.viewContext)
+		let mine = Self.freshNum()
+		let tracker = RadioReadinessTracker(context: sharedModelContainer.mainContext)
 		var edges: [RadioReadiness.Edge] = []
 		tracker.onEdge = { edges.append($0) }
-		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: 4242)
+		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: mine)
 		#expect(!tracker.value.ready)
 		#expect(edges.isEmpty)
 
-		try await saveMyNode(4242, in: persistence.container)
+		try saveMyNode(mine)
 		try await wait(upTo: 1) { tracker.value.ready }
 		#expect(tracker.value.ready)
 		#expect(edges.count == 1 && isReady(edges.first))
 
-		let background = persistence.container.newBackgroundContext()
-		await background.perform {
-			for entity in ["UserEntity", "NodeInfoEntity"] {
-				try? background.executeAndMergeChanges(using: NSBatchDeleteRequest(fetchRequest: NSFetchRequest(entityName: entity)))
-			}
-		}
+		try deleteNode(mine)
 		try await wait(upTo: 1) { !tracker.value.ready }
 		#expect(!tracker.value.ready)
 		#expect(edges.count == 2 && edges.last == .wentAway)
 		#expect(tracker.value.awaySince != nil)
 	}
 
-	/// My node saved, then deleted, in the view context itself (removing a node does this):
-	/// no merge happens, only the view context's own change notification.
+	/// My node saved, then deleted, in the tracker's own context (removing a node does this).
 	@Test func myNodeChangedInTheViewContextIsSeen() async throws {
-		let persistence = PersistenceController(inMemory: true)
-		let view = persistence.container.viewContext
+		let mine = Self.freshNum()
+		let view = sharedModelContainer.mainContext
 		let tracker = RadioReadinessTracker(context: view)
 		var edges: [RadioReadiness.Edge] = []
 		tracker.onEdge = { edges.append($0) }
-		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: 6161)
-		let node = NodeInfoEntity(context: view)
-		node.num = 6161
-		let user = UserEntity(context: view)
-		user.num = 6161
+		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: mine)
+		let node = NodeInfoEntity()
+		node.num = mine
+		view.insert(node)
+		let user = UserEntity()
+		user.num = mine
+		view.insert(user)
 		user.userId = "!00001811"
 		user.longName = "Readiness 6161"
 		user.shortName = "RD"
@@ -169,12 +181,12 @@ struct RadioReadinessTests {
 
 	/// A change to some other node, or to nothing it depends on, isn't an edge.
 	@Test func otherNodesChangeNothing() async throws {
-		let persistence = PersistenceController(inMemory: true)
-		let tracker = RadioReadinessTracker(context: persistence.container.viewContext)
+		let mine = Self.freshNum()
+		let tracker = RadioReadinessTracker(context: sharedModelContainer.mainContext)
 		var edges: [RadioReadiness.Edge] = []
 		tracker.onEdge = { edges.append($0) }
-		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: 4242)
-		try await saveMyNode(5151, in: persistence.container)
+		tracker.refresh(hasConnection: true, state: .subscribed, deviceNum: mine)
+		try saveMyNode(mine + 1)
 		try await Task.sleep(for: .milliseconds(200))
 		#expect(!tracker.value.ready)
 		#expect(edges.isEmpty)
@@ -183,9 +195,9 @@ struct RadioReadinessTests {
 	/// Each of AccessoryManager's own inputs (the link, the state, my node number) brings it
 	/// up to date at once, with the new value already set.
 	@Test func everyInputOfAccessoryManagerRefreshesIt() async throws {
-		let persistence = PersistenceController(inMemory: true)
-		try await saveMyNode(777, in: persistence.container)
-		let manager = AccessoryManager(transports: [], readiness: RadioReadinessTracker(context: persistence.container.viewContext))
+		let mine = Self.freshNum()
+		try saveMyNode(mine)
+		let manager = AccessoryManager(transports: [], readiness: RadioReadinessTracker(context: sharedModelContainer.mainContext))
 		// The init takes over the shared MQTT delegate; hand it back to the app's manager.
 		MqttClientProxyManager.shared.delegate = AccessoryManager.shared
 		// With each edge: what the inputs say, and what the published value says.
@@ -193,12 +205,12 @@ struct RadioReadinessTests {
 		manager.readiness.onEdge = { [weak manager] edge in
 			seen.append((edge, manager?.radioReadyNow ?? false, manager?.readiness.value.ready ?? false))
 		}
-		let device = Device(id: UUID(), name: "Readiness", transportType: .ble, identifier: "READINESS", num: 777)
+		let device = Device(id: UUID(), name: "Readiness", transportType: .ble, identifier: "READINESS", num: mine)
 
 		manager.activeConnection = (device: device, connection: ReadinessLink())
 		manager.updateState(.subscribed)
 		#expect(!manager.readiness.value.ready)
-		manager.activeDeviceNum = 777
+		manager.activeDeviceNum = mine
 		#expect(manager.readiness.value.ready)
 		manager.updateState(.retrievingDatabase(nodeCount: 3))
 		#expect(!manager.readiness.value.ready)

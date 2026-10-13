@@ -30,6 +30,7 @@ private struct ActivityRow: View {
 				.foregroundColor(.primary)
 		}
 		.padding()
+		.accessibilityElement(children: .combine)
 	}
 }
 
@@ -134,8 +135,8 @@ private struct CredentialRow: View {
 				Image(systemName: "doc.on.doc")
 					.font(.body)
 			}
-			.tint(.accentColor)
 			.buttonStyle(.borderless)
+			.accessibilityLabel(String(localized: "Copy \(label)", comment: "VoiceOver label for a credential copy button; %@ is the field name being copied, e.g. Username or Password"))
 		}
 	}
 }
@@ -187,8 +188,8 @@ struct WifiProvisioningView: View {
 				case .selectingDevice(let devices):
 					deviceSelectionView(devices: devices)
 
-			case .connectingBLE:
-				waitingView(icon: "dot.radiowaves.right", message: "Connecting via Bluetooth…")
+				case .connectingBLE:
+					waitingView(icon: "dot.radiowaves.right", message: "Connecting via Bluetooth…")
 
 				case .checkingNetworkState:
 					waitingView(icon: "network", message: "Checking device network state…")
@@ -258,6 +259,7 @@ struct WifiProvisioningView: View {
 					.padding()
 			}
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 			.buttonBorderShape(.capsule)
 			.padding(.horizontal, 32)
 
@@ -273,6 +275,8 @@ struct WifiProvisioningView: View {
 			ActivityRow(systemImage: icon, label: message)
 			Spacer()
 		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.background(Color(.systemGroupedBackground))
 	}
 
 	@ViewBuilder
@@ -349,8 +353,8 @@ struct WifiProvisioningView: View {
 								Image(systemName: "doc.on.doc")
 									.font(.title3)
 							}
-							.tint(.accentColor)
 							.buttonStyle(.borderless)
+							.accessibilityLabel(String(localized: "Copy IP address", comment: "VoiceOver label for the copy IP address button"))
 						}
 					}
 					.padding()
@@ -396,8 +400,8 @@ struct WifiProvisioningView: View {
 									Image(systemName: "doc.on.doc")
 										.font(.body)
 								}
-								.tint(.accentColor)
 								.buttonStyle(.borderless)
+								.accessibilityLabel(String(localized: "Copy SSH command", comment: "VoiceOver label for the copy SSH command button"))
 							}
 							.padding(8)
 							.background(Color(.secondarySystemBackground))
@@ -443,6 +447,7 @@ struct WifiProvisioningView: View {
 					.padding()
 			}
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 			.buttonBorderShape(.capsule)
 			.padding(.horizontal, 32)
 			.padding(.bottom, 24)
@@ -528,6 +533,7 @@ struct WifiProvisioningView: View {
 					.padding()
 			}
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 			.buttonBorderShape(.capsule)
 			.padding(.horizontal, 32)
 
@@ -538,15 +544,21 @@ struct WifiProvisioningView: View {
 	@ViewBuilder
 	private var cancelOrDoneButton: some View {
 		if case .success = provisioning.state {
-			Button("Done") {
+			Button {
 				provisioning.reset()
 				dismiss()
+			} label: {
+				Image(systemName: "xmark")
 			}
+			.accessibilityLabel(String(localized: "Done", comment: "VoiceOver: dismiss the Wi-Fi provisioning sheet"))
 		} else {
-			Button("Cancel") {
+			Button {
 				provisioning.cancel()
 				dismiss()
+			} label: {
+				Image(systemName: "xmark")
 			}
+			.accessibilityLabel(String(localized: "Cancel", comment: "VoiceOver: cancel Wi-Fi provisioning and dismiss the sheet"))
 		}
 	}
 }

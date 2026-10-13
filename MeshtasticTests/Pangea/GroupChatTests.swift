@@ -5,7 +5,7 @@
 
 import Foundation
 import Testing
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 @testable import Meshtastic
 
@@ -663,16 +663,13 @@ struct GroupInviteStoreTests {
 @MainActor
 struct ExistingGroupTests {
 
-	/// A scratch context on top of the app's store; nothing in it is ever saved. Held
-	/// here because objects lose their values once their context is gone.
-	private let context: NSManagedObjectContext = {
-		let context = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
-		context.parent = PersistenceController.shared.container.viewContext
-		return context
-	}()
+	/// A store of the suite's own; nothing in it is ever saved. Held here because objects
+	/// lose their values once their container is gone.
+	private let container = PangeaTestStore.make()
+	private var context: ModelContext { container.mainContext }
 
 	private func channel(_ index: Int32, _ name: String, psk: Data) -> ChannelEntity {
-		let channel = ChannelEntity(context: context)
+		let channel = context.add(ChannelEntity())
 		channel.index = index
 		channel.role = index == 0 ? 1 : 2
 		channel.name = name
@@ -681,15 +678,15 @@ struct ExistingGroupTests {
 	}
 
 	private func myInfo(channels: [(index: Int32, name: String, psk: Data)]) -> MyInfoEntity {
-		let info = MyInfoEntity(context: context)
-		info.channels = NSOrderedSet(array: channels.map { item in
-			let channel = ChannelEntity(context: context)
+		let info = context.add(MyInfoEntity())
+		info.channels = channels.map { item in
+			let channel = context.add(ChannelEntity())
 			channel.index = item.index
 			channel.role = 2
 			channel.name = item.name
 			channel.psk = item.psk
 			return channel
-		})
+		}
 		return info
 	}
 
@@ -727,8 +724,8 @@ struct ExistingGroupTests {
 		#expect(GroupChats.isChat(open))
 		#expect(!GroupChats.isPrivateGroup(open))
 		#expect(ProfileRules.route(pkiEncrypted: false, to: Constants.maximumNodeNum, channel: 2, isGroupChat: { _ in GroupChats.isPrivateGroup(open) }) == nil)
-		let info = MyInfoEntity(context: context)
-		info.channels = NSOrderedSet(array: [open])
+		let info = context.add(MyInfoEntity())
+		info.channels = [open]
 		#expect(GroupChats.groups(in: info).map(\.index) == [2])
 	}
 
@@ -748,15 +745,15 @@ struct ExistingGroupTests {
 		let spaced = channel(2, "Bike \u{0301}x", psk: key)
 		let cut = channel(3, "gpio\u{0}x", psk: key)
 		let flipped = channel(4, "\u{202E}nimda", psk: key)
-		let info = MyInfoEntity(context: context)
-		info.channels = NSOrderedSet(array: [marked, spaced, cut, flipped])
+		let info = context.add(MyInfoEntity())
+		info.channels = [marked, spaced, cut, flipped]
 		#expect(GroupChats.groups(in: info).map(\.index) == [1, 2])
 		#expect(GroupInvite.shareable(name: "\u{0301}Hike", psk: key) == .failure(.cantShareName))
 		#expect(GroupInvite.shareable(name: "Bike \u{0301}x", psk: key) == .failure(.cantShareName))
 	}
 
 	@Test func anInviteToAGroupFriendsCantJoinIsNeverSent() async {
-		let recipient = UserEntity(context: context)
+		let recipient = context.add(UserEntity())
 		recipient.num = 77
 		recipient.pkiEncrypted = true
 		recipient.publicKey = Data(repeating: 5, count: 32)

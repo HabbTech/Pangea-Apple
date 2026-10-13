@@ -9,7 +9,7 @@ import MeshtasticProtobufs
 @testable import Meshtastic
 
 @Suite("PangeaCode")
-// The CoreData tests use a main-queue context, so they must run on the main thread.
+// The database tests use the main context, so they must run on the main thread.
 @MainActor
 struct PangeaCodeTests {
 
@@ -193,10 +193,12 @@ struct PangeaCodeTests {
 	}
 
 	@Test func oldPlaceholderNamesAreRenamed() throws {
-		let controller = PersistenceController(inMemory: true)
-		let context = controller.container.viewContext
+		let controller = PangeaTestStore.make()
+		let context = controller.mainContext
 		func user(_ id: String, _ name: String, hw: String = "UNSET") -> UserEntity {
-			let user = UserEntity(context: context)
+			let user = context.add(UserEntity())
+			// num is unique in the store, so each user needs its own.
+			user.num = Int64(UInt32(id.dropFirst(), radix: 16) ?? 0)
 			user.userId = id
 			user.longName = name
 			user.shortName = String(id.suffix(4))

@@ -1,0 +1,1157 @@
+// EntityTests.swift
+// MeshtasticTests
+
+import Testing
+import Foundation
+import SwiftData
+import MeshtasticProtobufs
+@testable import Meshtastic
+
+// MARK: - In-Memory Persistence Helper
+
+/// Shared test container that stays alive for the entire test process
+@MainActor
+final class TestContainerProvider {
+	static let shared: ModelContainer = sharedModelContainer
+}
+
+@MainActor
+private func makeTestContainer() throws -> ModelContainer {
+	return sharedModelContainer
+}
+
+// MARK: - Hardware catalog presentation
+
+@Suite("Hardware catalog presentation")
+struct HardwareCatalogPresentationTests {
+
+	private func record(
+		model: Int64,
+		slug: String,
+		target: String,
+		displayName: String,
+		activelySupported: Bool,
+		supportLevel: SupportLevel,
+		architecture: String? = nil
+	) -> HardwareCatalogRecord {
+		HardwareCatalogRecord(
+			hwModel: model,
+			hwModelSlug: slug,
+			platformioTarget: target,
+			displayName: displayName,
+			activelySupported: activelySupported,
+			supportLevel: supportLevel,
+			architecture: architecture
+		)
+	}
+
+	@Test func usesCanonicalTargetForTrackerAliasesRegardlessOfCatalogOrder() {
+		let heltec = record(
+			model: 48,
+			slug: "HELTEC_WIRELESS_TRACKER",
+			target: "heltec-wireless-tracker",
+			displayName: "Heltec Wireless Tracker V1.1",
+			activelySupported: true,
+			supportLevel: .flagship
+		)
+		let smallTracksenger = record(
+			model: 48,
+			slug: "HELTEC_WIRELESS_TRACKER",
+			target: "tracksenger",
+			displayName: "TrackSenger (small TFT)",
+			activelySupported: true,
+			supportLevel: .legacy
+		)
+		let largeTracksenger = record(
+			model: 48,
+			slug: "HELTEC_WIRELESS_TRACKER",
+			target: "tracksenger-lcd",
+			displayName: "TrackSenger (big TFT)",
+			activelySupported: false,
+			supportLevel: .legacy
+		)
+		let oledTracksenger = record(
+			model: 48,
+			slug: "HELTEC_WIRELESS_TRACKER",
+			target: "tracksenger-oled",
+			displayName: "TrackSenger (OLED)",
+			activelySupported: true,
+			supportLevel: .legacy
+		)
+
+		let presentation = HardwareCatalogResolver.presentation(
+			for: 48,
+			in: [oledTracksenger, largeTracksenger, smallTracksenger, heltec]
+		)
+
+		#expect(presentation?.displayName == "Heltec Wireless Tracker V1.1")
+		#expect(presentation?.platformioTarget == "heltec-wireless-tracker")
+		#expect(presentation?.supportLevel == .flagship)
+	}
+
+	@Test func preservesMissingCatalogMetadata() {
+		let entity = DeviceHardwareEntity()
+		entity.hwModel = 1
+		entity.hwModelSlug = nil
+		entity.platformioTarget = nil
+		entity.displayName = nil
+
+		let record = HardwareCatalogRecord(entity)
+
+		#expect(record.hwModelSlug == nil)
+		#expect(record.platformioTarget == nil)
+		#expect(record.displayName == nil)
+	}
+
+	@Test func usesRawStringOrderingForEqualPriorityRecords() {
+		let naturalFirst = record(
+			model: 1_000,
+			slug: "AMBIGUOUS_DEVICE",
+			target: "natural-first",
+			displayName: "Device 2",
+			activelySupported: true,
+			supportLevel: .flagship
+		)
+		let rawFirst = record(
+			model: 1_000,
+			slug: "AMBIGUOUS_DEVICE",
+			target: "raw-first",
+			displayName: "Device 10",
+			activelySupported: true,
+			supportLevel: .flagship
+		)
+
+		let presentation = HardwareCatalogResolver.presentation(for: 1_000, in: [naturalFirst, rawFirst])
+
+		#expect(presentation?.displayName == "Device 10")
+		#expect(presentation?.platformioTarget == "raw-first")
+	}
+
+	@Test func choosesPreferredVariantWhenTheProtocolCannotDistinguishIt() {
+		let smallDisplay = record(
+			model: 16,
+			slug: "TLORA_T3_S3",
+			target: "tlora-t3s3-v1",
+			displayName: "LILYGO T-LoRa T3-S3",
+			activelySupported: true,
+			supportLevel: .flagship,
+			architecture: "esp32-s3"
+		)
+		let eInk = record(
+			model: 16,
+			slug: "TLORA_T3_S3",
+			target: "tlora-t3s3-epaper",
+			displayName: "LILYGO T-LoRa T3-S3 E-Ink",
+			activelySupported: true,
+			supportLevel: .flagship,
+			architecture: "esp32-s3"
+		)
+
+		let presentation = HardwareCatalogResolver.presentation(for: 16, in: [eInk, smallDisplay])
+
+		#expect(presentation?.displayName == "LILYGO T-LoRa T3-S3")
+		#expect(presentation?.platformioTarget == "tlora-t3s3-v1")
+		#expect(presentation?.supportLevel == .flagship)
+		#expect(presentation?.activelySupported == true)
+		#expect(presentation?.architecture == "esp32-s3")
+	}
+
+	@Test func choosesBestSupportedVariantForFutureAmbiguousModels() {
+		let active = record(
+			model: 999,
+			slug: "FUTURE_DEVICE",
+			target: "future-device-a",
+			displayName: "Future Device A",
+			activelySupported: true,
+			supportLevel: .flagship
+		)
+		let legacy = record(
+			model: 999,
+			slug: "FUTURE_DEVICE",
+			target: "future-device-b",
+			displayName: "Future Device B",
+			activelySupported: false,
+			supportLevel: .legacy
+		)
+
+		let presentation = HardwareCatalogResolver.presentation(for: 999, in: [legacy, active])
+
+		#expect(presentation?.displayName == "Future Device A")
+		#expect(presentation?.platformioTarget == "future-device-a")
+		#expect(presentation?.supportLevel == .flagship)
+		#expect(presentation?.activelySupported == true)
+	}
+}
+
+// MARK: - createUser Tests
+
+@Suite("createUser")
+struct CreateUserTests {
+
+	@Test @MainActor func createUser_setsProperties() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let user = try createUser(num: 12345, context: context)
+		#expect(user.num == 12345)
+		#expect(user.userId == Int64(12345).toHex())
+		#expect(user.hwModel == "UNSET")
+		#expect(user.unmessagable == false)
+	}
+
+	@Test @MainActor func createUser_setsLongName() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let user = try createUser(num: 0xABCDEF01, context: context)
+		let last4 = String(user.userId!.suffix(4))
+		#expect(user.longName == "Meshtastic \(last4)")
+		#expect(user.shortName == last4)
+	}
+
+	@Test @MainActor func createUser_negativeNum_throws() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		#expect(throws: PersistenceError.self) {
+			try createUser(num: -1, context: context)
+		}
+	}
+
+	@Test @MainActor func createUser_zero_succeeds() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let user = try createUser(num: 0, context: context)
+		#expect(user.num == 0)
+	}
+}
+
+// MARK: - createNodeInfo Tests
+
+@Suite("createNodeInfo")
+struct CreateNodeInfoTests {
+
+	@Test @MainActor func createNodeInfo_setsProperties() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let node = createNodeInfo(num: 98765, context: context)
+		#expect(node.id == 98765)
+		#expect(node.num == 98765)
+		#expect(node.user != nil)
+		#expect(node.user?.num == 98765)
+		#expect(node.user?.hwModel == "UNSET")
+	}
+
+	@Test @MainActor func createNodeInfo_userHasCorrectUserId() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let node = createNodeInfo(num: 0xFF, context: context)
+		// toHex() already carries the "!" — this previously expected "!!000000ff",
+		// codifying the extra prefix findOrCreateUser was writing.
+		#expect(node.user?.userId == Int64(0xFF).toHex())
+	}
+
+	@Test @MainActor func createNodeInfo_userShortNameIsLast4() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let node = createNodeInfo(num: 0xDEADBEEF, context: context)
+		let hex = Int64(0xDEADBEEF).toHex()
+		let last4 = String(hex.suffix(4))
+		#expect(node.user?.shortName == last4)
+	}
+}
+
+// MARK: - Share Contact QR Tests
+
+@Suite("ShareContactQR")
+struct ShareContactQRTests {
+
+	private func makeNodeInfo(num: UInt32 = 0x1234_ABCD, unmessagable: Bool = false) -> NodeInfo {
+		var user = User()
+		user.id = "!\(String(num, radix: 16))"
+		user.longName = "Node Alpha"
+		user.shortName = "ALFA"
+		user.hwModel = .tbeam
+		user.role = .client
+		user.publicKey = Data([0x01, 0x02, 0x03, 0x04])
+		user.isUnmessagable = unmessagable
+
+		var node = NodeInfo()
+		node.num = num
+		node.user = user
+		return node
+	}
+
+	@Test func contactURLRoundTripsSharedContactPayload() throws {
+		let node = makeNodeInfo()
+
+		let urlString = try #require(ShareContactQR.urlString(for: node, manuallyVerified: true))
+		#expect(urlString.hasPrefix("https://meshtastic.org/v/#"))
+
+		let payload = try #require(urlString.split(separator: "#").last.map(String.init))
+		let decodedData = try #require(Data(base64Encoded: payload.base64urlToBase64()))
+		let contact = try SharedContact(serializedBytes: decodedData)
+
+		#expect(contact.nodeNum == node.num)
+		#expect(contact.user.longName == node.user.longName)
+		#expect(contact.user.shortName == node.user.shortName)
+		#expect(contact.user.publicKey == node.user.publicKey)
+		#expect(contact.manuallyVerified)
+	}
+
+	@Test func recognizesAndroidCompatibleContactURLForms() throws {
+		let canonical = try #require(URL(string: "https://meshtastic.org/v/#CAE="))
+		let www = try #require(URL(string: "https://www.meshtastic.org/v/#CAE="))
+
+		#expect(ContactURLHandler.canHandle(canonical))
+		#expect(ContactURLHandler.canHandle(www))
+	}
+
+	@Test func leavesMeshtasticDocumentationURLsForTheSystemBrowser() throws {
+		let documentation = try #require(URL(string: "https://meshtastic.org/docs/configuration"))
+
+		#expect(!ContactURLHandler.canHandle(documentation))
+	}
+
+	@Test func decodesAndroidSharedContactPayload() throws {
+		let payload = "CAE="
+		let data = try #require(Data(base64Encoded: payload.base64urlToBase64()))
+		let contact = try SharedContact(serializedBytes: data)
+
+		#expect(contact.nodeNum == 1)
+	}
+
+	@Test func contactURLUnavailableForUnmessagableNode() {
+		let node = makeNodeInfo(unmessagable: true)
+
+		#expect(ShareContactQR.urlString(for: node, manuallyVerified: false) == nil)
+		#expect(ShareContactQR.urlString(for: node, manuallyVerified: true) == nil)
+	}
+
+	@Test func contactURLUnavailableWhenUserAbsent() {
+		let node = NodeInfo()
+
+		#expect(!ShareContactQR.canShareContact(for: node))
+		#expect(ShareContactQR.urlString(for: node, manuallyVerified: false) == nil)
+	}
+
+	@Test @MainActor func availabilityUsesNodeUserMessagingState() {
+		let node = NodeInfoEntity()
+		let user = UserEntity()
+		user.unmessagable = false
+		user.publicKey = Data(repeating: 0x2B, count: 32)
+		node.user = user
+
+		#expect(ShareContactQR.canShareContact(for: node))
+
+		user.unmessagable = true
+		#expect(!ShareContactQR.canShareContact(for: node))
+
+		node.user = nil
+		#expect(!ShareContactQR.canShareContact(for: node))
+	}
+
+	@Test @MainActor func availabilityRequiresAPublicKey() {
+		// The key is what makes a shared contact worth anything, and firmware assigns public_key
+		// unconditionally when it applies one, so a keyless contact clears the key the receiving radio
+		// already held.
+		let node = NodeInfoEntity()
+		let user = UserEntity()
+		user.unmessagable = false
+		node.user = user
+
+		#expect(!ShareContactQR.canShareContact(for: node))
+
+		user.publicKey = Data()
+		#expect(!ShareContactQR.canShareContact(for: node))
+
+		user.publicKey = Data(repeating: 0x2B, count: 32)
+		#expect(ShareContactQR.canShareContact(for: node))
+	}
+
+	@Test func contactURLUnavailableWithoutAPublicKey() {
+		var user = User()
+		user.id = "!1234abcd"
+		user.longName = "Node Alpha"
+		user.shortName = "ALFA"
+		var node = NodeInfo()
+		node.num = 0x1234_ABCD
+		node.user = user
+
+		#expect(!ShareContactQR.canShareContact(for: node))
+		#expect(ShareContactQR.urlString(for: node, manuallyVerified: true) == nil)
+	}
+
+	@Test @MainActor func nodeProtoPreservesUnmessagableStateForQRAvailability() {
+		let node = NodeInfoEntity()
+		let user = UserEntity()
+		user.unmessagable = true
+		node.user = user
+
+		let proto = node.toProto()
+
+		#expect(proto.user.isUnmessagable)
+		#expect(!ShareContactQR.canShareContact(for: proto))
+	}
+
+	@Test @MainActor func userProtoPreservesUnmessagableState() {
+		let user = UserEntity()
+		user.unmessagable = true
+
+		#expect(user.toProto().isUnmessagable)
+	}
+}
+
+// MARK: - findOrCreateNode Tests
+//
+// NodeInfoEntity.num is @Attribute(.unique). SwiftData resolves unique collisions against the saved
+// store only — not against un-saved inserts pending in the same context — so a plain fetch-then-
+// insert can leave two pending rows with the same num and trap at save. That was the top 2.7.13
+// crash (issue 4fb84588: createNodeInfo from upsertPositionPacket on a POSITION packet that arrives
+// before the node's NodeInfo). findOrCreateNode dedups against pending inserts too.
+
+@Suite("findOrCreateNode")
+struct FindOrCreateNodeTests {
+
+	/// A fresh context over the shared container isolates this test's pending inserts from others.
+	@MainActor private func freshContext() -> ModelContext {
+		ModelContext(sharedModelContainer)
+	}
+
+	@Test @MainActor func dedupesPendingInsertBeforeSave() throws {
+		let context = freshContext()
+		let num: Int64 = 0x1A2B_3C40
+
+		let first = findOrCreateNode(num: num, context: context)
+		// Not saved yet: a plain fetch wouldn't see it, but findOrCreateNode checks pending inserts.
+		let second = findOrCreateNode(num: num, context: context)
+
+		#expect(first === second)
+		let pending = context.insertedModelsArray.compactMap { $0 as? NodeInfoEntity }.filter { $0.num == num }
+		#expect(pending.count == 1)
+
+		// The original bug trapped here — saving two pending rows with the same unique `num`.
+		try context.save()
+		var descriptor = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == num })
+		descriptor.fetchLimit = 2
+		#expect(try context.fetch(descriptor).count == 1)
+	}
+
+	@Test @MainActor func returnsExistingSavedNode() throws {
+		let context = freshContext()
+		let num: Int64 = 0x0BAD_F00D
+
+		let created = findOrCreateNode(num: num, context: context)
+		try context.save()
+
+		let again = findOrCreateNode(num: num, context: context)
+		#expect(created.num == again.num)
+
+		var descriptor = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == num })
+		descriptor.fetchLimit = 2
+		#expect(try context.fetch(descriptor).count == 1)
+	}
+}
+
+// MARK: - UserEntity.hardwareImage Tests
+
+@Suite("UserEntity hardwareImage", .serialized)
+struct UserEntityHardwareImageTests {
+
+	@MainActor
+	private func makeUser(hwModel: String?) throws -> UserEntity {
+		let context = TestContainerProvider.shared.mainContext
+		let user = UserEntity()
+		user.num = Int64.random(in: 1...Int64.max)
+		user.hwModel = hwModel
+		context.insert(user)
+		return user
+	}
+
+	@Test @MainActor func nilHwModel_returnsNil() throws {
+		let user = try makeUser(hwModel: nil)
+		#expect(user.hardwareImage == nil)
+	}
+
+	@Test @MainActor func unsetModel_returnsUNSET() throws {
+		let user = try makeUser(hwModel: "UNSET")
+		#expect(user.hardwareImage == "UNSET")
+	}
+
+	@Test @MainActor func unknownModel_returnsUNSET() throws {
+		let user = try makeUser(hwModel: "SOMETHINGWEIRD")
+		#expect(user.hardwareImage == "UNSET")
+	}
+
+	@Test @MainActor func heltecV3() throws {
+		let user = try makeUser(hwModel: "HELTECV3")
+		#expect(user.hardwareImage == "HELTECV3")
+	}
+
+	@Test @MainActor func heltecV4() throws {
+		let user = try makeUser(hwModel: "HELTECV4")
+		#expect(user.hardwareImage == "HELTECV4")
+	}
+
+	@Test @MainActor func heltecHT62() throws {
+		let user = try makeUser(hwModel: "HELTECHT62")
+		#expect(user.hardwareImage == "HELTECHT62")
+	}
+
+	@Test @MainActor func heltecMeshNodeT114() throws {
+		let user = try makeUser(hwModel: "HELTECMESHNODET114")
+		#expect(user.hardwareImage == "HELTECMESHNODET114")
+	}
+
+	@Test @MainActor func heltecMeshPocket() throws {
+		let user = try makeUser(hwModel: "HELTECMESHPOCKET")
+		#expect(user.hardwareImage == "HELTECMESHPOCKET")
+	}
+
+	@Test @MainActor func heltecVisionMasterE213() throws {
+		let user = try makeUser(hwModel: "HELTECVISIONMASTERE213")
+		#expect(user.hardwareImage == "HELTECVISIONMASTERE213")
+	}
+
+	@Test @MainActor func heltecVisionMasterE290() throws {
+		let user = try makeUser(hwModel: "HELTECVISIONMASTERE290")
+		#expect(user.hardwareImage == "HELTECVISIONMASTERE290")
+	}
+
+	@Test @MainActor func heltecWirelessPaper() throws {
+		let user = try makeUser(hwModel: "HELTECWIRELESSPAPER")
+		#expect(user.hardwareImage == "HELTECWIRELESSPAPER")
+	}
+
+	@Test @MainActor func heltecWirelessPaperV10() throws {
+		let user = try makeUser(hwModel: "HELTECWIRELESSPAPERV10")
+		#expect(user.hardwareImage == "HELTECWIRELESSPAPER")
+	}
+
+	@Test @MainActor func heltecWirelessTracker() throws {
+		let user = try makeUser(hwModel: "HELTECWIRELESSTRACKER")
+		#expect(user.hardwareImage == "HELTECWIRELESSTRACKER")
+	}
+
+	@Test @MainActor func heltecWirelessTrackerV10() throws {
+		let user = try makeUser(hwModel: "HELTECWIRELESSTRACKERV10")
+		#expect(user.hardwareImage == "HELTECWIRELESSTRACKER")
+	}
+
+	@Test @MainActor func heltecWSLV3() throws {
+		let user = try makeUser(hwModel: "HELTECWSLV3")
+		#expect(user.hardwareImage == "HELTECWSLV3")
+	}
+
+	@Test @MainActor func tDeck() throws {
+		let user = try makeUser(hwModel: "TDECK")
+		#expect(user.hardwareImage == "TDECK")
+	}
+
+	@Test @MainActor func tEcho() throws {
+		let user = try makeUser(hwModel: "TECHO")
+		#expect(user.hardwareImage == "TECHO")
+	}
+
+	@Test @MainActor func tWatchS3() throws {
+		let user = try makeUser(hwModel: "TWATCHS3")
+		#expect(user.hardwareImage == "TWATCHS3")
+	}
+
+	@Test @MainActor func lilygoTBeamS3Core() throws {
+		let user = try makeUser(hwModel: "LILYGOTBEAMS3CORE")
+		#expect(user.hardwareImage == "LILYGOTBEAMS3CORE")
+	}
+
+	@Test @MainActor func tBeam() throws {
+		let user = try makeUser(hwModel: "TBEAM")
+		#expect(user.hardwareImage == "TBEAM")
+	}
+
+	@Test @MainActor func tBeamV0P7() throws {
+		let user = try makeUser(hwModel: "TBEAM_V0P7")
+		#expect(user.hardwareImage == "TBEAM")
+	}
+
+	@Test @MainActor func tLoraC6() throws {
+		let user = try makeUser(hwModel: "TLORAC6")
+		#expect(user.hardwareImage == "TLORAC6")
+	}
+
+	@Test @MainActor func tLoraT3S3Epaper() throws {
+		let user = try makeUser(hwModel: "TLORAT3S3EPAPER")
+		#expect(user.hardwareImage == "TLORAT3S3EPAPER")
+	}
+
+	@Test @MainActor func tLoraT3S3V1() throws {
+		let user = try makeUser(hwModel: "TLORAT3S3V1")
+		#expect(user.hardwareImage == "TLORAT3S3V1")
+	}
+
+	@Test @MainActor func tLoraT3S3() throws {
+		let user = try makeUser(hwModel: "TLORAT3S3")
+		#expect(user.hardwareImage == "TLORAT3S3V1")
+	}
+
+	@Test @MainActor func tLoraV211P6() throws {
+		let user = try makeUser(hwModel: "TLORAV211P6")
+		#expect(user.hardwareImage == "TLORAV211P6")
+	}
+
+	@Test @MainActor func tLoraV211P8() throws {
+		let user = try makeUser(hwModel: "TLORAV211P8")
+		#expect(user.hardwareImage == "TLORAV211P8")
+	}
+
+	@Test @MainActor func sensecapIndicator() throws {
+		let user = try makeUser(hwModel: "SENSECAPINDICATOR")
+		#expect(user.hardwareImage == "SENSECAPINDICATOR")
+	}
+
+	@Test @MainActor func trackerT1000E() throws {
+		let user = try makeUser(hwModel: "TRACKERT1000E")
+		#expect(user.hardwareImage == "TRACKERT1000E")
+	}
+
+	@Test @MainActor func seeedXiaoS3() throws {
+		let user = try makeUser(hwModel: "SEEEDXIAOS3")
+		#expect(user.hardwareImage == "SEEEDXIAOS3")
+	}
+
+	@Test @MainActor func wioWM1110() throws {
+		let user = try makeUser(hwModel: "WIOWM1110")
+		#expect(user.hardwareImage == "WIOWM1110")
+	}
+
+	@Test @MainActor func seeedSolarNode() throws {
+		let user = try makeUser(hwModel: "SEEEDSOLARNODE")
+		#expect(user.hardwareImage == "SEEEDSOLARNODE")
+	}
+
+	@Test @MainActor func seeedWioTrackerL1() throws {
+		let user = try makeUser(hwModel: "SEEEDWIOTRACKERL1")
+		#expect(user.hardwareImage == "SEEEDWIOTRACKERL1")
+	}
+
+	@Test @MainActor func rak4631() throws {
+		let user = try makeUser(hwModel: "RAK4631")
+		#expect(user.hardwareImage == "RAK4631")
+	}
+
+	@Test @MainActor func rak11310() throws {
+		let user = try makeUser(hwModel: "RAK11310")
+		#expect(user.hardwareImage == "RAK11310")
+	}
+
+	@Test @MainActor func wismeshTap() throws {
+		let user = try makeUser(hwModel: "WISMESHTAP")
+		#expect(user.hardwareImage == "WISMESHTAP")
+	}
+
+	@Test @MainActor func nanoG1() throws {
+		let user = try makeUser(hwModel: "NANOG1")
+		#expect(user.hardwareImage == "NANOG1")
+	}
+
+	@Test @MainActor func nanoG1Explorer() throws {
+		let user = try makeUser(hwModel: "NANOG1EXPLORER")
+		#expect(user.hardwareImage == "NANOG1")
+	}
+
+	@Test @MainActor func nanoG2Ultra() throws {
+		let user = try makeUser(hwModel: "NANOG2ULTRA")
+		#expect(user.hardwareImage == "NANOG2ULTRA")
+	}
+
+	@Test @MainActor func muziR1Neo() throws {
+		let user = try makeUser(hwModel: "MUZIR1NEO")
+		#expect(user.hardwareImage == "MUZIR1NEO")
+	}
+
+	@Test @MainActor func stationG2() throws {
+		let user = try makeUser(hwModel: "STATIONG2")
+		#expect(user.hardwareImage == "STATIONG2")
+	}
+
+	@Test @MainActor func thinkNodeM1() throws {
+		let user = try makeUser(hwModel: "THINKNODEM1")
+		#expect(user.hardwareImage == "THINKNODEM1")
+	}
+
+	@Test @MainActor func thinkNodeM2() throws {
+		let user = try makeUser(hwModel: "THINKNODEM2")
+		#expect(user.hardwareImage == "THINKNODEM2")
+	}
+
+	@Test @MainActor func thinkNodeM3() throws {
+		let user = try makeUser(hwModel: "THINKNODEM3")
+		#expect(user.hardwareImage == "THINKNODEM3")
+	}
+
+	@Test @MainActor func thinkNodeM4() throws {
+		let user = try makeUser(hwModel: "THINKNODEM4")
+		#expect(user.hardwareImage == "THINKNODEM4")
+	}
+
+	@Test @MainActor func rpiPico() throws {
+		let user = try makeUser(hwModel: "RPIPICO")
+		#expect(user.hardwareImage == "RPIPICO")
+	}
+}
+
+// MARK: - PositionEntity Computed Properties Tests
+
+@Suite("PositionEntity Computed Properties", .serialized)
+struct PositionEntityComputedTests {
+
+	@MainActor
+	private func makePosition(latI: Int32 = 0, lonI: Int32 = 0, precisionBits: Int32 = 32) throws -> PositionEntity {
+		let context = TestContainerProvider.shared.mainContext
+		let pos = PositionEntity()
+		pos.latitudeI = latI
+		pos.longitudeI = lonI
+		pos.precisionBits = precisionBits
+		context.insert(pos)
+		return pos
+	}
+
+	@Test @MainActor func latitude_zero_returnsZero() throws {
+		let pos = try makePosition(latI: 0)
+		#expect(pos.latitude == 0)
+	}
+
+	@Test @MainActor func latitude_positive() throws {
+		let pos = try makePosition(latI: 374_000_000) // ~37.4 degrees
+		let lat = pos.latitude!
+		#expect(abs(lat - 37.4) < 0.01)
+	}
+
+	@Test @MainActor func longitude_zero_returnsZero() throws {
+		let pos = try makePosition(lonI: 0)
+		#expect(pos.longitude == 0)
+	}
+
+	@Test @MainActor func longitude_negative() throws {
+		let pos = try makePosition(lonI: -1_220_000_000) // ~-122 degrees
+		let lon = pos.longitude!
+		#expect(abs(lon - (-122.0)) < 0.01)
+	}
+
+	@Test @MainActor func nodeCoordinate_bothZero_returnsNil() throws {
+		let pos = try makePosition(latI: 0, lonI: 0)
+		#expect(pos.nodeCoordinate == nil)
+	}
+
+	@Test @MainActor func nodeCoordinate_nonZero_returnsCoord() throws {
+		let pos = try makePosition(latI: 374_000_000, lonI: -1_220_000_000)
+		let coord = pos.nodeCoordinate
+		#expect(coord != nil)
+		#expect(abs(coord!.latitude - 37.4) < 0.01)
+		#expect(abs(coord!.longitude - (-122.0)) < 0.01)
+	}
+
+	@Test @MainActor func nodeLocation_bothZero_returnsNil() throws {
+		let pos = try makePosition(latI: 0, lonI: 0)
+		#expect(pos.nodeLocation == nil)
+	}
+
+	@Test @MainActor func nodeLocation_nonZero_returnsLocation() throws {
+		let pos = try makePosition(latI: 374_000_000, lonI: -1_220_000_000)
+		let loc = pos.nodeLocation
+		#expect(loc != nil)
+	}
+
+	@Test @MainActor func isPreciseLocation_32bits() throws {
+		let pos = try makePosition(precisionBits: 32)
+		#expect(pos.isPreciseLocation == true)
+	}
+
+	@Test @MainActor func isPreciseLocation_0bits() throws {
+		let pos = try makePosition(precisionBits: 0)
+		#expect(pos.isPreciseLocation == true)
+	}
+
+	@Test @MainActor func isPreciseLocation_16bits_notPrecise() throws {
+		let pos = try makePosition(precisionBits: 16)
+		#expect(pos.isPreciseLocation == false)
+	}
+
+	// `reducedPrecisionBits` previously only covered 12...15, so a node configured with any other
+	// valid PositionPrecision level (2...24) was neither precise nor reduced-precision and got
+	// dropped from the map entirely (see makePositionSnapshots' guard). Range is now 2...24 to
+	// match every value PositionPrecision actually defines.
+	@Test @MainActor func isReducedPrecision_16bits_isReduced() throws {
+		let pos = try makePosition(precisionBits: 16)
+		#expect(pos.isReducedPrecision == true)
+	}
+
+	@Test @MainActor func isReducedPrecision_8bits_isReduced() throws {
+		let pos = try makePosition(precisionBits: 8)
+		#expect(pos.isReducedPrecision == true)
+	}
+
+	@Test @MainActor func isReducedPrecision_13bits_isReduced() throws {
+		let pos = try makePosition(precisionBits: 13)
+		#expect(pos.isReducedPrecision == true)
+	}
+
+	@Test @MainActor func isReducedPrecision_32bits_isNotReduced() throws {
+		let pos = try makePosition(precisionBits: 32)
+		#expect(pos.isReducedPrecision == false)
+	}
+
+	@Test @MainActor func isReducedPrecision_0bits_isNotReduced() throws {
+		let pos = try makePosition(precisionBits: 0)
+		#expect(pos.isReducedPrecision == false)
+	}
+
+	@Test @MainActor func annotation_returnsPointAnnotation() throws {
+		let pos = try makePosition(latI: 374_000_000, lonI: -1_220_000_000)
+		let ann = pos.annotaton
+		#expect(abs(ann.coordinate.latitude - 37.4) < 0.01)
+	}
+
+	@Test @MainActor func fuzzedNodeCoordinate_bothZero_returnsNil() throws {
+		let pos = try makePosition(latI: 0, lonI: 0)
+		#expect(pos.fuzzedNodeCoordinate == nil)
+	}
+
+	@Test @MainActor func fuzzedNodeCoordinate_nonZero_slightlyOffset() throws {
+		let pos = try makePosition(latI: 374_000_000, lonI: -1_220_000_000)
+		let fuzzed = pos.fuzzedNodeCoordinate
+		#expect(fuzzed != nil)
+		let latDiff = abs(fuzzed!.latitude - 37.4)
+		#expect(latDiff < 0.001)
+	}
+}
+
+// MARK: - MessageEntity Computed Properties Tests
+
+@Suite("MessageEntity Computed Properties", .serialized)
+struct MessageEntityComputedTests {
+
+	@MainActor
+	private func makeMessage() throws -> (ModelContext, MessageEntity) {
+		let context = TestContainerProvider.shared.mainContext
+		let msg = MessageEntity()
+		context.insert(msg)
+		return (context, msg)
+	}
+
+	@Test @MainActor func hasTranslatedPayload_nil_returnsFalse() throws {
+		let (_, msg) = try makeMessage()
+		msg.messagePayloadTranslated = nil
+		#expect(msg.hasTranslatedPayload == false)
+	}
+
+	@Test @MainActor func hasTranslatedPayload_empty_returnsFalse() throws {
+		let (_, msg) = try makeMessage()
+		msg.messagePayloadTranslated = "   "
+		#expect(msg.hasTranslatedPayload == false)
+	}
+
+	@Test @MainActor func hasTranslatedPayload_content_returnsTrue() throws {
+		let (_, msg) = try makeMessage()
+		msg.messagePayloadTranslated = "Hola"
+		#expect(msg.hasTranslatedPayload == true)
+	}
+
+	@Test @MainActor func displayedPayload_noTranslation() throws {
+		let (_, msg) = try makeMessage()
+		msg.messagePayload = "Hello"
+		msg.messagePayloadTranslated = nil
+		#expect(msg.displayedPayload == "Hello")
+	}
+
+	@Test @MainActor func displayedPayload_nilPayload() throws {
+		let (_, msg) = try makeMessage()
+		msg.messagePayload = nil
+		#expect(msg.displayedPayload == "EMPTY MESSAGE")
+	}
+
+	@Test @MainActor func timestamp_convertsCorrectly() throws {
+		let (_, msg) = try makeMessage()
+		msg.messageTimestamp = 1700000000
+		let ts = msg.timestamp
+		#expect(ts == Date(timeIntervalSince1970: 1700000000))
+	}
+
+	@Test @MainActor func canRetry_noError_false() throws {
+		let (_, msg) = try makeMessage()
+		msg.ackError = 0 // NONE
+		#expect(msg.canRetry == false)
+	}
+
+	@Test @MainActor func displayTimestamp_firstMessage_returnsFalse() throws {
+		let (_, msg) = try makeMessage()
+		msg.messageTimestamp = 1700000000
+		#expect(msg.displayTimestamp(aboveMessage: nil) == false)
+	}
+
+	@Test @MainActor func displayTimestamp_withinHour_returnsFalse() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let above = MessageEntity()
+		above.messageTimestamp = 1700000000
+		context.insert(above)
+		let current = MessageEntity()
+		current.messageTimestamp = 1700000000 + 1800 // 30 min later
+		context.insert(current)
+		#expect(current.displayTimestamp(aboveMessage: above) == false)
+	}
+
+	@Test @MainActor func displayTimestamp_overHour_returnsTrue() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let above = MessageEntity()
+		above.messageTimestamp = 1700000000
+		context.insert(above)
+		let current = MessageEntity()
+		current.messageTimestamp = 1700000000 + 7200 // 2 hours later
+		context.insert(current)
+		#expect(current.displayTimestamp(aboveMessage: above) == true)
+	}
+}
+
+// MARK: - NodeInfoEntity Computed Properties Tests
+
+@Suite("NodeInfoEntity Computed Properties")
+struct NodeInfoEntityComputedTests {
+
+	@MainActor
+	private func makeNode() throws -> NodeInfoEntity {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let node = NodeInfoEntity()
+		context.insert(node)
+		return node
+	}
+
+	@Test @MainActor func latestPosition_noPositions_returnsNil() throws {
+		let node = try makeNode()
+		#expect(node.latestPosition == nil)
+	}
+
+	@Test @MainActor func hasPositions_noPositions_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasPositions == false)
+	}
+
+	@Test @MainActor func latestDeviceMetrics_noTelemetry_returnsNil() throws {
+		let node = try makeNode()
+		#expect(node.latestDeviceMetrics == nil)
+	}
+
+	@Test @MainActor func latestEnvironmentMetrics_noTelemetry_returnsNil() throws {
+		let node = try makeNode()
+		#expect(node.latestEnvironmentMetrics == nil)
+	}
+
+	@Test @MainActor func latestPowerMetrics_noTelemetry_returnsNil() throws {
+		let node = try makeNode()
+		#expect(node.latestPowerMetrics == nil)
+	}
+
+	@Test @MainActor func hasDeviceMetrics_noTelemetry_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasDeviceMetrics == false)
+	}
+
+	@Test @MainActor func hasEnvironmentMetrics_noTelemetry_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasEnvironmentMetrics == false)
+	}
+
+	@Test @MainActor func hasPowerMetrics_noTelemetry_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasPowerMetrics == false)
+	}
+
+	@Test @MainActor func hasPax_noPax_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasPax == false)
+	}
+
+	@Test @MainActor func hasTraceRoutes_noRoutes_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.hasTraceRoutes == false)
+	}
+
+	@Test @MainActor func safeTraceRoutes_includesPendingRoutes() throws {
+		let container = try makeTestContainer()
+		let context = container.mainContext
+		let node = NodeInfoEntity()
+		node.num = Int64.random(in: 900_000...999_999)
+		context.insert(node)
+
+		let pendingRoute = TraceRouteEntity()
+		pendingRoute.node = node
+		pendingRoute.time = Date().addingTimeInterval(-60)
+		pendingRoute.sent = true
+		pendingRoute.response = false
+		context.insert(pendingRoute)
+
+		let respondedRoute = TraceRouteEntity()
+		respondedRoute.node = node
+		respondedRoute.time = Date()
+		respondedRoute.sent = true
+		respondedRoute.response = true
+		context.insert(respondedRoute)
+
+		try context.save()
+
+		let routes = node.safeTraceRoutes()
+		#expect(node.hasTraceRoutes == true)
+		#expect(routes.count == 2)
+		#expect(routes[0].response == true)
+		#expect(routes[1].response == false)
+		#expect(routes.contains { $0.sent && !$0.response })
+	}
+
+	@Test @MainActor func isStoreForwardRouter_noConfig_returnsFalse() throws {
+		let node = try makeNode()
+		#expect(node.isStoreForwardRouter == false)
+	}
+
+	@Test @MainActor func isOnline_nullLastHeard_returnsFalse() throws {
+		let node = try makeNode()
+		node.lastHeard = nil
+		#expect(node.isOnline == false)
+	}
+
+	@Test @MainActor func isOnline_recentHeard_returnsTrue() throws {
+		let node = try makeNode()
+		node.lastHeard = Date()
+		#expect(node.isOnline == true)
+	}
+
+	@Test @MainActor func isOnline_oldHeard_returnsFalse() throws {
+		let node = try makeNode()
+		node.lastHeard = Date().addingTimeInterval(-3 * 3600) // 3 hours ago
+		#expect(node.isOnline == false)
+	}
+}
+
+// MARK: - ChannelEntity protoBuf Tests
+
+@Suite("ChannelEntity protoBuf", .serialized)
+struct ChannelEntityProtoBufTests {
+
+	@MainActor
+	private func makeChannel(positionPrecision: Int32 = 14, mute: Bool = false) throws -> ChannelEntity {
+		let context = TestContainerProvider.shared.mainContext
+		let channel = ChannelEntity()
+		channel.index = 1
+		channel.name = "Test"
+		channel.psk = Data(repeating: 0xAB, count: 32)
+		channel.role = 2
+		channel.positionPrecision = positionPrecision
+		channel.mute = mute
+		context.insert(channel)
+		return channel
+	}
+
+	@Test @MainActor func protoBuf_includesModuleSettings() throws {
+		let channel = try makeChannel(positionPrecision: 14)
+		let proto = channel.protoBuf
+		#expect(proto.settings.hasModuleSettings == true)
+		#expect(proto.settings.moduleSettings.positionPrecision == 14)
+	}
+
+	@Test @MainActor func protoBuf_zeroPositionPrecision_includesModuleSettings() throws {
+		let channel = try makeChannel(positionPrecision: 0)
+		let proto = channel.protoBuf
+		#expect(proto.settings.hasModuleSettings == true)
+		#expect(proto.settings.moduleSettings.positionPrecision == 0)
+	}
+
+	@Test @MainActor func protoBuf_muteFlag_included() throws {
+		let channel = try makeChannel(positionPrecision: 14, mute: true)
+		let proto = channel.protoBuf
+		#expect(proto.settings.moduleSettings.isMuted == true)
+	}
+}
+
+// MARK: - ChannelSettings moduleSettings for QR Import Tests
+
+@Suite("ChannelSettings QR Import moduleSettings")
+struct ChannelSettingsQRImportTests {
+
+	@Test func channelSettings_withoutModuleSettings_hasModuleSettingsFalse() {
+		// Simulates a QR-imported channel that has no moduleSettings
+		var cs = ChannelSettings()
+		cs.name = "TestChannel"
+		cs.psk = Data(repeating: 0xAB, count: 32)
+		#expect(cs.hasModuleSettings == false)
+	}
+
+	@Test func channelSettings_afterSettingPositionPrecision_hasModuleSettingsTrue() {
+		// Verifies that explicitly setting moduleSettings makes it present
+		var cs = ChannelSettings()
+		cs.name = "TestChannel"
+		cs.psk = Data(repeating: 0xAB, count: 32)
+		cs.moduleSettings.positionPrecision = 0
+		cs.moduleSettings.isMuted = false
+		#expect(cs.hasModuleSettings == true)
+		#expect(cs.moduleSettings.positionPrecision == 0)
+	}
+
+	@Test func channel_fromQRSettings_getsModuleSettingsAfterFix() {
+		// Simulates the fix: QR-imported ChannelSettings without moduleSettings
+		// gets moduleSettings explicitly set to defaults before sending to device
+		var cs = ChannelSettings()
+		cs.name = "Fr_Balise"
+		cs.psk = Data(repeating: 0xCD, count: 32)
+		// QR code doesn't include moduleSettings
+		#expect(cs.hasModuleSettings == false)
+
+		// Apply the fix: set moduleSettings when absent
+		var chan = Channel()
+		chan.role = .primary
+		chan.settings = cs
+		if !cs.hasModuleSettings {
+			chan.settings.moduleSettings.positionPrecision = 0
+			chan.settings.moduleSettings.isMuted = false
+		}
+
+		// Verify the channel now has moduleSettings with safe defaults
+		#expect(chan.settings.hasModuleSettings == true)
+		#expect(chan.settings.moduleSettings.positionPrecision == 0)
+		#expect(chan.settings.moduleSettings.isMuted == false)
+	}
+}
+
+// MARK: - userId format
+
+/// `toHex()` already prefixes "!", so a call site that interpolated another one
+/// produced "!!deadbeef". `findOrCreateUser` is the node-ingest path (a packet from a
+/// node whose NodeInfo has not arrived yet), and the value it writes is shown in
+/// message rows, matched against by node search, and exported as `userProto.id`.
+@Suite("User identifier format")
+struct UserIdentifierFormatTests {
+
+	@Test @MainActor func createUserWritesASingleBang() throws {
+		let context = try makeTestContainer().mainContext
+		let user = try createUser(num: 0xDEADBEEF, context: context)
+		#expect(user.userId == "!deadbeef")
+	}
+
+	@Test @MainActor func findOrCreateUserWritesASingleBang() throws {
+		let context = try makeTestContainer().mainContext
+		let user = findOrCreateUser(num: 0xDEADBEEF, context: context)
+		#expect(user.userId == "!deadbeef")
+	}
+
+	/// Both paths must agree — they are used interchangeably across ingest.
+	@Test @MainActor func bothPathsAgree() throws {
+		let context = try makeTestContainer().mainContext
+		let viaFind = findOrCreateUser(num: 0x1234ABCD, context: context)
+		let otherContext = try makeTestContainer().mainContext
+		let viaCreate = try createUser(num: 0x1234ABCD, context: otherContext)
+		#expect(viaFind.userId == viaCreate.userId)
+	}
+
+	@Test @MainActor func shortNameIsTheLastFourOfTheHex() throws {
+		let context = try makeTestContainer().mainContext
+		let user = findOrCreateUser(num: 0xDEADBEEF, context: context)
+		// Derived from the hex, so the stray "!" also skewed nothing here — pin it.
+		#expect(user.shortName == "beef")
+	}
+}

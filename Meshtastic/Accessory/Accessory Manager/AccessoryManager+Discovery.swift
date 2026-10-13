@@ -66,7 +66,12 @@ extension AccessoryManager {
 							}
 						}
 						
+						// Never auto-connect while a device switch is mid-flight: the switch's own
+						// connect must be the only one running, or its database clear/restore
+						// races a second node dump (nodes bleeding between radios).
 						if self.shouldAutomaticallyConnectToPreferredPeripheralAfterError, !userRequestedConnectionCancellation,
+						   !self.autoReconnectSuspendedForSession,
+						   !self.isSwitchingDevices,
 						   UserDefaults.autoconnectOnDiscovery, PowerManager.shared.allowsBackgroundAutoConnect,
 						   UserDefaults.preferredPeripheralId == newDevice.id.uuidString {
 							Logger.transport.debug("🔎 [Discovery] Found preferred peripheral \(newDevice.name)")

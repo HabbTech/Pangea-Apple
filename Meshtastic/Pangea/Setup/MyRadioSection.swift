@@ -10,7 +10,7 @@ import SwiftUI
 
 struct MyRadioSection: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@State private var showPairing = false
+	@EnvironmentObject private var pairRadio: PairRadioPresenter
 	@State private var confirmForget = false
 	@State private var isReconnecting = false
 	@State private var reconnectFailed = false
@@ -86,17 +86,22 @@ struct MyRadioSection: View {
 			HStack(spacing: 12) {
 				Image(systemName: accessoryManager.isConnected ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
 					.font(.title3)
-					.foregroundStyle(accessoryManager.isConnected ? Color.accentColor : .secondary)
+					.foregroundStyle(accessoryManager.isConnected ? Color.accentColor : Color(.secondaryLabel))
 					.frame(width: 28)
 				VStack(alignment: .leading, spacing: 2) {
 					Text(radioName)
 					Text(accessoryManager.state == .subscribed ? "Connected" : (accessoryManager.isConnecting ? "Connecting…" : "Not connected"))
 						.font(.caption)
-						.foregroundStyle(accessoryManager.state == .subscribed ? .green : .secondary)
+						.foregroundStyle(accessoryManager.state == .subscribed ? Color.green : Color(.secondaryLabel))
 				}
 			}
 			.onChange(of: accessoryManager.state) { _, _ in
 				isPaired = RadioPairing.isPaired
+			}
+			.onChange(of: accessoryManager.isConnected) { _, connected in
+				// A close that outlasted Forget's wait can still finish later: the radio is then
+				// disconnected (and still paired), so "couldn't disconnect" is no longer true.
+				if !connected { forgetFailed = false }
 			}
 			.sheet(item: $shownQR) { mine in
 				MyQRCodeSheet(mine: mine)
@@ -116,10 +121,10 @@ struct MyRadioSection: View {
 				.disabled(isReconnecting)
 			}
 			Button(isPaired ? "Pair a Different Radio" : "Pair a Radio") {
-				showPairing = true
+				pairRadio.isPresented = true
 			}
-			.sheet(isPresented: $showPairing, onDismiss: { isPaired = RadioPairing.isPaired }) {
-				PairRadioSheet()
+			.onChange(of: pairRadio.isPresented) { _, shown in
+				if !shown { isPaired = RadioPairing.isPaired }
 			}
 			if isPaired {
 				Button("Forget This Radio", role: .destructive) {

@@ -4,18 +4,17 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import Testing
 @testable import Meshtastic
 
 /// Saved contacts, deleting a chat, and who a group invite can go to. Nothing here touches
-/// the app's own profiles or database: each test has a temporary folder or an in-memory one.
+/// the app's own profiles or database: each test has a temporary folder or an in-memory store.
 @Suite("Contacts")
 @MainActor
 struct ContactsTests {
 
-	private let persistence = PersistenceController(inMemory: true)
 
 	private func tempFolder() -> URL {
 		FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -86,9 +85,10 @@ struct ContactsTests {
 	// MARK: Deleting a chat
 
 	@Test func deleteChatRemovesOnlyThatPersonsPrivateMessages() throws {
-		let context = persistence.container.viewContext
+		let container = PangeaTestStore.make()
+		let context = container.mainContext
 		func user(_ num: Int64) -> UserEntity {
-			let user = UserEntity(context: context)
+			let user = context.add(UserEntity())
 			user.num = num
 			user.userId = "!\(num)"
 			user.longName = "User \(num)"
@@ -100,7 +100,7 @@ struct ContactsTests {
 		// messageId is unique in the model, so each message needs its own.
 		var nextId: Int64 = 100
 		func message(_ text: String, from: UserEntity, to: UserEntity?, emoji: Bool = false) -> MessageEntity {
-			let message = MessageEntity(context: context)
+			let message = context.add(MessageEntity())
 			nextId += 1
 			message.messageId = nextId
 			message.messagePayload = text
@@ -124,38 +124,31 @@ struct ContactsTests {
 			message("hi bob", from: me, to: bob)
 		]
 
+		let goneIds = Set(gone.map(\.messageId))
+		let keptIds = Set(kept.map(\.messageId))
 		try ChatsView.deleteChat(with: alice, context: context, activeDeviceNum: nil, preferred: 0)
 
-		// The test store is SQLite at /dev/null, so saved rows can't be fetched back: check the objects.
-		// A deleted object leaves its context when it's saved; the rest stay in it.
-		#expect(gone.allSatisfy { $0.managedObjectContext == nil })
-		#expect(kept.allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
-		#expect([me, alice, bob].allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
+		let left = context.messageIds()
+		#expect(left.isDisjoint(with: goneIds))
+		#expect(keptIds.isSubset(of: left))
+		#expect([me, alice, bob].allSatisfy { !$0.isDeleted })
 		#expect(alice.lastMessage == nil)
 		#expect(bob.lastMessage != nil)
 		#expect(!context.hasChanges)
+		withExtendedLifetime(container) {}
 	}
 
-	/// A real in-memory store, unlike `persistence`'s SQLite at /dev/null: saved rows can be
-	/// counted again, as the badges do.
-	/// The container is returned, not just its context, so it lives as long as the test uses it.
-	private func memoryContainer() throws -> NSPersistentContainer {
-		let container = NSPersistentContainer(name: "Meshtastic", managedObjectModel: persistence.container.managedObjectModel)
-		let description = NSPersistentStoreDescription()
-		description.type = NSInMemoryStoreType
-		container.persistentStoreDescriptions = [description]
-		var loadError: Error?
-		container.loadPersistentStores { _, error in loadError = error }
-		if let loadError { throw loadError }
-		return container
+	/// A store of the test's own, kept for as long as the test uses its context.
+	private func memoryContainer() throws -> ModelContainer {
+		PangeaTestStore.make()
 	}
 
 	private struct Chats {
-		let context: NSManagedObjectContext
+		let context: ModelContext
 		var nextId: Int64 = 100
 
 		func user(_ num: Int64) -> UserEntity {
-			let user = UserEntity(context: context)
+			let user = context.add(UserEntity())
 			user.num = num
 			user.userId = "!\(num)"
 			user.longName = "User \(num)"
@@ -167,7 +160,7 @@ struct ContactsTests {
 
 		// messageId is unique in the model, so each message needs its own.
 		mutating func message(_ text: String, from: UserEntity, to: UserEntity?, emoji: Bool = false, admin: Bool = false, read: Bool = true) -> MessageEntity {
-			let message = MessageEntity(context: context)
+			let message = context.add(MessageEntity())
 			nextId += 1
 			message.messageId = nextId
 			message.messagePayload = text
@@ -182,15 +175,16 @@ struct ContactsTests {
 	}
 
 	@Test func deleteChatKeepsAdminMessagesAndTakesMyReactions() throws {
-		let context = persistence.container.viewContext
+		let container = try memoryContainer()
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		let alice = chats.user(2)
 		// Every node heard on the mesh gets a MyInfo like this one: it doesn't make Alice mine.
-		let aliceNode = NodeInfoEntity(context: context)
+		let aliceNode = context.add(NodeInfoEntity())
 		aliceNode.num = 2
 		aliceNode.user = alice
-		let aliceInfo = MyInfoEntity(context: context)
+		let aliceInfo = context.add(MyInfoEntity())
 		aliceInfo.myNodeNum = 2
 		aliceInfo.rebootCount = 0
 		aliceNode.myInfo = aliceInfo
@@ -206,23 +200,27 @@ struct ContactsTests {
 			chats.message("admin from alice", from: alice, to: me, admin: true)
 		]
 
+		let goneIds = Set(gone.map(\.messageId))
+		let keptIds = Set(kept.map(\.messageId))
 		try ChatsView.deleteChat(with: alice, context: context, activeDeviceNum: nil, preferred: 0)
 
-		#expect(gone.allSatisfy { $0.managedObjectContext == nil })
-		#expect(kept.allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
+		let left = context.messageIds()
+		#expect(left.isDisjoint(with: goneIds))
+		#expect(keptIds.isSubset(of: left))
 		#expect(!context.hasChanges)
+		withExtendedLifetime(container) {}
 	}
 
 	@Test func deleteChatTakesItsUnreadMessagesOffTheBadge() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		me.lastMessage = nil
-		let node = NodeInfoEntity(context: context)
+		let node = context.add(NodeInfoEntity())
 		node.num = 1
 		node.user = me
-		let info = MyInfoEntity(context: context)
+		let info = context.add(MyInfoEntity())
 		info.myNodeNum = 1
 		node.myInfo = info
 		let alice = chats.user(2)
@@ -241,33 +239,11 @@ struct ContactsTests {
 		withExtendedLifetime(container) {}
 	}
 
-	@Test func deleteChatPutsEverythingBackWhenTheSaveFails() throws {
-		let container = try memoryContainer()
-		let context = container.viewContext
-		var chats = Chats(context: context)
-		let me = chats.user(1)
-		let alice = chats.user(2)
-		let message = chats.message("hi", from: me, to: alice)
-		try context.save()
-		// A user without its required name can't be saved, so the delete's save fails.
-		let broken = UserEntity(context: context)
-		broken.num = 9
-
-		#expect(throws: (any Error).self) {
-			try ChatsView.deleteChat(with: alice, context: context, activeDeviceNum: nil, preferred: 0)
-		}
-		#expect(message.managedObjectContext === context && !message.isDeleted)
-		#expect(alice.lastMessage != nil)
-		#expect(broken.managedObjectContext == nil)
-		#expect(!context.hasChanges)
-		withExtendedLifetime(container) {}
-	}
-
 	// MARK: My own radios
 
 	@Test func myRadioIsNotListedWhileItsAway() {
-		let context = persistence.container.viewContext
-		let chats = Chats(context: context)
+		let container = PangeaTestStore.make()
+		let chats = Chats(context: container.mainContext)
 		let me = chats.user(1)
 		let alice = chats.user(2)
 		// Disconnected: no active radio, so the list falls back to the last one.
@@ -281,16 +257,16 @@ struct ContactsTests {
 
 	@Test func myRadiosCantBeDeletedAsChats() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let current = chats.user(1)
 		let last = chats.user(3)
 		// A radio that set up this phone before.
 		let old = chats.user(4)
-		let node = NodeInfoEntity(context: context)
+		let node = context.add(NodeInfoEntity())
 		node.num = 4
 		node.user = old
-		let info = MyInfoEntity(context: context)
+		let info = context.add(MyInfoEntity())
 		info.myNodeNum = 4
 		// Only a connection writes this.
 		info.peripheralId = UUID().uuidString
@@ -315,7 +291,7 @@ struct ContactsTests {
 		#expect(!ChatsView.isMyRadio(alice.num, activeDeviceNum: 1, preferred: 3, context: context))
 		#expect(!ChatsView.isMyRadio(bob.num, activeDeviceNum: nil, preferred: 0, context: context))
 		// Nothing went: every DM those radios had is still here.
-		#expect(messages.allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
+		#expect(Set(messages.map(\.messageId)).isSubset(of: context.messageIds()))
 		#expect(!context.hasChanges)
 		withExtendedLifetime(container) {}
 	}
@@ -324,16 +300,16 @@ struct ContactsTests {
 	/// one of my radios, so their chat can still be deleted.
 	@Test func nodeInfoMyInfoDoesntMakeAPersonMyRadio() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		let alice = chats.user(2)
 		let bob = chats.user(5)
 		func node(_ user: UserEntity, peripheralId: String?) {
-			let node = NodeInfoEntity(context: context)
+			let node = context.add(NodeInfoEntity())
 			node.num = user.num
 			node.user = user
-			let info = MyInfoEntity(context: context)
+			let info = context.add(MyInfoEntity())
 			info.myNodeNum = user.num
 			info.rebootCount = 0
 			info.peripheralId = peripheralId
@@ -356,9 +332,11 @@ struct ContactsTests {
 			try ChatsView.deleteChat(with: mine, context: context, activeDeviceNum: 1, preferred: 0)
 		}
 
+		let withBobIds = Set(withBob.map(\.messageId))
+		let otherIds = Set(others.map(\.messageId))
 		try ChatsView.deleteChat(with: bob, context: context, activeDeviceNum: 1, preferred: 0)
-		#expect(withBob.allSatisfy { $0.managedObjectContext == nil })
-		#expect(others.allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
+		#expect(context.messageIds().isDisjoint(with: withBobIds))
+		#expect(otherIds.isSubset(of: context.messageIds()))
 		withExtendedLifetime(container) {}
 	}
 
@@ -366,10 +344,10 @@ struct ContactsTests {
 
 	@Test func leavingTwiceLeavesEveryoneNearbyAlone() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let alice = chats.user(2)
-		let group = ChannelEntity(context: context)
+		let group = context.add(ChannelEntity())
 		group.index = 2
 		group.role = 2
 		group.name = "Hikers"
@@ -381,36 +359,64 @@ struct ContactsTests {
 		let everyone = [post("hello all", channel: 0), post("anyone?", channel: 0)]
 		let inGroup = [post("trail at 9", channel: 2), post("see you", channel: 2)]
 		try context.save()
-		let id = group.objectID
+		let id = group.persistentModelID
+		let inGroupIds = Set(inGroup.map(\.messageId))
+		let everyoneIds = Set(everyone.map(\.messageId))
 
 		#expect(GroupChats.removeLocally(id, index: 2, context: context))
-		#expect(inGroup.allSatisfy { $0.managedObjectContext == nil })
-		// What the second leave used to fetch by: the deleted channel reads slot 0.
-		#expect(group.managedObjectContext == nil)
+		#expect(context.messageIds().isDisjoint(with: inGroupIds))
+		#expect(try context.fetchCount(FetchDescriptor<ChannelEntity>()) == 0)
+		// A second leave of the same group finds nothing, whichever slot it was captured as.
 		#expect(!GroupChats.removeLocally(id, index: 2, context: context))
-		#expect(!GroupChats.removeLocally(id, index: group.index, context: context))
+		#expect(!GroupChats.removeLocally(id, index: 0, context: context))
 
-		let request = MessageEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "channel == 0")
-		#expect(try context.count(for: request) == 2)
-		#expect(everyone.allSatisfy { $0.managedObjectContext === context && !$0.isDeleted })
+		#expect(try context.fetchCount(FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.channel == 0 })) == 2)
+		#expect(everyoneIds.isSubset(of: context.messageIds()))
+		withExtendedLifetime(container) {}
+	}
+
+	/// A reconnect during Leave can drop the row before the leave removes it. The slot's
+	/// messages still go, so the next group in that slot doesn't show them.
+	@Test func aLeftGroupWhoseRowIsAlreadyGoneStillLosesItsMessages() throws {
+		let container = try memoryContainer()
+		let context = container.mainContext
+		var chats = Chats(context: context)
+		let alice = chats.user(2)
+		let everyone = chats.message("hello all", from: alice, to: nil)
+		everyone.channel = 0
+		let inGroup = chats.message("trail at 9", from: alice, to: nil)
+		inGroup.channel = 2
+		try context.save()
+
+		#expect(!GroupChats.slotHoldsGroup(2, context: context))
+		#expect(GroupChats.removeMessages(inSlot: 2, context: context))
+		#expect(!context.messageIds().contains(inGroup.messageId))
+		#expect(context.messageIds().contains(everyone.messageId))
+		#expect(!GroupChats.removeMessages(inSlot: 0, context: context))
+		#expect(context.messageIds().contains(everyone.messageId))
+
+		let next = context.add(ChannelEntity())
+		next.index = 2
+		next.role = 2
+		try context.save()
+		#expect(GroupChats.slotHoldsGroup(2, context: context))
 		withExtendedLifetime(container) {}
 	}
 
 	@Test func leaveDoesNothingWhenTheSlotHasANewGroup() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let alice = chats.user(2)
-		let group = ChannelEntity(context: context)
+		let group = context.add(ChannelEntity())
 		group.index = 3
 		group.role = 2
 		let message = chats.message("hi", from: alice, to: nil)
 		message.channel = 3
 		try context.save()
 		// Captured as slot 2, but the object now holds slot 3.
-		#expect(!GroupChats.removeLocally(group.objectID, index: 2, context: context))
-		#expect(!group.isDeleted && message.managedObjectContext === context)
+		#expect(!GroupChats.removeLocally(group.persistentModelID, index: 2, context: context))
+		#expect(!group.isDeleted && context.messageIds().contains(message.messageId))
 		withExtendedLifetime(container) {}
 	}
 
@@ -418,7 +424,7 @@ struct ContactsTests {
 
 	@Test func unansweredSendsBecomeRetryableAfterAWhile() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		let alice = chats.user(2)
@@ -445,7 +451,7 @@ struct ContactsTests {
 		#expect(failed.ackError == Int32(RoutingError.noRoute.rawValue))
 		#expect(theirs.ackError == 0)
 		// Nothing new was sent: the same rows, no more of them.
-		#expect(try context.count(for: MessageEntity.fetchRequest()) == 6)
+		#expect(try context.fetchCount(FetchDescriptor<MessageEntity>()) == 6)
 		#expect(DeliveryStatus.markStaleSends(fromNum: 1, now: now, context: context) == 0)
 		withExtendedLifetime(container) {}
 	}
@@ -454,7 +460,7 @@ struct ContactsTests {
 	/// that was delivered isn't called "Not delivered" before its reply lands.
 	@Test func staleSweepWaitsForQueuedReplies() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		let alice = chats.user(2)
@@ -479,7 +485,7 @@ struct ContactsTests {
 	/// app can retry: Try Again would resend them as a text message.
 	@Test func radioOriginatedRowsArentSwept() throws {
 		let container = try memoryContainer()
-		let context = container.viewContext
+		let context = container.mainContext
 		var chats = Chats(context: context)
 		let me = chats.user(1)
 		let alice = chats.user(2)

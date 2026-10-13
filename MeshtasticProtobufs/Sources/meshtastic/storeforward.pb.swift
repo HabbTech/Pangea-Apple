@@ -8,7 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -75,6 +79,10 @@ public struct StoreAndForward: Sendable {
     }
     set {variant = .text(newValue)}
   }
+
+  ///
+  /// Contains the original ID of the contained message.
+  public var originalID: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -341,7 +349,7 @@ fileprivate let _protobuf_package = "meshtastic"
 
 extension StoreAndForward: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StoreAndForward"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rr\0\u{1}stats\0\u{1}history\0\u{1}heartbeat\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rr\0\u{1}stats\0\u{1}history\0\u{1}heartbeat\0\u{1}text\0\u{3}original_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -397,6 +405,7 @@ extension StoreAndForward: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
           self.variant = .text(v)
         }
       }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.originalID) }()
       default: break
       }
     }
@@ -429,12 +438,16 @@ extension StoreAndForward: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
     }()
     case nil: break
     }
+    if self.originalID != 0 {
+      try visitor.visitSingularUInt32Field(value: self.originalID, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: StoreAndForward, rhs: StoreAndForward) -> Bool {
     if lhs.rr != rhs.rr {return false}
     if lhs.variant != rhs.variant {return false}
+    if lhs.originalID != rhs.originalID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

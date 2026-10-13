@@ -1,0 +1,292 @@
+//
+//  UserEntityExtension.swift
+//  Meshtastic
+//
+//  Copyright(c) Garth Vander Houwen 6/3/22.
+//
+
+import Foundation
+@preconcurrency import SwiftData
+import MeshtasticProtobufs
+
+extension UserEntity {
+	/// Local display name for this node (if set), otherwise the device longName. The device
+	/// shortName (avatar circle badge) is never overridden by a local display name -- it stays
+	/// the node's actual short code so it keeps matching what other nodes/clients see.
+	var displayLongName: String {
+		if let custom = NodeDisplayNameStore.displayName(for: num) {
+			return custom
+		}
+		return longName ?? "Unknown".localized
+	}
+
+	@MainActor
+	var messageList: [MessageEntity] {
+		guard let ctx = modelContext else { return [] }
+		let messages = (try? fetchIncomingMessages(context: ctx) + fetchOutgoingMessages(context: ctx)) ?? []
+		return messages.sorted {
+			if $0.messageTimestamp == $1.messageTimestamp {
+				return $0.messageId < $1.messageId
+			}
+			return $0.messageTimestamp < $1.messageTimestamp
+		}
+	}
+
+	@MainActor
+	var mostRecentMessage: MessageEntity? {
+		guard let ctx = modelContext, self.lastMessage != nil else { return nil }
+		let incoming = try? fetchIncomingMessages(context: ctx, limit: 1).first
+		let outgoing = try? fetchOutgoingMessages(context: ctx, limit: 1).first
+		switch (incoming, outgoing) {
+		case let (incoming?, outgoing?):
+			if incoming.messageTimestamp == outgoing.messageTimestamp {
+				return incoming.messageId > outgoing.messageId ? incoming : outgoing
+			}
+			return incoming.messageTimestamp > outgoing.messageTimestamp ? incoming : outgoing
+		case let (incoming?, nil):
+			return incoming
+		case let (nil, outgoing?):
+			return outgoing
+		case (nil, nil):
+			return nil
+		}
+	}
+
+	@MainActor
+	var sensorMessageList: [MessageEntity] {
+		guard let ctx = modelContext else { return [] }
+		let userNum = self.num
+		let portNum: Int32 = 10
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> { $0.fromUser?.num == userNum && $0.portNum == portNum },
+			sortBy: [SortDescriptor(\MessageEntity.messageTimestamp)]
+		)
+		return (try? ctx.fetch(descriptor)) ?? []
+	}
+
+	@MainActor
+	func unreadMessages(context: ModelContext, skipLastMessageCheck: Bool = false) -> Int {
+		guard self.lastMessage != nil || skipLastMessageCheck else { return 0 }
+		guard let ctx = modelContext else { return 0 }
+		return ((try? fetchIncomingMessageCount(context: ctx, unreadOnly: true)) ?? 0)
+			+ ((try? fetchOutgoingMessageCount(context: ctx, unreadOnly: true)) ?? 0)
+	}
+
+	@MainActor
+	var unreadMessages: Int { unreadMessages(context: PersistenceController.shared.context) }
+
+	@MainActor
+	private func fetchIncomingMessages(context: ModelContext, limit: Int? = nil) throws -> [MessageEntity] {
+		let userNum = self.num
+		let portNum: Int32 = 10
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> {
+				$0.fromUser?.num == userNum
+				&& $0.toUser != nil
+				&& $0.isEmoji == false && $0.admin == false && $0.portNum != portNum
+			},
+			sortBy: [
+				SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse),
+				SortDescriptor(\MessageEntity.messageId, order: .reverse)
+			]
+		)
+		if let limit {
+			descriptor.fetchLimit = limit
+		}
+		return try context.fetch(descriptor)
+	}
+
+	@MainActor
+	private func fetchOutgoingMessages(context: ModelContext, limit: Int? = nil) throws -> [MessageEntity] {
+		let userNum = self.num
+		let portNum: Int32 = 10
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> {
+				$0.toUser?.num == userNum
+				&& $0.isEmoji == false && $0.admin == false && $0.portNum != portNum
+			},
+			sortBy: [
+				SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse),
+				SortDescriptor(\MessageEntity.messageId, order: .reverse)
+			]
+		)
+		if let limit {
+			descriptor.fetchLimit = limit
+		}
+		return try context.fetch(descriptor)
+	}
+
+	@MainActor
+	private func fetchIncomingMessageCount(context: ModelContext, unreadOnly: Bool) throws -> Int {
+		let userNum = self.num
+		let portNum: Int32 = 10
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> {
+				$0.fromUser?.num == userNum
+				&& $0.toUser != nil
+				&& (!unreadOnly || $0.read == false)
+				&& $0.isEmoji == false && $0.admin == false && $0.portNum != portNum
+			}
+		)
+		return try context.fetchCount(descriptor)
+	}
+
+	@MainActor
+	private func fetchOutgoingMessageCount(context: ModelContext, unreadOnly: Bool) throws -> Int {
+		let userNum = self.num
+		let portNum: Int32 = 10
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> {
+				$0.toUser?.num == userNum
+				&& (!unreadOnly || $0.read == false)
+				&& $0.isEmoji == false && $0.admin == false && $0.portNum != portNum
+			}
+		)
+		return try context.fetchCount(descriptor)
+	}
+
+	/// SVG Images for Vendors who are signed project backers
+	var hardwareImage: String? {
+		guard let hwModel else { return nil }
+		switch hwModel {
+		/// Heltec
+		case "HELTECHT62":
+			return "HELTECHT62"
+		case "HELTECMESHNODET114":
+			return "HELTECMESHNODET114"
+		case "HELTECV3":
+			return "HELTECV3"
+		case "HELTECV4":
+			return "HELTECV4"
+		case "HELTECMESHPOCKET":
+			return "HELTECMESHPOCKET"
+		case "HELTECVISIONMASTERE213":
+			return "HELTECVISIONMASTERE213"
+		case "HELTECVISIONMASTERE290":
+			return "HELTECVISIONMASTERE290"
+		case "HELTECWIRELESSPAPER", "HELTECWIRELESSPAPERV10":
+			return "HELTECWIRELESSPAPER"
+		case "HELTECWIRELESSTRACKER", "HELTECWIRELESSTRACKERV10":
+			return "HELTECWIRELESSTRACKER"
+		case "HELTECWSLV3":
+			return "HELTECWSLV3"
+		/// LilyGO
+		case "TDECK":
+			return "TDECK"
+		case "TECHO":
+			return "TECHO"
+		case "TWATCHS3":
+			return "TWATCHS3"
+		case "LILYGOTBEAMS3CORE":
+			return "LILYGOTBEAMS3CORE"
+		case "TBEAM", "TBEAM_V0P7":
+			return "TBEAM"
+		case "TLORAC6":
+			return "TLORAC6"
+		case "TLORAT3S3EPAPER":
+			return "TLORAT3S3EPAPER"
+		case "TLORAT3S3V1", "TLORAT3S3":
+			return "TLORAT3S3V1"
+		case "TLORAV211P6":
+			return "TLORAV211P6"
+		case "TLORAV211P8":
+			return "TLORAV211P8"
+		/// Seeed Studio
+		case "SENSECAPINDICATOR":
+			return "SENSECAPINDICATOR"
+		case "TRACKERT1000E":
+			return "TRACKERT1000E"
+		case "SEEEDXIAOS3":
+			return "SEEEDXIAOS3"
+		case "WIOWM1110":
+			return "WIOWM1110"
+		case "SEEEDSOLARNODE":
+			return "SEEEDSOLARNODE"
+		case "SEEEDWIOTRACKERL1":
+			return "SEEEDWIOTRACKERL1"
+		/// RAK Wireless
+		case "RAK4631":
+			return "RAK4631"
+		case "RAK11310":
+			return "RAK11310"
+		case "WISMESHTAP":
+			return "WISMESHTAP"
+		/// B&Q Consulting
+		case "NANOG1", "NANOG1EXPLORER":
+			return "NANOG1"
+		case "NANOG2ULTRA":
+			return "NANOG2ULTRA"
+		/// Muzi Works
+		case "MUZIR1NEO":
+			return "MUZIR1NEO"
+		case "STATIONG2":
+			return "STATIONG2"
+		/// Elecrow
+		case "THINKNODEM1":
+			return "THINKNODEM1"
+		case "THINKNODEM2":
+			return "THINKNODEM2"
+		case "THINKNODEM3":
+			return "THINKNODEM3"
+		case "THINKNODEM4":
+			return "THINKNODEM4"
+		/// DIY Devices
+		case "RPIPICO":
+			return "RPIPICO"
+		default:
+			return "UNSET"
+		}
+	}
+}
+
+func createUser(num: Int64, context: ModelContext) throws -> UserEntity {
+	// Validate Input
+	guard num >= 0 else {
+		throw PersistenceError.invalidInput(message: "User number cannot be negative.")
+	}
+
+	// Return an existing user for this num rather than inserting a duplicate. UserEntity.num is
+	// @Attribute(.unique); SwiftData resolves unique collisions only against the SAVED store, so
+	// two un-saved inserts with the same num (e.g. crafted back-to-back mesh packets from a new
+	// node inside the debounced-save window) would trap with a fatal SwiftData assertion. Mirror
+	// findOrCreateUser: check the saved store AND pending inserts before creating.
+	var existingDescriptor = FetchDescriptor<UserEntity>(predicate: #Predicate<UserEntity> { $0.num == num })
+	existingDescriptor.fetchLimit = 1
+	if let existing = (try? context.fetch(existingDescriptor))?.first {
+		return existing
+	}
+	if let pending = context.insertedModelsArray.lazy
+		.compactMap({ $0 as? UserEntity })
+		.first(where: { $0.num == num }) {
+		return pending
+	}
+
+	let newUser = UserEntity()
+	newUser.num = num
+	let userId = num.toHex()
+	newUser.userId = userId
+	let last4 = String(userId.suffix(4))
+	newUser.longName = placeholderLongName(last4: last4)
+	newUser.shortName = last4
+	newUser.hwModel = "UNSET"
+	newUser.unmessagable = false
+	context.insert(newUser)
+	return newUser
+}
+
+enum PersistenceError: Error, LocalizedError {
+	case invalidInput(message: String)
+	case saveFailed(message: String)
+	case entityCreationFailed(message: String)
+
+	var errorDescription: String? {
+		switch self {
+		case .invalidInput(let message):
+			return "Persistence Input Error: \(message)"
+		case .saveFailed(let message):
+			return "Persistence Save Error: \(message)"
+		case .entityCreationFailed(let message):
+			return "Persistence Entity Creation Error: \(message)"
+		}
+	}
+}

@@ -8,28 +8,28 @@ import SwiftUI
 import OSLog
 
 struct PositionLog: View {
-	@Environment(\.managedObjectContext) var context
+	private let visiblePositionLimit = 1_000
+
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@Environment(\.verticalSizeClass) var verticalSizeClass: UserInterfaceSizeClass?
-	@Environment(\.horizontalSizeClass) var horizontalSizeClass: UserInterfaceSizeClass?
-	var useGrid: Bool {
-		let result = (verticalSizeClass == .regular || verticalSizeClass == .compact) && horizontalSizeClass == .compact
-		return result
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsWideTable: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
 	}
 	@State var isExporting = false
 	@State var exportString = ""
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
 	@State private var isPresentingClearLogConfirm = false
 	@State private var sortOrder = [KeyPathComparator(\PositionEntity.time)]
+	@State private var positions: [PositionEntity] = []
+	@State private var totalPositionCount = 0
 
 	var body: some View {
 		VStack {
-			if node.hasPositions {
-				let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-				let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
-				if UIDevice.current.userInterfaceIdiom == .pad && !useGrid || UIDevice.current.userInterfaceIdiom == .mac {
-					// Add a table for mac and ipad
-					let positions = node.positions?.reversed() as? [PositionEntity] ?? []
+			if totalPositionCount > 0 {
+				if showsWideTable {
 					Table(positions, sortOrder: $sortOrder) {
 						TableColumn("Latitude") { position in
 							Text(String(format: "%.5f", position.latitude ?? 0))
@@ -60,7 +60,7 @@ struct PositionLog: View {
 							Text("\(String(format: "%.2f", position.snr)) dB")
 						}
 						TableColumn("Time Stamp") { position in
-							Text(position.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
+							Text(position.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 						}
 						.width(min: 180)
 					}
@@ -93,8 +93,7 @@ struct PositionLog: View {
 									.font(.caption2)
 									.fontWeight(.bold)
 							}
-							if let positions = node.positions?.reversed() as? [PositionEntity] {
-								ForEach(positions, id: \.self) { (mappin: PositionEntity) in
+							ForEach(positions, id: \.self) { (mappin: PositionEntity) in
 									let altitude = Measurement(value: Double(mappin.altitude), unit: UnitLength.meters)
 									GridRow {
 										Text(String(format: "%.5f", mappin.latitude ?? 0))
@@ -105,14 +104,19 @@ struct PositionLog: View {
 											.font(.caption2)
 										Text(altitude.formatted())
 											.font(.caption2)
-										Text(mappin.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
+									Text(mappin.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 											.font(.caption2)
 									}
 								}
-							}
 						}
 					}
 					.padding(.leading)
+				}
+				if totalPositionCount > positions.count {
+					Text(String.localizedStringWithFormat("Showing latest %lld of %lld positions. Export includes all positions.".localized, positions.count, totalPositionCount))
+						.font(.caption2)
+						.foregroundColor(.secondary)
+						.padding(.horizontal)
 				}
 				HStack {
 					Button(role: .destructive) {
@@ -134,6 +138,8 @@ struct PositionLog: View {
 							Task {
 								if await MeshPackets.shared.clearPositions(destNum: node.num) {
 									Logger.services.info("Successfully Cleared Position Log")
+									refreshPositions()
+									NotificationCenter.default.post(name: .nodeLogAvailabilityDidChange, object: node.num)
 								} else {
 									Logger.services.error("Clear Position Log Failed")
 								}
@@ -141,7 +147,7 @@ struct PositionLog: View {
 						}
 					}
 					Button {
-						exportString = positionToCsvFile(positions: node.positions!.array as? [PositionEntity] ?? [])
+						exportString = positionToCsvFile(positions: node.positionsSortedByTime(context: context, ascending: true))
 						isExporting = true
 					} label: {
 						Label("Save", systemImage: "square.and.arrow.down")
@@ -156,7 +162,7 @@ struct PositionLog: View {
 					isPresented: $isExporting,
 					document: CsvDocument(emptyCsv: exportString),
 					contentType: .commaSeparatedText,
-					defaultFilename: String("\(node.user?.longName ?? "Node") Position Log"),
+					defaultFilename: CsvDocument.exportFilename("\(node.user?.longName ?? "Node") Position Log \(Date.now.exportTimestamp)"),
 					onCompletion: { result in
 						switch result {
 						case .success:
@@ -172,25 +178,37 @@ struct PositionLog: View {
 				ContentUnavailableView("No Positions", systemImage: "mappin.slash")
 			}
 		}
-		.navigationTitle("Position Log \(node.positions?.count ?? 0) Points")
-		.navigationBarItems(
-			trailing:
-				ZStack {
-					ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+		.navigationTitle("Position Log \(totalPositionCount) Points")
+		.onAppear {
+			refreshPositions()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshPositions()
+		}
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
+	}
 
-		})
+	private func refreshPositions() {
+		totalPositionCount = node.positionCount(context: context)
+		positions = node.positionsSortedByTime(context: context, ascending: false, limit: visiblePositionLimit)
 	}
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return PositionLog(node: node)
+	PositionLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

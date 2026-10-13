@@ -10,9 +10,14 @@ import OSLog
 
 struct DeviceMetricsLog: View {
 
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsStackedReadings: Bool {
+		horizontalSizeClass != .regular || UIDevice.current.userInterfaceIdiom == .phone
+	}
 
 	@State private var isPresentingClearLogConfirm: Bool = false
 	@State var isExporting = false
@@ -21,21 +26,19 @@ struct DeviceMetricsLog: View {
 	@State private var batteryChartColor: Color = .blue
 	@State private var airtimeChartColor: Color = .yellow
 	@State private var channelUtilizationChartColor: Color = .green
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
+	@State private var deviceMetrics: [TelemetryEntity] = []
+	@State private var chartData: [TelemetryEntity] = []
+	@State private var totalReadings = 0
 	@State private var sortOrder = [KeyPathComparator(\TelemetryEntity.time, order: .reverse)]
 	@State private var selection: TelemetryEntity.ID?
 	@State private var chartSelection: Date?
 
 	var body: some View {
 		VStack {
-			if node.hasDeviceMetrics {
-				let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())
-				let deviceMetrics = node.telemetries?.filtered(using: NSPredicate(format: "metricsType == 0")).reversed() as? [TelemetryEntity] ?? []
-				let chartData = deviceMetrics
-						.filter { $0.time != nil && $0.time! >= oneWeekAgo! }
-						.sorted { $0.time! < $1.time! }
+			if totalReadings > 0 {
 				if chartData.count > 0 {
-					GroupBox(label: Label("\(deviceMetrics.count) Readings Total", systemImage: "chart.xyaxis.line")) {
+					GroupBox(label: Label("\(totalReadings) Readings Total", systemImage: "chart.xyaxis.line")) {
 						Chart {
 							ForEach(chartData, id: \.self) { point in
 								if let pointTime = point.time {
@@ -46,8 +49,8 @@ struct DeviceMetricsLog: View {
 												y: .value("y", batteryLevel)
 											)
 										}
-										.accessibilityLabel("Line Series")
-										.accessibilityValue("X: \(pointTime), Y: \(batteryLevel)")
+										.accessibilityLabel(String(localized: "Battery level at \(pointTime.formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for a battery-level point on the device metrics chart. %@ is the timestamp."))
+										.accessibilityValue(String(localized: "\(batteryLevel.formatted()) percent", comment: "VoiceOver value spoken as a percentage reading on a chart. %@ is the number."))
 										.foregroundStyle(batteryChartColor)
 										.interpolationMethod(.linear)
 									}
@@ -59,13 +62,14 @@ struct DeviceMetricsLog: View {
 											)
 											.symbolSize(25)
 										}
-										.accessibilityLabel("Line Series")
-										.accessibilityValue("X: \(pointTime), Y: \(channelUtilization)")
+										.accessibilityLabel(String(localized: "Channel utilization at \(pointTime.formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for a channel-utilization point on the device metrics chart. %@ is the timestamp."))
+										.accessibilityValue(String(localized: "\(channelUtilization.formatted()) percent", comment: "VoiceOver value spoken as a percentage reading on a chart. %@ is the number."))
 										.foregroundStyle(channelUtilizationChartColor)
 									}
 									if let chartSelection {
 										RuleMark(x: .value("Second", chartSelection, unit: .second))
 											.foregroundStyle(.tertiary.opacity(0.5))
+											.accessibilityHidden(true)
 									}
 									if let airUtilTx = point.airUtilTx {
 										Plot {
@@ -75,8 +79,8 @@ struct DeviceMetricsLog: View {
 											)
 											.symbolSize(25)
 										}
-										.accessibilityLabel("Line Series")
-										.accessibilityValue("X: \(pointTime), Y: \(airUtilTx)")
+										.accessibilityLabel(String(localized: "Airtime at \(pointTime.formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for an airtime point on the device metrics chart. %@ is the timestamp."))
+										.accessibilityValue(String(localized: "\(airUtilTx.formatted()) percent", comment: "VoiceOver value spoken as a percentage reading on a chart. %@ is the number."))
 										.foregroundStyle(airtimeChartColor)
 									}
 								}
@@ -84,9 +88,11 @@ struct DeviceMetricsLog: View {
 							RuleMark(y: .value("Network Status Orange", 25))
 								.lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 10]))
 								.foregroundStyle(.orange)
+								.accessibilityHidden(true)
 							RuleMark(y: .value("Network Status Red", 50))
 								.lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 10]))
 								.foregroundStyle(.red)
+								.accessibilityHidden(true)
 						}
 						.chartXAxis(content: {
 							AxisMarks(position: .top)
@@ -95,52 +101,53 @@ struct DeviceMetricsLog: View {
 						.chartXSelection(value: $chartSelection)
 						.chartYScale(domain: 0...100)
 						.chartForegroundStyleScale([
-							idiom == .phone ? "Battery" : "Battery Level": batteryChartColor,
-							"Channel Utilization": channelUtilizationChartColor,
-							"Airtime": airtimeChartColor
+							(horizontalSizeClass == .regular ? "Battery Level".localized : "Battery".localized): batteryChartColor,
+							"Channel Utilization".localized: channelUtilizationChartColor,
+							"Airtime".localized: airtimeChartColor
 						])
 						.chartLegend(position: .automatic, alignment: .bottom)
 					}
 					.frame(minHeight: 240)
 				}
-				let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMdjmma", options: 0, locale: Locale.current)
-				let dateFormatString = (localeDateFormat ?? "M/d/YY j:mma").replacingOccurrences(of: ",", with: "")
-				if idiom == .phone {
-					/// Single Cell Compact display for phones
+				if showsStackedReadings {
+					/// Single cell. On iPhone this is the only column Table draws.
 					Table(deviceMetrics, selection: $selection, sortOrder: $sortOrder) {
 						TableColumn("Battery Level") { dm in
-							HStack {
-								Text(dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
-									.font(.caption)
-									.fontWeight(.semibold)
-								Spacer()
-								Image(systemName: "bolt")
-									.font(.caption)
-									.symbolRenderingMode(.multicolor)
-								Text("Volts \(dm.voltage?.formatted(.number.precision(.fractionLength(2))) ?? Constants.nilValueIndicator)")
-									.font(.caption2)
-								BatteryCompact(batteryLevel: dm.batteryLevel, font: .caption, iconFont: .callout, color: .accentColor)
-							}
-							HStack {
-								if let channelUtilization = dm.channelUtilization {
-									// Text("Channel Utilization \(String(format: "%.2f%%", channelUtilization))")
-									Text("Channel Utilization \(channelUtilization.formatted(.number.precision(.fractionLength(2))))%")
-										.foregroundColor(channelUtilization < 25 ? .green : (channelUtilization > 50 ? .red : .orange))
-								} else {
-									Text("Channel Utilization " + Constants.nilValueIndicator)
-										.foregroundColor(.gray)
+							Group {
+								HStack {
+									Text(dm.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
+										.font(.caption)
+										.fontWeight(.semibold)
+									Spacer()
+									Image(systemName: "bolt")
+										.font(.caption)
+										.symbolRenderingMode(.multicolor)
+									Text("Volts \(dm.voltage?.formatted(.number.precision(.fractionLength(2))) ?? Constants.nilValueIndicator)")
+										.font(.caption2)
+									BatteryCompact(batteryLevel: dm.batteryLevel, font: .caption, iconFont: .callout, color: .accentColor)
 								}
-								// Keep "Airtime" separate here as to avoid creating a new localization key
-								Text("Airtime") + Text(" \(dm.airUtilTx?.formatted(.number.precision(.fractionLength(2))) ?? Constants.nilValueIndicator)%")
-									.foregroundColor(.secondary)
-								Spacer()
+								HStack {
+									if let channelUtilization = dm.channelUtilization {
+										// Text("Channel Utilization \(String(format: "%.2f%%", channelUtilization))")
+										Text("Channel Utilization \(channelUtilization.formatted(.number.precision(.fractionLength(2))))%")
+											.foregroundColor(channelUtilization < 25 ? .green : (channelUtilization > 50 ? .red : .orange))
+									} else {
+										Text("Channel Utilization " + Constants.nilValueIndicator)
+											.foregroundColor(.gray)
+									}
+									// Keep "Airtime" separate here as to avoid creating a new localization key
+									Text("Airtime") + Text(" \(dm.airUtilTx?.formatted(.number.precision(.fractionLength(2))) ?? Constants.nilValueIndicator)%")
+										.foregroundColor(.secondary)
+									Spacer()
+								}
+								.font(.caption)
 							}
-							.font(.caption)
+							.accessibilityElement(children: .combine)
 						}
 						.width(ideal: 200, max: .infinity)
 					}
 				} else {
-					/// Multi Column table for ipads and mac
+					/// Columns for iPad and Mac, where Table shows them.
 					Table(deviceMetrics, selection: $selection, sortOrder: $sortOrder) {
 						TableColumn("Battery Level") { dm in
 							if dm.batteryLevel ?? 0 > 100 {
@@ -177,7 +184,7 @@ struct DeviceMetricsLog: View {
 						}
 						.width(min: 100)
 						TableColumn("Timestamp") { dm in
-							Text(dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
+							Text(dm.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 						}
 						.width(min: 180)
 					}
@@ -190,7 +197,7 @@ struct DeviceMetricsLog: View {
 					}
 					.buttonStyle(.bordered)
 					.buttonBorderShape(.capsule)
-					.controlSize(idiom == .phone ? .regular : .large)
+					.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 					.padding(.bottom)
 					.padding(.leading)
 					.confirmationDialog(
@@ -202,6 +209,10 @@ struct DeviceMetricsLog: View {
 							Task {
 								if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 0) {
 									Logger.data.notice("Cleared Device Metrics for \(node.num, privacy: .public)")
+									await MainActor.run {
+										refreshMetrics()
+										NotificationCenter.default.post(name: .nodeLogAvailabilityDidChange, object: node.num)
+									}
 								} else {
 									Logger.data.error("Clear Device Metrics Log Failed")
 								}
@@ -217,7 +228,7 @@ struct DeviceMetricsLog: View {
 					}
 					.buttonStyle(.bordered)
 					.buttonBorderShape(.capsule)
-					.controlSize(idiom == .phone ? .regular : .large)
+					.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 					.padding(.bottom)
 					.padding(.trailing)
 				}
@@ -231,39 +242,59 @@ struct DeviceMetricsLog: View {
 				ContentUnavailableView("No Device Metrics", systemImage: "slash.circle")
 			}
 		}
+		.onAppear {
+			refreshMetrics()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshMetrics()
+		}
 		.navigationTitle("Device Metrics Log")
 		.navigationBarTitleDisplayMode(.inline)
-		.navigationBarItems(trailing:
-			ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
-		.fileExporter(
-			isPresented: $isExporting,
-			document: CsvDocument(emptyCsv: exportString),
-			contentType: .commaSeparatedText,
-			defaultFilename: String("\(node.user?.longName ?? "Node") \("Device Metrics Log".localized)"),
-			onCompletion: { result in
-				switch result {
-				case .success:
-					self.isExporting = false
-					Logger.services.info("Device metrics log download succeeded.")
-				case .failure(let error):
-					Logger.services.error("Device metrics log download failed: \(error.localizedDescription, privacy: .public)")
-				}
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
 			}
+		}
+			.fileExporter(
+				isPresented: $isExporting,
+				document: CsvDocument(emptyCsv: exportString),
+				contentType: .commaSeparatedText,
+				defaultFilename: CsvDocument.exportFilename("\(node.user?.longName ?? "Node") \("Device Metrics Log".localized) \(Date.now.exportTimestamp)"),
+				onCompletion: { result in
+					switch result {
+					case .success:
+						self.isExporting = false
+						Logger.services.info("Device metrics log download succeeded.")
+					case .failure(let error):
+						Logger.services.error("Device metrics log download failed: \(error.localizedDescription, privacy: .public)")
+					}
+				}
+			)
+	}
+
+	private func refreshMetrics() {
+		totalReadings = node.telemetryCount(ofType: 0, context: context)
+		deviceMetrics = node.safeTelemetries(ofType: 0)
+		let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
+		chartData = downsampledForChart(
+			deviceMetrics
+				.filter { ($0.time ?? Date.distantPast) >= oneWeekAgo }
+				.sorted { ($0.time ?? .distantPast) < ($1.time ?? .distantPast) }
 		)
 	}
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return DeviceMetricsLog(node: node)
+	DeviceMetricsLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

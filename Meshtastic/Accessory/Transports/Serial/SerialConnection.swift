@@ -37,6 +37,7 @@ actor SerialConnection: Connection {
 	private var fd: Int32 = -1
 	private var fileHandle: FileHandle?
 	private var isOpen: Bool = false
+	private var isDisconnecting = false
 
 	// For DispatchSourceRead implementation
 	private var readSource: DispatchSourceRead?
@@ -79,10 +80,13 @@ actor SerialConnection: Connection {
 
 			let payload = readBuffer.subdata(in: 4..<totalPacketLength)
 
-			if let fromRadio = try? FromRadio(serializedBytes: payload) {
+			switch FromRadioDecoder.classify(payload) {
+			case .decoded(let fromRadio):
 				eventStreamContinuation?.yield(.data(fromRadio))
-			} else {
-				Logger.transport.error("🔱 [Serial] Failed to deserialize payload. Skipping packet.")
+			case .skipInvalidUTF8(let error):
+				Logger.transport.error("🔱 [Serial] Skipping FromRadio frame with invalid UTF-8 (\(payload.count) bytes): \(error, privacy: .public)")
+			case .failed(let error):
+				Logger.transport.error("🔱 [Serial] Failed to deserialize payload, skipping packet: \(error, privacy: .public)")
 			}
 
 			readBuffer.removeSubrange(0..<totalPacketLength)
@@ -111,7 +115,10 @@ actor SerialConnection: Connection {
 		// The cancellation handler also hops back to the actor to clean up.
 		source.setCancelHandler { [weak self] in
 			Task {
-				try? await self?.disconnect(withError: AccessoryError.disconnected("Serial connection lost"), shouldReconnect: true)
+				guard let self else { return }
+				let shouldEmitDisconnect = await self.shouldHandleReadSourceCancellation()
+				guard shouldEmitDisconnect else { return }
+				try? await self.disconnect(withError: AccessoryError.disconnected("Serial connection lost"), shouldReconnect: true)
 			}
 		}
 
@@ -154,6 +161,7 @@ actor SerialConnection: Connection {
 	// MARK: - Connection Lifecycle
 
 	func connect() async throws -> AsyncStream<ConnectionEvent> {
+		isDisconnecting = false
 		fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK)
 		if fd == -1 {
 			throw POSIXError(POSIXErrorCode(rawValue: errno)!)
@@ -193,6 +201,9 @@ actor SerialConnection: Connection {
 	}
 
 	func disconnect(withError error: Error? = nil, shouldReconnect: Bool) throws {
+		guard !isDisconnecting else { return }
+		isDisconnecting = true
+
 		if let error {
 			// Inform the AccessoryManager of the error and intent to reconnect
 			if shouldReconnect {
@@ -213,7 +224,12 @@ actor SerialConnection: Connection {
 			fd = -1
 			readSource?.cancel()
 			readSource = nil
-		}		
+		}
+	}
+
+	private func shouldHandleReadSourceCancellation() -> Bool {
+		readSource = nil
+		return !isDisconnecting && isOpen
 	}
 
 	// MARK: - Sending Data
@@ -237,7 +253,9 @@ actor SerialConnection: Connection {
 
 	// MARK: - Stream Management
 	private func getPacketStream() -> AsyncStream<ConnectionEvent> {
-		AsyncStream<ConnectionEvent> { continuation in
+		// Bounded like TCPConnection's stream: drop the oldest events under sustained overload
+		// instead of queueing them without limit.
+		AsyncStream<ConnectionEvent>(bufferingPolicy: .bufferingNewest(4096)) { continuation in
 			self.eventStreamContinuation = continuation
 			continuation.onTermination = { _ in
 				Task {

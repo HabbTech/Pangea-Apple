@@ -10,12 +10,12 @@ import MapKit
 import MeshtasticProtobufs
 import OSLog
 import SwiftUI
-import CoreData
+@preconcurrency import SwiftData
 
 struct WaypointForm: View {
 
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@Environment(\.dismiss) private var dismiss
 	@State var waypoint: WaypointEntity
 	let distanceFormatter = MKDistanceFormatter()
@@ -30,43 +30,48 @@ struct WaypointForm: View {
 	@State private var expire: Date = Date.now.addingTimeInterval(60 * 480) // 1 minute * 480 = 8 Hours
 	@State private var locked: Bool = false
 	@State private var lockedTo: Int64 = 0
+	/// Local-only waypoint: saved on this device, never broadcast over the mesh.
+	@State private var local: Bool = false
+	@State private var geofenceRadius: Double = 0 // meters; 0 = no circular geofence
+	@State private var notifyOnEnter: Bool = false
+	@State private var notifyOnExit: Bool = false
+	@State private var notifyFavoritesOnly: Bool = false
+	@State private var geofenceBounds: GeoBounds?
+	@State private var showingBoundsSelector: Bool = false
 	@State private var selectedDetent: PresentationDetent = .medium
 	@State private var waypointFailedAlert: Bool = false
 	@State private var createdByNode: NodeInfoEntity?
 	@State private var lastUpdatedByNode: NodeInfoEntity?
 
 	var body: some View {
+		NavigationStack {
 		Group {
 		if editMode {
-			VStack {
-			Text((waypoint.id > 0) ? "Editing Waypoint" : "Create Waypoint")
-				.font(.largeTitle)
-			Divider()
 			Form {
 				if let cl = LocationsHandler.currentLocation {
-					let distance = CLLocation(latitude: cl.latitude, longitude: cl.longitude).distance(from: CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude ))
+					let distance = CLLocation(latitude: cl.latitude, longitude: cl.longitude).distance(from: CLLocation(latitude: waypoint.mapCoordinate.latitude, longitude: waypoint.mapCoordinate.longitude ))
 					Section(header: Text("Coordinate") ) {
 						HStack {
 							Text("Location:")
 								.foregroundColor(.secondary)
-							Text("\(String(format: "%.5f", waypoint.coordinate.latitude) + "," + String(format: "%.5f", waypoint.coordinate.longitude))")
+							Text("\(String(format: "%.5f", waypoint.mapCoordinate.latitude) + "," + String(format: "%.5f", waypoint.mapCoordinate.longitude))")
 								.textSelection(.enabled)
 								.foregroundColor(.secondary)
 								.font(.caption)
 							
 						}
 						Button {
-							waypoint.coordinate.longitude = cl.longitude
-							waypoint.coordinate.latitude = cl.latitude
+							waypoint.longitudeI = Int32(cl.longitude * 1e7)
+							waypoint.latitudeI = Int32(cl.latitude * 1e7)
 						} label: {
 							HStack {
 								Text("Use my Location")
 								Image(systemName: "location")
 							}
 						}
-						.accessibilityLabel("Set to current location")
+						.accessibilityLabel(String(localized: "Set to current location", comment: "VoiceOver label for the use-my-location button"))
 						HStack {
-							if waypoint.coordinate.latitude != 0 && waypoint.coordinate.longitude != 0 {
+							if waypoint.mapCoordinate.latitude != 0 && waypoint.mapCoordinate.longitude != 0 {
 								DistanceText(meters: distance)
 									.foregroundColor(Color.gray)
 							}
@@ -116,42 +121,103 @@ struct WaypointForm: View {
 						Spacer()
 						TextField("Select an emoji", text: $icon)
 							.keyboardType(.emoji)
-							.font(.title)
+							.font(.system(size: 34))
 							.focused($iconIsFocused)
-							.onChange(of: icon) { _, _ in
-								// Reject non-emoji input
-								if !icon.isEmpty && !icon.onlyEmojis() {
-									icon = ""
-									return
-								}
-								// If multiple emojis are entered or pasted, keep only the last one
-								if icon.count > 1 {
-									icon = String(icon.suffix(1))
-								}
-								if !icon.isEmpty {
-									iconIsFocused = false
+							.onChange(of: icon) { _, value in
+								// If a second emoji is entered delete the first one
+								if value.count >= 1 {
+									if value.count > 1 {
+										let index = value.index(value.startIndex, offsetBy: 1)
+										icon = String(value[index])
+									}
 								}
 							}
 					}
 					Toggle(isOn: $expires) {
 						Label("Expires", systemImage: "clock.badge.xmark")
 					}
-					.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+					.toggleStyle(.switch)
 					if expires {
 						DatePicker("Expire", selection: $expire, in: Date.now...)
 							.datePickerStyle(.compact)
 							.font(.callout)
 					}
-					Toggle(isOn: $locked) {
-						Label("Locked", systemImage: "lock")
+					// "Local Only" is offered only for a new waypoint or one that is already local.
+					// An existing shared waypoint is already mesh-known; demoting it to local would
+					// shadow its mesh id — MeshPackets.waypointPacket() drops incoming updates for any
+					// id whose local copy is isLocal — so future shared edits/expirations would be
+					// silently missed. To stop sharing a mesh waypoint, use "Delete for everyone".
+					if waypoint.id == 0 || waypoint.isLocal {
+						Toggle(isOn: $local) {
+							Label("Local Only", systemImage: "iphone")
+						}
+						.toggleStyle(SwitchToggleStyle(tint: .accentColor))
 					}
-					.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+					if local {
+						Text("Saved only on this device — not shared over the mesh. It can't be edited by other nodes, and you can always delete it.")
+							.font(.caption)
+							.foregroundStyle(.secondary)
+					} else {
+						Toggle(isOn: $locked) {
+							Label("Locked", systemImage: "lock")
+						}
+						.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+					}
+				}
+				Section(header: Text("Geofence")) {
+					Picker(selection: $geofenceRadius) {
+						Text("Off").tag(0.0)
+						ForEach(GeofenceRadius.allCases) { option in
+							Text(option.description).tag(option.rawValue.rounded())
+						}
+					} label: {
+						Label("Radius", systemImage: "circle.dashed")
+					}
+					if geofenceBounds == nil {
+						Button {
+							showingBoundsSelector = true
+						} label: {
+							Label("Set Bounding Box", systemImage: "rectangle.dashed")
+						}
+					} else {
+						Button {
+							showingBoundsSelector = true
+						} label: {
+							Label("Edit Bounding Box", systemImage: "rectangle.dashed")
+						}
+						Button(role: .destructive) {
+							geofenceBounds = nil
+						} label: {
+							Label("Remove Bounding Box", systemImage: "trash")
+						}
+					}
+					if geofenceRadius > 0 || geofenceBounds != nil {
+						Toggle(isOn: $notifyOnEnter) {
+							Label("Notify on Enter", systemImage: "bell")
+						}
+						.toggleStyle(.switch)
+						Toggle(isOn: $notifyOnExit) {
+							Label("Notify on Exit", systemImage: "bell.slash")
+						}
+						.toggleStyle(.switch)
+						if notifyOnEnter || notifyOnExit {
+							Toggle(isOn: $notifyFavoritesOnly) {
+								Label("Favorites Only", systemImage: "star")
+							}
+							.toggleStyle(.switch)
+						}
+					}
 				}
 			}
 			.scrollContentBackground(.hidden)
 			.scrollDismissesKeyboard(.immediately)
 			HStack {
 				Button {
+					if local {
+						// Local-only: persist on this device, never touch the mesh (works offline).
+						commitLocal()
+						return
+					}
 					guard let deviceNum = accessoryManager.activeDeviceNum else {
 						Logger.mesh.warning("Send waypoint failed: No deviceNum")
 						return
@@ -159,6 +225,10 @@ struct WaypointForm: View {
 					if accessoryManager.isConnected {
 						/// Send a new or exiting waypoint
 						var newWaypoint = Waypoint()
+						// Sending publishes it to the mesh, so it is no longer local-only. Clear the
+						// flag — even if it started as a local waypoint — so it "promotes" to a shared
+						// waypoint and the mesh ingest is allowed to update it again.
+						waypoint.isLocal = false
 						if waypoint.id  ==  0 {
 							newWaypoint.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
 							waypoint.createdBy = Int64(deviceNum)
@@ -186,6 +256,7 @@ struct WaypointForm: View {
 						} else {
 							newWaypoint.expire = 0
 						}
+						applyGeofence(to: &newWaypoint)
 						
 						Task {
 							do {
@@ -202,12 +273,12 @@ struct WaypointForm: View {
 						Logger.mesh.warning("Send waypoint failed, node not connected")
 					}
 				} label: {
-					Label("Send", systemImage: "arrow.up")
+					Label(local ? "Save" : "Send", systemImage: local ? "square.and.arrow.down" : "arrow.up")
 				}
 				.buttonStyle(.bordered)
 				.buttonBorderShape(.capsule)
 				.controlSize(.regular)
-				.disabled(!accessoryManager.isConnected)
+				.disabled(!local && !accessoryManager.isConnected)
 				.padding(.bottom)
 				
 				Button(role: .cancel) {
@@ -220,63 +291,17 @@ struct WaypointForm: View {
 				.controlSize(.regular)
 				.padding(.bottom)
 				
-				if waypoint.id > 0 && accessoryManager.isConnected {
-					
+				if waypoint.id != 0 || local {
 					Menu {
-						Button("For me", action: {
-							context.delete(waypoint)
-							do {
-								try context.save()
-							} catch {
-								context.rollback()
+						Button(role: .destructive, action: deleteForMe) {
+							Label("Remove from this device", systemImage: "trash")
+						}
+						if accessoryManager.isConnected && !local && !waypoint.locked {
+							Button(role: .destructive, action: deleteForEveryone) {
+								Label("Delete for everyone", systemImage: "trash.slash")
 							}
-							dismiss() })
-						Button("For everyone", action: {
-							guard let deviceNum = accessoryManager.activeDeviceNum else {
-								Logger.mesh.error("Unable to set waypoint: No Device num")
-								return
-							}
-							var newWaypoint = Waypoint()
-							newWaypoint.id = UInt32(waypoint.id)
-							newWaypoint.name = name.count > 0 ? name : "Dropped Pin"
-							newWaypoint.description_p = description
-							newWaypoint.latitudeI = waypoint.latitudeI
-							newWaypoint.longitudeI = waypoint.longitudeI
-							// Unicode scalar value for the icon emoji string
-							let unicodeScalers = icon.unicodeScalars
-						// First element as an UInt32 (fall back to 📍 if empty)
-						let unicode = unicodeScalers.first?.value ?? 128205
-							newWaypoint.icon = unicode
-							if locked {
-								if lockedTo == 0 {
-									newWaypoint.lockedTo = UInt32(deviceNum)
-								} else {
-									newWaypoint.lockedTo = UInt32(lockedTo)
-								}
-							}
-							newWaypoint.expire = UInt32(1)
-							Task {
-								do {
-									try await accessoryManager.sendWaypoint(waypoint: newWaypoint)
-									Task { @MainActor in
-										context.delete(waypoint)
-										do {
-											try context.save()
-										} catch {
-											context.rollback()
-										}
-										dismiss()
-									}
-								} catch {
-									Logger.mesh.warning("Send waypoint failed")
-									Task {@MainActor in
-										waypointFailedAlert = true
-									}
-								}
-							}
-						})
-					}
-					label: {
+						}
+					} label: {
 						Label("Delete", systemImage: "trash")
 							.foregroundColor(.red)
 					}
@@ -286,173 +311,207 @@ struct WaypointForm: View {
 					.padding(.bottom)
 				}
 			}
-			} // VStack
+			.navigationTitle((waypoint.id > 0) ? "Editing Waypoint" : "Create Waypoint")
+			.navigationBarTitleDisplayMode(.inline)
+			// end Form
 		} else {
-			VStack {
-				HStack {
-					CircleText(text: String(UnicodeScalar(Int(waypoint.icon)) ?? "📍"), color: Color.orange, circleSize: 50)
-					Spacer()
-					Text(waypoint.name ?? "?")
-						.font(.largeTitle)
-					Spacer()
-					if waypoint.locked > 0 && waypoint.locked != UInt32(accessoryManager.activeDeviceNum ?? 0) {
-						Image(systemName: "lock.fill")
-							.font(.largeTitle)
-					} else {
-						Button {
-							editMode = true
-							selectedDetent = .fraction(0.85)
-						} label: {
-							Image(systemName: "square.and.pencil" )
-								.font(.largeTitle)
-								.symbolRenderingMode(.hierarchical)
-								.foregroundColor(.accentColor)
-						}
-					}
-				}
-				Divider()
-				VStack(alignment: .leading) {
-					
-					// Nodes who created/modified
-					VStack(alignment: .leading, spacing: 12) {
-						if let created = createdByNode {
-							VStack(alignment: .leading, spacing: 6) {
-								Text("Created by:")
-									.font(.headline)
-								
-								HStack(spacing: 8) {
-									CircleText(
-										text: created.user?.shortName ?? "?",
-										color: Color(UIColor(hex: UInt32(created.user?.num ?? 0x808080)))
-									)
-									Text(created.user?.longName ?? "Unknown")
-										.font(.body)
-								}
-							}
-						}
-
-						if let updated = lastUpdatedByNode {
-							VStack(alignment: .leading, spacing: 6) {
-								Text("Last updated by:")
-									.font(.headline)
-								
-								HStack(spacing: 8) {
-									CircleText(
-										text: updated.user?.shortName ?? "?",
-										color: Color(UIColor(hex: UInt32(updated.user?.num ?? 0x808080)))
-									)
-									Text(updated.user?.longName ?? "Unknown")
-										.font(.body)
-								}
+			List {
+				Section {
+					if let created = createdByNode {
+						HStack(spacing: 8) {
+							CircleText(
+								text: created.user?.shortName ?? "?",
+								color: Color(UIColor(hex: UInt32(created.user?.num ?? 0x808080)))
+							)
+							VStack(alignment: .leading) {
+								Text("Created by")
+									.font(.caption)
+									.foregroundStyle(.secondary)
+								Text(created.user?.longName ?? "Unknown")
+									.font(.body)
 							}
 						}
 					}
-					.padding(.bottom)
 
-					// Description
+					if let updated = lastUpdatedByNode {
+						HStack(spacing: 8) {
+							CircleText(
+								text: updated.user?.shortName ?? "?",
+								color: Color(UIColor(hex: UInt32(updated.user?.num ?? 0x808080)))
+							)
+							VStack(alignment: .leading) {
+								Text("Last updated by")
+									.font(.caption)
+									.foregroundStyle(.secondary)
+								Text(updated.user?.longName ?? "Unknown")
+									.font(.body)
+							}
+						}
+					}
+
 					if (waypoint.longDescription ?? "").count > 0 {
 						Label {
 							Text(waypoint.longDescription ?? "")
 								.foregroundColor(.primary)
-								.multilineTextAlignment(.leading)
-								.fixedSize(horizontal: false, vertical: true)
 								.textSelection(.enabled)
 						} icon: {
 							Image(systemName: "doc.plaintext")
 						}
-						.padding(.bottom)
 					}
-					/// Coordinate
+				} header: {
+					HStack {
+						CircleText(text: String(UnicodeScalar(Int(waypoint.icon)) ?? "📍"), color: Color.orange, circleSize: 36)
+						Text(waypoint.name ?? "Waypoint")
+							.font(.headline)
+					}
+				}
+
+				Section {
 					Label {
-						Text("Coordinates:")
-							.foregroundColor(.primary)
-						Text("\(String(format: "%.6f", waypoint.coordinate.latitude)), \(String(format: "%.6f", waypoint.coordinate.longitude))")
+						Text("\(String(format: "%.6f", waypoint.mapCoordinate.latitude)), \(String(format: "%.6f", waypoint.mapCoordinate.longitude))")
 							.textSelection(.enabled)
 							.foregroundColor(.secondary)
-							.font(.caption2)
 					} icon: {
 						Image(systemName: "mappin.circle")
 					}
-					.padding(.bottom)
-					// Drop Maps Pin
-					Button(action: {
-						if let url = URL(string: "http://maps.apple.com/?ll=\(waypoint.coordinate.latitude),\(waypoint.coordinate.longitude)&q=\(waypoint.name ?? "Dropped Pin")") {
+
+					if let cl = LocationsHandler.currentLocation {
+						let metersAway = waypoint.mapCoordinate.distance(from: cl)
+						if metersAway > 0.0 {
+							Label {
+								Text(distanceFormatter.string(fromDistance: Double(metersAway)))
+							} icon: {
+								Image(systemName: "lines.measurement.horizontal")
+									.symbolRenderingMode(.hierarchical)
+							}
+						}
+					}
+
+					Button {
+						if let url = URL(string: "http://maps.apple.com/?ll=\(waypoint.mapCoordinate.latitude),\(waypoint.mapCoordinate.longitude)&q=\(waypoint.name ?? "Dropped Pin")") {
 							UIApplication.shared.open(url)
 						}
-					}) {
-						Label("Drop Pin in Maps", systemImage: "mappin.and.ellipse")
+					} label: {
+						Label("Open in Maps", systemImage: "mappin.and.ellipse")
 					}
-					.padding(.bottom)
-					/// Created
+				} header: {
+					Text("Location")
+				}
+
+				// Local notification opt-in for a received geofence (design#114): editable in
+				// place — even for locked waypoints — and persisted only on this device. The
+				// mesh Send path is never involved; the flags never travel over the wire.
+				if canEditNotifyPreferencesLocally {
+					Section {
+						Toggle(isOn: $notifyOnEnter) {
+							Label("Notify on Enter", systemImage: "bell")
+						}
+						.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+						.onChange(of: notifyOnEnter) { commitNotifyPreferences() }
+						Toggle(isOn: $notifyOnExit) {
+							Label("Notify on Exit", systemImage: "bell.slash")
+						}
+						.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+						.onChange(of: notifyOnExit) { commitNotifyPreferences() }
+						if notifyOnEnter || notifyOnExit {
+							Toggle(isOn: $notifyFavoritesOnly) {
+								Label("Favorites Only", systemImage: "star")
+							}
+							.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+							.onChange(of: notifyFavoritesOnly) { commitNotifyPreferences() }
+						}
+					} header: {
+						Text("Geofence Notifications")
+					} footer: {
+						Text("Saved only on this device — nothing is sent over the mesh.")
+					}
+				}
+
+				Section {
 					Label {
-						Text("Created: \(waypoint.created?.formatted() ?? "?")")
-							.foregroundColor(.primary)
+						Text(waypoint.created?.formatted(date: .numeric, time: .shortened) ?? "?")
+							.foregroundStyle(.secondary)
 					} icon: {
 						Image(systemName: "clock.badge.checkmark")
 							.symbolRenderingMode(.hierarchical)
 					}
-					.padding(.bottom)
-					/// Updated
+
 					if waypoint.lastUpdated != nil {
 						Label {
-							Text("Updated: \(waypoint.lastUpdated?.formatted() ?? "?")")
-								.foregroundColor(.primary)
+							Text(waypoint.lastUpdated?.formatted(date: .numeric, time: .shortened) ?? "?")
+								.foregroundStyle(.secondary)
 						} icon: {
 							Image(systemName: "clock.arrow.circlepath")
 								.symbolRenderingMode(.hierarchical)
 						}
-						.padding(.bottom)
 					}
-					/// Expires
+
 					if waypoint.expire != nil {
 						Label {
-							Text("Expires: \(waypoint.expire?.formatted() ?? "?")")
-								.foregroundColor(.primary)
+							Text(waypoint.expire?.formatted(date: .numeric, time: .shortened) ?? "?")
+								.foregroundStyle(.secondary)
 						} icon: {
 							Image(systemName: "hourglass.bottomhalf.filled")
 								.symbolRenderingMode(.hierarchical)
 						}
-						.padding(.bottom, 5)
 					}
-					/// Distance
-					if let cl = LocationsHandler.currentLocation {
-						let metersAway = waypoint.coordinate.distance(from: cl)
-						if metersAway > 0.0 {
-							Label {
-								Text("Distance".localized + ": \(distanceFormatter.string(fromDistance: Double(metersAway)))")
-									.foregroundColor(.primary)
-							} icon: {
-								Image(systemName: "lines.measurement.horizontal")
-									.symbolRenderingMode(.hierarchical)
-									.frame(width: 35)
-							}
-							.padding(.bottom, 5)
+				} header: {
+					Text("Timestamps")
+				}
+			}
+			.navigationTitle(waypoint.name ?? "Waypoint")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				if !waypoint.locked {
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							editMode = true
+							selectedDetent = .fraction(0.85)
+						} label: {
+							Image(systemName: "square.and.pencil")
 						}
+						.accessibilityLabel(String(localized: "Edit waypoint", comment: "VoiceOver label for the edit waypoint button"))
 					}
 				}
-				.padding(.top)
-#if targetEnvironment(macCatalyst)
-				Spacer()
-				Button {
-					dismiss()
-				} label: {
-					Label("Close", systemImage: "xmark")
+				if waypoint.id != 0 || waypoint.isLocal {
+					ToolbarItem(placement: .topBarTrailing) {
+						Menu {
+							Button(role: .destructive, action: deleteForMe) {
+								Label("Remove from this device", systemImage: "trash")
+							}
+							if accessoryManager.isConnected && !waypoint.isLocal && !waypoint.locked {
+								Button(role: .destructive, action: deleteForEveryone) {
+									Label("Delete for everyone", systemImage: "trash.slash")
+								}
+							}
+						} label: {
+							Image(systemName: "trash")
+						}
+						.accessibilityLabel(String(localized: "Delete waypoint", comment: "VoiceOver label for the delete waypoint menu"))
+					}
 				}
-				.buttonStyle(.bordered)
-				.buttonBorderShape(.capsule)
-				.controlSize(.large)
-				.padding()
-#endif
 			}
 		}
-	}
+		} // Group
+		} // NavigationStack
+		.background(Color(.systemGroupedBackground))
+		.fullScreenCover(isPresented: $showingBoundsSelector) {
+			GeofenceBoundsSelectorView(
+				center: CLLocationCoordinate2D(
+					latitude: latitude != 0 ? latitude : (LocationsHandler.currentLocation?.latitude ?? 0),
+					longitude: longitude != 0 ? longitude : (LocationsHandler.currentLocation?.longitude ?? 0)
+				),
+				initialBounds: geofenceBounds
+			) { newBounds in
+				geofenceBounds = newBounds
+			}
+		}
 		.alert("Waypoint Failed to Send", isPresented: $waypointFailedAlert) {
 					Button("OK", role: .cancel) {
 						context.delete(waypoint)
 						do {
 							try context.save()
 						} catch {
-							context.rollback()
 						}
 						dismiss()
 					}
@@ -464,7 +523,6 @@ struct WaypointForm: View {
 					do {
 						try context.save()
 					} catch {
-						context.rollback()
 						Logger.mesh.error("Failed to save context on waypoint deletion: \(error)")
 					}
 				}
@@ -486,34 +544,206 @@ struct WaypointForm: View {
 				} else {
 					expires = false
 				}
-				if waypoint.locked > 0 {
+				if waypoint.locked {
 					locked = true
-					lockedTo = waypoint.locked
+				}
+				local = waypoint.isLocal
+				geofenceRadius = Double(waypoint.geofenceRadius)
+				notifyOnEnter = waypoint.notifyOnEnter
+				notifyOnExit = waypoint.notifyOnExit
+				notifyFavoritesOnly = waypoint.notifyFavoritesOnly
+				if waypoint.hasBoundingBox {
+					geofenceBounds = GeoBounds(
+						minLon: Double(waypoint.boundingBoxLongitudeWestI) / 1e7,
+						minLat: Double(waypoint.boundingBoxLatitudeSouthI) / 1e7,
+						maxLon: Double(waypoint.boundingBoxLongitudeEastI) / 1e7,
+						maxLat: Double(waypoint.boundingBoxLatitudeNorthI) / 1e7
+					)
 				}
 			} else {
 				name = ""
 				description = ""
 				locked = false
+				local = false
+				geofenceRadius = 0
+				notifyOnEnter = false
+				notifyOnExit = false
+				notifyFavoritesOnly = false
+				geofenceBounds = nil
 				expires = false
 				expire = Date.now.addingTimeInterval(60 * 480)
 				icon = "📍"
-				latitude = waypoint.coordinate.latitude
-				longitude = waypoint.coordinate.longitude
+				latitude = waypoint.mapCoordinate.latitude
+				longitude = waypoint.mapCoordinate.longitude
 			}
 		}
 		.presentationBackgroundInteraction(.enabled(upThrough: .fraction(0.85)))
+		#if !targetEnvironment(macCatalyst)
 		.presentationDragIndicator(.visible)
+		#endif
+
+		#if targetEnvironment(macCatalyst)
+		.overlay(alignment: .topLeading) {
+			Button {
+				dismiss()
+			} label: {
+				Image(systemName: "xmark.circle.fill")
+					.font(.system(size: 34))
+					.symbolRenderingMode(.palette)
+					.foregroundStyle(.white, Color(.systemGray3))
+			}
+			.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
+			.buttonStyle(.plain)
+			.padding(.top, 12)
+			.padding(.leading, 14)
+		}
+		#endif
 	}
 	
+	/// Whether the geofence notification toggles are offered as an in-place, local-only
+	/// setting in the read-only view: a received waypoint (not authored by the connected
+	/// node — including ones locked to another node — and not local-only) with a geofence.
+	private var canEditNotifyPreferencesLocally: Bool {
+		WaypointEntity.canEditNotifyPreferencesLocally(
+			isLocalWaypoint: waypoint.isLocal,
+			createdBy: waypoint.createdBy,
+			activeDeviceNum: accessoryManager.activeDeviceNum,
+			hasGeofence: waypoint.hasGeofence
+		)
+	}
+
+	/// Persist the geofence notification opt-in for a received waypoint. Local-only by
+	/// design (design#114): writes exactly the three receiver-local preference flags and
+	/// saves the context — nothing is ever sent to the mesh from this path.
+	private func commitNotifyPreferences() {
+		// Favorites-only is meaningless (and its toggle hidden) unless notifying.
+		if !notifyOnEnter && !notifyOnExit {
+			notifyFavoritesOnly = false
+		}
+		waypoint.notifyOnEnter = notifyOnEnter
+		waypoint.notifyOnExit = notifyOnExit
+		waypoint.notifyFavoritesOnly = notifyFavoritesOnly
+		do { try context.save() } catch { Logger.mesh.error("Failed to save notification preferences: \(error)") }
+	}
+
+	private func commitLocal() {
+		if waypoint.id == 0 {
+			waypoint.id = Int64(UInt32.random(in: UInt32(UInt8.max)..<UInt32.max))
+			waypoint.created = Date()
+			waypoint.createdBy = Int64(accessoryManager.activeDeviceNum ?? 0)
+		} else {
+			waypoint.lastUpdated = Date()
+			waypoint.lastUpdatedBy = Int64(accessoryManager.activeDeviceNum ?? 0)
+		}
+		waypoint.isLocal = true
+		waypoint.locked = false
+		waypoint.name = name.count > 0 ? name : "Dropped Pin"
+		waypoint.longDescription = description
+		waypoint.icon = Int64(icon.unicodeScalars.first?.value ?? 128205)
+		waypoint.expire = expires ? expire : nil
+		waypoint.geofenceRadius = Int(max(0, geofenceRadius).rounded())
+		let hasGeofence = geofenceRadius > 0 || geofenceBounds != nil
+		waypoint.notifyOnEnter = hasGeofence && notifyOnEnter
+		waypoint.notifyOnExit = hasGeofence && notifyOnExit
+		waypoint.notifyFavoritesOnly = (waypoint.notifyOnEnter || waypoint.notifyOnExit) && notifyFavoritesOnly
+		if let b = geofenceBounds {
+			waypoint.hasBoundingBox = true
+			waypoint.boundingBoxLongitudeWestI = Int32((b.minLon * 1e7).rounded())
+			waypoint.boundingBoxLatitudeSouthI = Int32((b.minLat * 1e7).rounded())
+			waypoint.boundingBoxLongitudeEastI = Int32((b.maxLon * 1e7).rounded())
+			waypoint.boundingBoxLatitudeNorthI = Int32((b.maxLat * 1e7).rounded())
+		} else {
+			waypoint.hasBoundingBox = false
+		}
+		do { try context.save() } catch { Logger.mesh.error("Failed to save local waypoint: \(error)") }
+		dismiss()
+	}
+
+	/// Remove the waypoint from THIS device only — always available, even for waypoints
+	/// locked by (and so not editable from) another node.
+	private func deleteForMe() {
+		context.delete(waypoint)
+		do { try context.save() } catch { Logger.mesh.error("Failed to delete waypoint: \(error)") }
+		dismiss()
+	}
+
+	/// Expire the waypoint mesh-wide, then remove it locally. Only offered for shared
+	/// waypoints you can edit (connected, not local, not locked to another node).
+	private func deleteForEveryone() {
+		guard accessoryManager.activeDeviceNum != nil else {
+			Logger.mesh.error("Unable to delete waypoint: not connected to a device")
+			return
+		}
+		var newWaypoint = Waypoint()
+		newWaypoint.id = UInt32(waypoint.id)
+		newWaypoint.name = name.count > 0 ? name : "Dropped Pin"
+		newWaypoint.description_p = description
+		newWaypoint.latitudeI = waypoint.latitudeI
+		newWaypoint.longitudeI = waypoint.longitudeI
+		newWaypoint.icon = icon.unicodeScalars.first?.value ?? 128205
+		// Expire it mesh-wide. The receiver's expiration branch keys purely on `expire`
+		// (see MeshPackets.waypointPacket), so lockedTo is intentionally not set here.
+		newWaypoint.expire = UInt32(1)
+		applyGeofence(to: &newWaypoint)
+		Task {
+			do {
+				try await accessoryManager.sendWaypoint(waypoint: newWaypoint)
+				await MainActor.run {
+					context.delete(waypoint)
+					do { try context.save() } catch { Logger.mesh.error("Failed to delete waypoint after mesh expire: \(error)") }
+					dismiss()
+				}
+			} catch {
+				Logger.mesh.warning("Send waypoint failed")
+				await MainActor.run { waypointFailedAlert = true }
+			}
+		}
+	}
+
+	private func applyGeofence(to waypointProto: inout Waypoint) {
+		waypointProto.geofenceRadius = UInt32(max(0, geofenceRadius).rounded())
+		// The wire notify fields carry the author's own preference only (design#114):
+		// re-sending someone else's waypoint serializes them as false so this receiver's
+		// local opt-in never leaks onto the mesh. Also normalizes stale @State — the
+		// toggles are hidden when no geofence exists but their values persist, and
+		// favorites-only only applies when notifying.
+		let flags = WaypointEntity.outgoingNotifyFlags(
+			isAuthor: WaypointEntity.isAuthoredLocally(
+				waypointId: waypoint.id,
+				createdBy: waypoint.createdBy,
+				activeDeviceNum: accessoryManager.activeDeviceNum
+			),
+			hasGeofence: geofenceRadius > 0 || geofenceBounds != nil,
+			notifyOnEnter: notifyOnEnter,
+			notifyOnExit: notifyOnExit,
+			notifyFavoritesOnly: notifyFavoritesOnly
+		)
+		waypointProto.notifyOnEnter = flags.notifyOnEnter
+		waypointProto.notifyOnExit = flags.notifyOnExit
+		waypointProto.notifyFavoritesOnly = flags.notifyFavoritesOnly
+		if let b = geofenceBounds {
+			var box = BoundingBox()
+			box.longitudeWestI = Int32((b.minLon * 1e7).rounded())
+			box.latitudeSouthI = Int32((b.minLat * 1e7).rounded())
+			box.longitudeEastI = Int32((b.maxLon * 1e7).rounded())
+			box.latitudeNorthI = Int32((b.maxLat * 1e7).rounded())
+			waypointProto.boundingBox = box
+		}
+		// No geofenceBounds -> leave boundingBox unset (cleared on the mesh).
+	}
+
 	@MainActor
 	private func fetchNodeInfo() async {
 		// --- Fetch createdBy node ---
 		if waypoint.createdBy != 0 {
-			let createdByFetch: NSFetchRequest<NodeInfoEntity> = NodeInfoEntity.fetchRequest()
-			createdByFetch.predicate = NSPredicate(format: "num == %lld", Int64(waypoint.createdBy))
-			createdByFetch.fetchLimit = 1
+			let createdByNum = Int64(waypoint.createdBy)
+			var createdByDescriptor = FetchDescriptor<NodeInfoEntity>(
+				predicate: #Predicate<NodeInfoEntity> { $0.num == createdByNum }
+			)
+			createdByDescriptor.fetchLimit = 1
+
 			do {
-				let nodes = try context.fetch(createdByFetch)
+				let nodes = try context.fetch(createdByDescriptor)
 				createdByNode = nodes.first
 			} catch {
 				Logger.services.warning("Error fetching createdBy node: \(error.localizedDescription)")
@@ -523,11 +753,14 @@ struct WaypointForm: View {
 		// --- Fetch lastUpdatedBy node (only if different from createdBy) ---
 		if waypoint.lastUpdatedBy != 0,
 		   waypoint.lastUpdatedBy != waypoint.createdBy {
-			let updatedByFetch: NSFetchRequest<NodeInfoEntity> = NodeInfoEntity.fetchRequest()
-			updatedByFetch.predicate = NSPredicate(format: "num == %lld", Int64(waypoint.lastUpdatedBy))
-			updatedByFetch.fetchLimit = 1
+			let updatedByNum = Int64(waypoint.lastUpdatedBy)
+			var updatedByDescriptor = FetchDescriptor<NodeInfoEntity>(
+				predicate: #Predicate<NodeInfoEntity> { $0.num == updatedByNum }
+			)
+			updatedByDescriptor.fetchLimit = 1
+
 			do {
-				let nodes = try context.fetch(updatedByFetch)
+				let nodes = try context.fetch(updatedByDescriptor)
 				lastUpdatedByNode = nodes.first
 			} catch {
 				Logger.services.warning("Error fetching lastUpdatedBy node: \(error.localizedDescription)")

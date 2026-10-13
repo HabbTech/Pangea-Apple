@@ -9,7 +9,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import Combine
 
 /// Whether the radio can take a packet (`ProfileRules.radioReady`), and since when it hasn't.
@@ -60,7 +60,10 @@ final class RadioReadinessTracker: ObservableObject {
 	/// Each change of `value`, once it's set.
 	var onEdge: ((RadioReadiness.Edge) -> Void)?
 
-	private let context: NSManagedObjectContext
+	/// Read on every look rather than kept, because the app's container is replaced after a data
+	/// clear (see `PersistenceController.recreateContainer`).
+	private let contextProvider: @MainActor () -> ModelContext
+	private var context: ModelContext { contextProvider() }
 	private var hasConnection = false
 	private var state: AccessoryManagerState = .uninitialized
 	private var deviceNum: Int64?
@@ -68,18 +71,17 @@ final class RadioReadinessTracker: ObservableObject {
 	/// Only set in `init`, only read in `deinit`.
 	nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
-	init(context: NSManagedObjectContext) {
-		self.context = context
-		let coordinator = context.persistentStoreCoordinator
-		// Saves and deletes in this context, and merges into it from background saves.
-		observers.append(NotificationCenter.default.addObserver(forName: .NSManagedObjectContextObjectsDidChange, object: context, queue: nil) { [weak self] note in
+	/// `context` is for tests; the app reads the shared container's main context.
+	init(context: ModelContext? = nil) {
+		if let context {
+			contextProvider = { context }
+		} else {
+			contextProvider = { PersistenceController.shared.context }
+		}
+		// A save in any context (the packet actor's, the main one, or a clear of the app's data)
+		// may bring my own node in or take it away.
+		observers.append(NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: nil, queue: nil) { [weak self] note in
 			guard Self.touchesNodes(note) else { return }
-			Task { @MainActor in self?.refreshSoon() }
-		})
-		// Batch deletes (clearing the app's data) only reach the context that ran them.
-		observers.append(NotificationCenter.default.addObserver(forName: NSManagedObjectContext.didMergeChangesObjectIDsNotification, object: nil, queue: nil) { [weak self] note in
-			guard let merged = note.object as? NSManagedObjectContext, merged.persistentStoreCoordinator === coordinator,
-				  Self.touchesNodes(note) else { return }
 			Task { @MainActor in self?.refreshSoon() }
 		})
 	}
@@ -94,7 +96,8 @@ final class RadioReadinessTracker: ObservableObject {
 	func isReady(hasConnection: Bool, state: AccessoryManagerState, deviceNum: Int64?) -> Bool {
 		// Looked up only once the rest says ready, so a change to the link costs nothing.
 		let linked = hasConnection && state == .subscribed
-		let hasMyUser = linked && deviceNum.map { getNodeInfo(id: $0, context: context)?.user != nil } == true
+		// A fresh context each time: the main one can keep a node another context has deleted.
+		let hasMyUser = linked && deviceNum.map { getNodeInfo(id: $0, context: ModelContext(context.container))?.user != nil } == true
 		return ProfileRules.radioReady(hasConnection: hasConnection, state: state, hasMyUser: hasMyUser)
 	}
 
@@ -127,21 +130,20 @@ final class RadioReadinessTracker: ObservableObject {
 		}
 	}
 
-	/// Whether a change notification could mean my own node, or its user, came or went.
+	/// Whether a save could mean my own node, or its user, came or went. A save that doesn't
+	/// say what it changed counts.
 	nonisolated private static func touchesNodes(_ note: Foundation.Notification) -> Bool {
-		guard let info = note.userInfo else { return false }
-		if info[NSInvalidatedAllObjectsKey] != nil { return true }
-		for key in [NSInsertedObjectsKey, NSUpdatedObjectsKey, NSDeletedObjectsKey, NSRefreshedObjectsKey, NSInvalidatedObjectsKey] {
-			if let objects = info[key] as? Set<NSManagedObject>, objects.contains(where: { $0 is NodeInfoEntity || $0 is UserEntity }) {
+		guard let info = note.userInfo else { return true }
+		let keys = [ModelContext.NotificationKey.insertedIdentifiers, .updatedIdentifiers, .deletedIdentifiers]
+		var sawAny = false
+		for key in keys {
+			guard let ids = info[key.rawValue] as? [PersistentIdentifier] else { continue }
+			sawAny = true
+			if ids.contains(where: { ["NodeInfoEntity", "UserEntity"].contains($0.entityName) }) {
 				return true
 			}
 		}
-		for key in [NSInsertedObjectIDsKey, NSUpdatedObjectIDsKey, NSDeletedObjectIDsKey, NSRefreshedObjectIDsKey, NSInvalidatedObjectIDsKey] {
-			if let ids = info[key] as? Set<NSManagedObjectID>, ids.contains(where: { ["NodeInfoEntity", "UserEntity"].contains($0.entity.name) }) {
-				return true
-			}
-		}
-		return false
+		return !sawAny
 	}
 }
 

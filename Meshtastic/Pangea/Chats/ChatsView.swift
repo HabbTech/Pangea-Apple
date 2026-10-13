@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 import UserNotifications
 
@@ -17,7 +17,7 @@ enum ChatRoute: Hashable {
 }
 
 struct ChatsView: View {
-	@Environment(\.managedObjectContext) private var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@EnvironmentObject var appState: AppState
 	@ObservedObject var router: Router
@@ -25,10 +25,8 @@ struct ChatsView: View {
 	@ObservedObject private var inbox = PangeaInbox.shared
 	@ObservedObject private var profiles = ProfileStore.shared
 
-	@FetchRequest(
-		sortDescriptors: [NSSortDescriptor(keyPath: \UserEntity.lastMessage, ascending: false)],
-		predicate: NSPredicate(format: "lastMessage != nil")
-	) private var dmUsers: FetchedResults<UserEntity>
+	@Query(filter: #Predicate<UserEntity> { $0.lastMessage != nil }, sort: \UserEntity.lastMessage, order: .reverse)
+	private var dmUsers: [UserEntity]
 
 	@State private var path: [ChatRoute] = []
 	@State private var showNewGroup = false
@@ -51,13 +49,13 @@ struct ChatsView: View {
 	/// up this phone. Messages with it are every DM that radio had, so it's never offered as
 	/// a chat to delete. Every node heard on the mesh gets a MyInfo too, so only one with a
 	/// `peripheralId` (written only when this phone connected to it) counts.
-	static func isMyRadio(_ num: Int64, activeDeviceNum: Int64?, preferred: Int = UserDefaults.preferredPeripheralNum, context: NSManagedObjectContext) -> Bool {
+	static func isMyRadio(_ num: Int64, activeDeviceNum: Int64?, preferred: Int = UserDefaults.preferredPeripheralNum, context: ModelContext) -> Bool {
 		if num == activeDeviceNum || (preferred > 0 && num == Int64(preferred)) { return true }
-		let request = MyInfoEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "(myNodeNum == %lld OR myInfoNode.num == %lld) AND peripheralId != nil AND peripheralId != ''", num, num)
-		request.fetchLimit = 1
+		let descriptor = FetchDescriptor<MyInfoEntity>(predicate: #Predicate {
+			($0.myNodeNum == num || $0.myInfoNode?.num == num) && $0.peripheralId != nil && $0.peripheralId != ""
+		})
 		// When unsure, keep the messages.
-		guard let count = try? context.count(for: request) else { return true }
+		guard let count = try? context.fetchCount(descriptor) else { return true }
 		return count > 0
 	}
 
@@ -77,7 +75,7 @@ struct ChatsView: View {
 	static func list(myInfo: MyInfoEntity?, users: some Sequence<UserEntity>, myNum: Int64, lastDate: ((ChatSummary) -> Date)? = nil) -> [ChatSummary] {
 		var items: [ChatSummary] = []
 		if let myInfo {
-			for channel in (myInfo.channels?.array as? [ChannelEntity] ?? []) where GroupChats.isChat(channel) {
+			for channel in myInfo.sortedChannels where GroupChats.isChat(channel) {
 				items.append(.group(channel))
 			}
 		}
@@ -210,7 +208,11 @@ struct ChatsView: View {
 				path = [.group(index: index)]
 			}
 		}
-		.onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)) { _ in
+		// Messages and channels are saved on the packet handler's context as well as this one.
+		.onReceive(NotificationCenter.default.publisher(for: .meshMessagesDidChange)) { _ in
+			refresh &+= 1
+		}
+		.onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave).debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)) { _ in
 			refresh &+= 1
 		}
 		.onChange(of: router.messagesState) { _, state in
@@ -231,7 +233,7 @@ struct ChatsView: View {
 	private func destination(for route: ChatRoute) -> some View {
 		switch route {
 		case .group(let index):
-			if let myInfo, let channel = (myInfo.channels?.array as? [ChannelEntity])?.first(where: { $0.index == index }) {
+			if let myInfo, let channel = myInfo.sortedChannels.first(where: { $0.index == index }) {
 				GroupChatScreen(myInfo: myInfo, channel: channel) {
 					path.removeAll()
 				}
@@ -325,14 +327,16 @@ struct ChatsView: View {
 	/// the list. They stay in the node list, with their nickname, profile and contact status.
 	/// Group and Everyone Nearby messages (no `toUser`) are left alone.
 	/// Refuses one of my own radios: with it as "them", the predicate matches every DM that radio had.
-	static func deleteChat(with user: UserEntity, context: NSManagedObjectContext, activeDeviceNum: Int64?,
+	static func deleteChat(with user: UserEntity, context: ModelContext, activeDeviceNum: Int64?,
 						   preferred: Int = UserDefaults.preferredPeripheralNum) throws {
 		guard !isMyRadio(user.num, activeDeviceNum: activeDeviceNum, preferred: preferred, context: context) else {
 			throw DeleteChatError.myRadio
 		}
-		let request = MessageEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "((toUser == %@) OR (fromUser == %@)) AND toUser != nil AND fromUser != nil AND admin == false", user, user)
-		for message in try context.fetch(request) {
+		let num = user.num
+		let descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate {
+			($0.toUser?.num == num || $0.fromUser?.num == num) && $0.toUser != nil && $0.fromUser != nil && $0.admin == false
+		})
+		for message in try context.fetch(descriptor) {
 			context.delete(message)
 		}
 		user.lastMessage = nil
@@ -353,14 +357,14 @@ struct ChatsView: View {
 	}
 
 	/// Some of what was deleted may not have been read yet: count again for the tab and app icon badges.
-	static func refreshUnread(appState: AppState, myNum: Int64, context: NSManagedObjectContext) {
+	static func refreshUnread(appState: AppState, myNum: Int64, context: ModelContext) {
 		let counts = unreadCounts(myNum: myNum, context: context)
 		appState.unreadDirectMessages = counts.direct
 		appState.unreadChannelMessages = counts.channel
 	}
 
 	/// What the badges count: unread private messages with me, and unread channel messages.
-	static func unreadCounts(myNum: Int64, context: NSManagedObjectContext) -> (direct: Int, channel: Int) {
+	static func unreadCounts(myNum: Int64, context: ModelContext) -> (direct: Int, channel: Int) {
 		let node = getNodeInfo(id: myNum, context: context)
 		// skipLastMessageCheck: my own node's lastMessage isn't kept up to date.
 		return (node?.user?.unreadMessages(context: context, skipLastMessageCheck: true) ?? 0,

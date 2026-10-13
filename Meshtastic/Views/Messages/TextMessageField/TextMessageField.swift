@@ -10,122 +10,146 @@ struct TextMessageField: View {
 	let destination: MessageDestination
 	@Binding var replyMessageId: Int64
 	@FocusState.Binding var isFocused: Bool
+	/// Called on the main actor after the sent message is saved so the list can
+	/// reload immediately and show the new bubble.
+	var onMessageSent: (@MainActor () -> Void)?
 
 	@State private var typingMessage: String = ""
 	@State private var totalBytes = 0
 	@State private var sendPositionWithMessage = false
+	@State private var mentionQuery: String? = nil
+
+	/// Pangea: in a channel, "@" offers the people in it by name (`MentionSuggestionBar`), so the
+	/// node-id suggestions don't show there as well.
+	private var usesNameMentions: Bool {
+		if case .channel = destination { return true }
+		return false
+	}
 
 	var body: some View {
-		VStack(spacing: 0) {
-			MentionSuggestionBar(text: $typingMessage, destination: destination)
-			HStack(alignment: .bottom) {
-				if replyMessageId != 0 || isFocused {
-					Button {
-						withAnimation(.easeInOut(duration: 0.2)) {
-							replyMessageId = 0
+		if #available(iOS 18.0, macOS 15.0, *) {
+			VStack(spacing: 0) {
+				MentionSuggestionBar(text: $typingMessage, destination: destination)
+				FormattingComposeArea(
+					typingMessage: $typingMessage,
+					totalBytes: $totalBytes,
+					replyMessageId: $replyMessageId,
+					isFocused: $isFocused,
+					maxbytes: Self.maxbytes,
+					allowsIdMentions: !usesNameMentions,
+					onSend: sendMessage,
+					onAlert: { typingMessage += "🔔 Alert Bell Character! \u{7}" },
+					onRequestPosition: requestPosition
+				)
+			}
+		} else {
+			VStack(spacing: 0) {
+				MentionSuggestionBar(text: $typingMessage, destination: destination)
+				if let query = mentionQuery {
+					MentionAutocomplete(query: query) { user in
+						withAnimation(.easeInOut(duration: 0.15)) {
+							typingMessage = MentionParser.insertMentionToken(into: typingMessage, user: user)
+							mentionQuery = nil
 						}
-						isFocused = false
-					} label: {
-						Image(systemName: "x.circle.fill")
-							.font(.largeTitle)
-					}
-					if replyMessageId != 0 {
-						Text("Reply")
-							.padding(.bottom, 10)
 					}
 				}
-				TextField("Message", text: $typingMessage, axis: .vertical)
-					.frame(minHeight: 36)
-					.padding(10)
-					.background(
-						RoundedRectangle(cornerRadius: 20)
-							.strokeBorder(.tertiary, lineWidth: 1)
-							.background(RoundedRectangle(cornerRadius: 20).fill(Color(.systemBackground)))
-					)
-					.clipShape(RoundedRectangle(cornerRadius: 20))
-					.onChange(of: typingMessage) { _, value in
-						totalBytes = value.utf8.count
-						while totalBytes > Self.maxbytes {
-							typingMessage = String(typingMessage.dropLast())
-							totalBytes = typingMessage.utf8.count
+				HStack(alignment: .top) {
+					if replyMessageId != 0 || isFocused {
+						Button {
+							withAnimation(.easeInOut(duration: 0.2)) {
+								replyMessageId = 0
+							}
+							isFocused = false
+						} label: {
+							Image(systemName: "x.circle.fill")
+								.font(.largeTitle)
+							}
+							.accessibilityLabel(String(localized: "Cancel reply", comment: "VoiceOver: cancel replying to a message"))
+							if replyMessageId != 0 {
+								Text("Reply")
+									.padding(.top, 10)
+							}
 						}
-					}
-					.keyboardType(.default)
-					.focused($isFocused)
-					.multilineTextAlignment(.leading)
-					.onSubmit {
-						
+						TextField("Message", text: $typingMessage, axis: .vertical)
+							.autocorrectionDisabled(false)
+							.frame(minHeight: 36)
+							.padding(.horizontal, 16)
+							.padding(.vertical, 12)
+							.background(
+								RoundedRectangle(cornerRadius: 20)
+									.strokeBorder(.tertiary, lineWidth: 1)
+									.background(RoundedRectangle(cornerRadius: 20).fill(Color(.systemBackground)))
+							)
+							.contentShape(RoundedRectangle(cornerRadius: 20))
+							.onChange(of: typingMessage) { _, value in
+								totalBytes = value.utf8.count
+								while totalBytes > Self.maxbytes {
+									typingMessage = String(typingMessage.dropLast())
+									totalBytes = typingMessage.utf8.count
+								}
+								mentionQuery = usesNameMentions ? nil : MentionParser.activeMentionQuery(in: value)
+							}
+							.keyboardType(.default)
+							.focused($isFocused)
+							.multilineTextAlignment(.leading)
+							.onSubmit {
 #if targetEnvironment(macCatalyst)
-						sendMessage()
+								sendMessage()
 #endif
+							}
+							.foregroundColor(.primary)
+						if !typingMessage.isEmpty {
+							Button(action: sendMessage) {
+								Image(systemName: "arrow.up.circle.fill")
+									.font(.largeTitle)
+									.foregroundColor(.accentColor)
+							}
+							.accessibilityLabel(String(localized: "Send message", comment: "VoiceOver: send the composed message"))
+						}
 					}
-					.foregroundColor(.primary)
-				if !typingMessage.isEmpty {
-					Button(action: sendMessage) {
-						Image(systemName: "arrow.up.circle.fill")
-							.font(.largeTitle)
-							.foregroundColor(.accentColor)
+					.padding(15)
+					if isFocused {
+						if #available(iOS 26.0, macOS 26.0, *) {
+							legacyToolbarContent
+								.padding(.vertical, 8)
+								.padding(.horizontal)
+								.background(.ultraThinMaterial, in: Capsule())
+							Spacer()
+								.frame(height: 10)
+						} else {
+							Divider()
+							legacyToolbarContent
+								.padding(.horizontal, 15)
+								.padding(.vertical, 10)
+								.background(.bar)
+						}
+					}
+			}
+		}
+	}
+
+	private var legacyToolbarContent: some View {
+		HStack {
+			Spacer()
+			#if targetEnvironment(macCatalyst)
+			Button {
+				if let nsApp = NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication") as? NSObject {
+					let selector = NSSelectorFromString("orderFrontCharacterPalette:")
+					if nsApp.responds(to: selector) {
+						nsApp.perform(selector, with: nil)
 					}
 				}
+			} label: {
+				Image(systemName: "face.smiling")
 			}
-			.padding(15)
-			if isFocused {
-				if #available(iOS 26.0, macOS 26.0, *) {
-					HStack {
-						Spacer()
-						#if targetEnvironment(macCatalyst)
-						Button {
-							if let nsApp = NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication") as? NSObject {
-								let selector = NSSelectorFromString("orderFrontCharacterPalette:")
-								if nsApp.responds(to: selector) {
-									nsApp.perform(selector, with: nil)
-								}
-							}
-						} label: {
-							Image(systemName: "face.smiling")
-						}
-						Spacer()
-						#endif
-						AlertButton { typingMessage += "🔔 Alert Bell Character! \u{7}" }
-						Spacer()
-						RequestPositionButton(action: requestPosition)
-						Spacer()
-						TextMessageSize(maxbytes: Self.maxbytes, totalBytes: totalBytes)
-					}
-					.padding(.vertical, 8)
-					.padding(.horizontal)
-					.background(.ultraThinMaterial, in: Capsule())
-					Spacer()
-						.frame(height: 10)
-					
-				} else {
-					Divider()
-					HStack {
-						Spacer()
-						#if targetEnvironment(macCatalyst)
-						Button {
-							if let nsApp = NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication") as? NSObject {
-								let selector = NSSelectorFromString("orderFrontCharacterPalette:")
-								if nsApp.responds(to: selector) {
-									nsApp.perform(selector, with: nil)
-								}
-							}
-						} label: {
-							Image(systemName: "face.smiling")
-						}
-						Spacer()
-						#endif
-						AlertButton { typingMessage += "🔔 Alert Bell Character! \u{7}" }
-						Spacer()
-						RequestPositionButton(action: requestPosition)
-						Spacer()
-						TextMessageSize(maxbytes: Self.maxbytes, totalBytes: totalBytes)
-					}
-					.padding(.horizontal, 15)
-					.padding(.vertical, 10)
-					.background(.bar)
-				}
-			}
+			.accessibilityLabel(String(localized: "Emoji picker", comment: "VoiceOver: open the character/emoji picker"))
+			Spacer()
+			#endif
+			AlertButton { typingMessage += "🔔 Alert Bell Character! \u{7}" }
+			Spacer()
+			RequestPositionButton(action: requestPosition)
+			Spacer()
+			TextMessageSize(maxbytes: Self.maxbytes, totalBytes: totalBytes)
 		}
 	}
 
@@ -148,6 +172,7 @@ struct TextMessageField: View {
 				typingMessage = ""
 				isFocused = false
 				replyMessageId = 0
+				await MainActor.run { onMessageSent?() }
 
 				if sendPositionWithMessage {
 					try await accessoryManager.sendPosition(
@@ -157,9 +182,195 @@ struct TextMessageField: View {
 					)
 					Logger.mesh.info("Location Sent")
 				}
+
 			} catch {
 				Logger.mesh.info("Error sending message")
 			}
+		}
+	}
+}
+
+// MARK: - FormattingComposeArea
+
+@available(iOS 18.0, macOS 15.0, *)
+private struct FormattingComposeArea: View {
+	@Binding var typingMessage: String
+	@Binding var totalBytes: Int
+	@Binding var replyMessageId: Int64
+	@FocusState.Binding var isFocused: Bool
+	let maxbytes: Int
+	/// Pangea: false where `MentionSuggestionBar` offers names instead.
+	let allowsIdMentions: Bool
+	let onSend: () -> Void
+	let onAlert: () -> Void
+	let onRequestPosition: () -> Void
+
+	@State private var textSelection: TextSelection?
+	@State private var showToolbar = false
+	@State private var showLinkSheet = false
+	@State private var mentionQuery: String? = nil
+
+	var body: some View {
+		VStack(spacing: 0) {
+			MessagePreview(text: typingMessage)
+			if let query = mentionQuery {
+				MentionAutocomplete(query: query) { user in
+					withAnimation(.easeInOut(duration: 0.15)) {
+						textSelection = nil
+						typingMessage = MentionParser.insertMentionToken(into: typingMessage, user: user)
+						mentionQuery = nil
+					}
+				}
+			}
+			HStack(alignment: .top) {
+				if replyMessageId != 0 || isFocused {
+					Button {
+						withAnimation(.easeInOut(duration: 0.2)) {
+							replyMessageId = 0
+						}
+						isFocused = false
+					} label: {
+						Image(systemName: "x.circle.fill")
+							.font(.largeTitle)
+					}
+					.accessibilityLabel(String(localized: "Cancel reply", comment: "VoiceOver: cancel replying to a message"))
+					if replyMessageId != 0 {
+						Text("Reply")
+							.padding(.top, 10)
+					}
+				}
+				TextEditor(text: $typingMessage, selection: $textSelection)
+					// The conversation disables autocorrect for its search field, and this box inherits that.
+					.autocorrectionDisabled(false)
+					.frame(minHeight: 36, maxHeight: 200)
+					.padding(.horizontal, 16)
+					.padding(.vertical, 4)
+					.scrollContentBackground(.hidden)
+					.background(
+						RoundedRectangle(cornerRadius: 20)
+							.strokeBorder(.tertiary, lineWidth: 1)
+							.background(RoundedRectangle(cornerRadius: 20).fill(Color(.systemBackground)))
+					)
+					.contentShape(RoundedRectangle(cornerRadius: 20))
+					.onChange(of: typingMessage) { _, value in
+						totalBytes = value.utf8.count
+						// A programmatic text change (send empties the field; the byte-limit
+						// truncation below shortens it) leaves `textSelection` holding a UTF-16
+						// range into the *old* string. The next layout pass in
+						// UIKitTextEditorCoordinator maps that stale range onto the new string
+						// and traps in String.UTF16View._offsetRange. Drop the selection so the
+						// coordinator never sees an out-of-range index. (#1976)
+						if value.isEmpty {
+							textSelection = nil
+						}
+						while totalBytes > maxbytes {
+							typingMessage = String(typingMessage.dropLast())
+							totalBytes = typingMessage.utf8.count
+							textSelection = nil
+						}
+						mentionQuery = allowsIdMentions ? MentionParser.activeMentionQuery(in: value) : nil
+					}
+					.keyboardType(.default)
+					.focused($isFocused)
+					.multilineTextAlignment(.leading)
+					.foregroundColor(.primary)
+				if !typingMessage.isEmpty {
+					Button(action: send) {
+						Image(systemName: "arrow.up.circle.fill")
+							.font(.largeTitle)
+							.foregroundColor(.accentColor)
+					}
+					.accessibilityLabel(String(localized: "Send message", comment: "VoiceOver: send the composed message"))
+				}
+			}
+			.padding(15)
+			if showToolbar {
+				if #available(iOS 26.0, macOS 26.0, *) {
+					toolbarContent
+						.padding(.vertical, 8)
+						.padding(.horizontal)
+						.background(.ultraThinMaterial, in: Capsule())
+					Spacer()
+						.frame(height: 10)
+				} else {
+					Divider()
+					toolbarContent
+						.padding(.horizontal, 15)
+						.padding(.vertical, 6)
+						.background(.bar)
+				}
+			}
+		}
+		.onChange(of: isFocused) { _, focused in
+			if focused {
+				showToolbar = true
+			} else {
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					if !isFocused && !showLinkSheet {
+						showToolbar = false
+					}
+				}
+			}
+		}
+		#if targetEnvironment(macCatalyst)
+		.onKeyPress(.return, phases: .down) { keyPress in
+			if keyPress.modifiers.contains(.shift) {
+				return .ignored
+			}
+			send()
+			return .handled
+		}
+		#endif
+	}
+
+	// Clear any active selection before invoking the parent handlers, which mutate
+	// `typingMessage` programmatically (send empties it; position/alert replace or
+	// append). Doing this first means the TextEditor coordinator never updates with a
+	// text/selection pair where the selection's UTF-16 range is out of bounds. (#1976)
+	private func send() {
+		textSelection = nil
+		mentionQuery = nil
+		onSend()
+	}
+
+	private func alert() {
+		textSelection = nil
+		mentionQuery = nil
+		onAlert()
+	}
+
+	private func requestPosition() {
+		textSelection = nil
+		mentionQuery = nil
+		onRequestPosition()
+	}
+
+	private var toolbarContent: some View {
+		HStack {
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack {
+					if typingMessage.count >= 3 {
+						FormattingToolbarButtons(typingMessage: $typingMessage, textSelection: $textSelection, showLinkAlert: $showLinkSheet)
+					}
+					#if targetEnvironment(macCatalyst)
+					Button {
+						if let nsApp = NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication") as? NSObject {
+							let selector = NSSelectorFromString("orderFrontCharacterPalette:")
+							if nsApp.responds(to: selector) {
+								nsApp.perform(selector, with: nil)
+							}
+						}
+					} label: {
+						Image(systemName: "face.smiling")
+					}
+					.accessibilityLabel(String(localized: "Emoji picker", comment: "VoiceOver: open the character/emoji picker"))
+					#endif
+					AlertButton(action: alert, compact: true)
+					RequestPositionButton(action: requestPosition, compact: true)
+				}
+			}
+			Spacer()
+			TextMessageSize(maxbytes: maxbytes, totalBytes: totalBytes, compact: true)
 		}
 	}
 }

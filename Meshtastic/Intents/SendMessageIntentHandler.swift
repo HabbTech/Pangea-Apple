@@ -8,20 +8,69 @@
 //  Multiple recipients are not supported.
 //
 
-#if os(iOS)
-import CoreData
 import Intents
 import OSLog
 
 final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 
+	/// Where a send intent is addressed. Resolution and handling have to read an
+	/// intent the same way: a resolver that asks for a value the handler would not
+	/// have used turns into a question the user cannot answer sensibly.
+	enum Destination: Equatable {
+		/// A channel Siri named. The index still needs a lookup against the store.
+		case namedChannel(String)
+		/// A channel the conversation identifier names outright.
+		case channel(Int)
+		/// One or more people to resolve.
+		case recipients
+		/// Nothing usable.
+		case unknown
+	}
+
+	/// Siri drops the speakable group name on some channel replies — notification
+	/// replies, and replying to a channel thread in CarPlay — but the conversation
+	/// identifier still carries "channel-<N>". Reading that here is what keeps a
+	/// channel reply from being asked who it is for.
+	static func destination(
+		speakableGroupName: String?,
+		conversationIdentifier: String?,
+		hasRecipients: Bool
+	) -> Destination {
+		if let speakableGroupName {
+			return .namedChannel(speakableGroupName)
+		}
+		if let conversationIdentifier,
+		   let index = IntentMessageConverters.channelIndex(fromHandleOrName: conversationIdentifier) {
+			return .channel(index)
+		}
+		return hasRecipients ? .recipients : .unknown
+	}
+
+	private static func destination(for intent: INSendMessageIntent) -> Destination {
+		destination(
+			speakableGroupName: intent.speakableGroupName?.spokenPhrase,
+			conversationIdentifier: intent.conversationIdentifier,
+			hasRecipients: !(intent.recipients ?? []).isEmpty
+		)
+	}
+
 	// MARK: - Resolution
 
 	func resolveRecipients(for intent: INSendMessageIntent) async -> [INSendMessageRecipientResolutionResult] {
+		switch Self.destination(for: intent) {
+		case .namedChannel, .channel:
+			// A channel message has no recipient. Resolving whoever Siri attached to
+			// the reply — the thread's sender — could only prompt: for one name it is
+			// noise, for several it is a disambiguation list, and the handler ignores
+			// the answer either way.
+			return []
+		case .unknown:
+			return [.needsValue()]
+		case .recipients:
+			break
+		}
+
 		guard let recipients = intent.recipients, !recipients.isEmpty else {
-			if intent.speakableGroupName != nil {
-				return []
-			}
 			return [.needsValue()]
 		}
 
@@ -30,7 +79,6 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 			return [.unsupported(forReason: .noAccount)]
 		}
 
-		let context = PersistenceController.shared.container.viewContext
 		let recipient = recipients[0]
 		let handleValue = recipient.personHandle?.value ?? ""
 
@@ -44,10 +92,10 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 			return [.success(with: recipient)]
 		}
 
-		// Otherwise search by display name
-		let searchTerm = recipient.displayName ?? handleValue
+		let searchTerm = recipient.displayName.isEmpty ? handleValue : recipient.displayName
 		let matchingUsers = await MainActor.run {
-			IntentMessageConverters.findUsers(matching: searchTerm, in: context)
+			let context = PersistenceController.shared.context
+			return IntentMessageConverters.findUsers(matching: searchTerm, in: context)
 		}
 
 		if matchingUsers.isEmpty {
@@ -73,16 +121,22 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 	}
 
 	func resolveSpeakableGroupName(for intent: INSendMessageIntent) async -> INSpeakableStringResolutionResult {
-		guard let groupName = intent.speakableGroupName else {
-			if let recipients = intent.recipients, !recipients.isEmpty {
-				return .notRequired()
-			}
+		let groupName: INSpeakableString
+		switch Self.destination(for: intent) {
+		case .namedChannel:
+			guard let named = intent.speakableGroupName else { return .needsValue() }
+			groupName = named
+		case .channel, .recipients:
+			// The channel is already known from the conversation identifier, or this is
+			// a direct message. Either way there is nothing to ask for.
+			return .notRequired()
+		case .unknown:
 			return .needsValue()
 		}
 
-		let context = PersistenceController.shared.container.viewContext
 		let matchingChannels = await MainActor.run {
-			IntentMessageConverters.findChannels(matching: groupName.spokenPhrase, in: context)
+			let context = PersistenceController.shared.context
+			return IntentMessageConverters.findChannels(matching: groupName.spokenPhrase, in: context)
 		}
 
 		if matchingChannels.count == 1, let channel = matchingChannels.first {
@@ -125,11 +179,20 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 		}
 
 		do {
-			if let groupName = intent.speakableGroupName {
-				// Channel message
-				let context = PersistenceController.shared.container.viewContext
+			// Same order as resolution, through the same helper, so the two cannot drift.
+			switch Self.destination(for: intent) {
+			case .namedChannel(let name):
 				let channelIndex = await MainActor.run {
-					IntentMessageConverters.channelIndex(for: groupName.spokenPhrase, in: context)
+					let context = PersistenceController.shared.context
+					return IntentMessageConverters.channelIndex(for: name, in: context)
+				}
+				// A group name that matches no channel is a failure — the old
+				// fallback to index 0 silently sent the reply to Primary instead.
+				guard let channelIndex else {
+					// The group name is whatever the user said, so it is redacted like
+					// message content is: it can carry a person, a place, anything.
+					Logger.services.error("CarPlay/Siri: No channel matches group name \(name, privacy: .private)")
+					return INSendMessageIntentResponse(code: .failure, userActivity: nil)
 				}
 				try await AccessoryManager.shared.sendMessage(
 					message: content,
@@ -138,8 +201,21 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 					isEmoji: false,
 					replyID: 0
 				)
-			} else if let recipient = intent.recipients?.first,
-					  let handleValue = recipient.personHandle?.value {
+			case .channel(let channelIndex):
+				// Siri dropped the group name but the conversation identifier still names
+				// the channel. Before this was read, the reply fell through to the recipient
+				// handle — the message's SENDER — and went out as a DM to that person.
+				try await AccessoryManager.shared.sendMessage(
+					message: content,
+					toUserNum: 0,
+					channel: Int32(channelIndex),
+					isEmoji: false,
+					replyID: 0
+				)
+			case .recipients:
+				guard let handleValue = intent.recipients?.first?.personHandle?.value else {
+					return INSendMessageIntentResponse(code: .failure, userActivity: nil)
+				}
 				if let channelIndex = IntentMessageConverters.channelIndex(fromHandleOrName: handleValue) {
 					try await AccessoryManager.shared.sendMessage(
 						message: content,
@@ -149,7 +225,6 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 						replyID: 0
 					)
 				} else if let nodeNum = IntentMessageConverters.directMessageNodeNum(from: handleValue) {
-				// Direct message to a single node
 					try await AccessoryManager.shared.sendMessage(
 						message: content,
 						toUserNum: nodeNum,
@@ -160,7 +235,7 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 				} else {
 					return INSendMessageIntentResponse(code: .failure, userActivity: nil)
 				}
-			} else {
+			case .unknown:
 				return INSendMessageIntentResponse(code: .failure, userActivity: nil)
 			}
 
@@ -172,4 +247,3 @@ final class SendMessageIntentHandler: NSObject, INSendMessageIntentHandling {
 		}
 	}
 }
-#endif

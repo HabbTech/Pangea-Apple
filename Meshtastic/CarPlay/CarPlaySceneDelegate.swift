@@ -12,9 +12,10 @@
 #if os(iOS) && canImport(CarPlay)
 import CarPlay
 import Combine
-import CoreData
 import Intents
 import OSLog
+@preconcurrency import SwiftData
+import UserNotifications
 #if canImport(ActivityKit)
 import ActivityKit
 #endif
@@ -26,11 +27,22 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	// Retained template references so we can call updateSections rather than replacing the whole tree.
 	private var channelsTemplate: CPListTemplate?
 	private var directMessagesTemplate: CPListTemplate?
-	// Tracks which conversation identifiers have already had a contact intent donated
-	// during this CarPlay session so we don't re-donate on every refresh.
-	private var donatedConversationIds = Set<String>()
+	// Tracks which conversation identifiers have already had a compose-contact
+	// intent donated during this CarPlay session so we don't re-donate on every
+	// refresh.
+	//
+	// NOTE: this set is intentionally separate from `donatedReadKeys`. They were
+	// once a single set, which meant whichever donation happened first (compose
+	// intent for a read conversation vs. communication notification for an unread
+	// one) permanently blocked the other — a channel that started read and later
+	// received a message could never get its read-back notification, so tapping it
+	// composed instead of reading.
+	private var donatedComposeIds = Set<String>()
+	// Tracks communication-notification donations keyed by conversation AND
+	// message, so a newer unread message re-donates and stays readable by Siri.
+	private var donatedReadKeys = Set<String>()
 
-	private lazy var context: NSManagedObjectContext = PersistenceController.shared.container.viewContext
+	private lazy var context: ModelContext = PersistenceController.shared.context
 
 	/// Returns a human-readable "last heard" string.
 	/// `now` is passed in so all rows in a single render share one `Date()` allocation.
@@ -71,6 +83,17 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 			}
 			.store(in: &cancellables)
 
+		// Refresh rows whenever read-state changes anywhere — messages arriving,
+		// being read in the phone app, or Siri read-aloud completing. Without this
+		// the templates were frozen between connection changes and unread counts
+		// went stale for the whole drive.
+		NotificationCenter.default.publisher(for: .meshMessagesDidChange)
+			.debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+			.sink { [weak self] _ in
+				self?.refreshSections()
+			}
+			.store(in: &cancellables)
+
 		// Start Live Activity immediately if already connected
 		if AccessoryManager.shared.isConnected {
 			startLiveActivityIfNeeded()
@@ -84,7 +107,8 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 		Logger.services.info("🚗 [CarPlay] Disconnected")
 		endLiveActivity()
 		cancellables.removeAll()
-		donatedConversationIds.removeAll()
+		donatedComposeIds.removeAll()
+		donatedReadKeys.removeAll()
 		channelsTemplate = nil
 		directMessagesTemplate = nil
 		self.interfaceController = nil
@@ -180,13 +204,14 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	// MARK: - Data Fetching
 
 	private func fetchFavoriteContactItems() -> [CPMessageListItem] {
-		let request: NSFetchRequest<NodeInfoEntity> = NodeInfoEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "favorite == YES AND num != %lld", AccessoryManager.shared.activeDeviceNum ?? 0)
-		request.sortDescriptors = [NSSortDescriptor(key: "lastHeard", ascending: false)]
-		request.relationshipKeyPathsForPrefetching = ["user"]
-
 		do {
-			let nodes = try context.fetch(request)
+			let activeNum = Int64(AccessoryManager.shared.activeDeviceNum ?? 0)
+			var descriptor = FetchDescriptor<NodeInfoEntity>(
+				predicate: #Predicate<NodeInfoEntity> { $0.favorite == true && $0.num != activeNum },
+				sortBy: [SortDescriptor(\.lastHeard, order: .reverse)]
+			)
+			descriptor.fetchLimit = 50
+			let nodes = try context.fetch(descriptor)
 			let nodeNums = nodes.compactMap { $0.user != nil ? $0.num : nil as Int64? }
 			let unreadCounts = fetchUnreadCountsForDMs(nodeNums: nodeNums)
 			let now = Date()
@@ -204,18 +229,34 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 					unread: hasUnread
 				)
 
-				let item = CPMessageListItem(
-					fullName: name,
-					phoneOrEmailAddress: "\(node.num)@meshtastic.local",
-					leadingConfiguration: leadingConfig,
-					trailingConfiguration: nil,
-					detailText: hasUnread ? "\(unreadCount) unread" : nil,
-					trailingText: lastHeardText(node.lastHeard, now: now)
-				)
-				item.conversationIdentifier = convId
+				let item: CPMessageListItem
+				if hasUnread {
+					// Use conversationIdentifier init WITHOUT phoneOrEmailAddress so Siri
+					// enters the read flow. Apple docs: "If the item has a phone number or
+					// email address, Siri launches the message compose flow."
+					item = CPMessageListItem(
+						conversationIdentifier: convId,
+						text: name,
+						leadingConfiguration: leadingConfig,
+						trailingConfiguration: nil,
+						detailText: "\(unreadCount) unread",
+						trailingText: lastHeardText(node.lastHeard, now: now)
+					)
+					donateLatestIncomingDM(nodeNum: node.num, conversationId: convId, name: name)
+				} else {
+					// Use fullName init WITH phoneOrEmailAddress so Siri enters compose flow.
+					item = CPMessageListItem(
+						fullName: name,
+						phoneOrEmailAddress: "\(node.num)@meshtastic.local",
+						leadingConfiguration: leadingConfig,
+						trailingConfiguration: nil,
+						detailText: nil,
+						trailingText: lastHeardText(node.lastHeard, now: now)
+					)
+					item.conversationIdentifier = convId
+					donateMessageIntentIfNeeded(conversationId: convId, toNodeNum: node.num, name: name)
+				}
 				item.userInfo = node.num
-
-				donateMessageIntentIfNeeded(conversationId: convId, toNodeNum: node.num, name: name)
 
 				return item
 			}
@@ -228,12 +269,13 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	private func fetchChannelItems() -> [CPMessageListItem] {
 		guard let connectedNum = AccessoryManager.shared.activeDeviceNum,
 			  let connectedNode = getNodeInfo(id: connectedNum, context: context),
-			  let myInfo = connectedNode.myInfo,
-			  let channels = myInfo.channels?.array as? [ChannelEntity] else {
+			  let myInfo = connectedNode.myInfo else {
 			return []
 		}
 
-		let activeChannels = channels.filter { $0.role > 0 }
+		let activeChannels = myInfo.channels
+			.filter { $0.role > 0 }
+			.sorted { $0.index < $1.index }
 		let channelIndices = activeChannels.map { $0.index }
 		let unreadCounts = fetchUnreadCountsForChannels(channelIndices: channelIndices)
 
@@ -252,53 +294,74 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 				unread: hasUnread
 			)
 
-			let item = CPMessageListItem(
-				conversationIdentifier: convId,
-				text: name,
-				leadingConfiguration: leadingConfig,
-				trailingConfiguration: nil,
-				detailText: hasUnread ? "\(unreadCount) unread" : (channel.index == 0 ? "Primary" : "Ch \(channel.index)"),
-				trailingText: nil
-			)
-			item.phoneOrEmailAddress = "\(convId)@meshtastic.local"
+			let item: CPMessageListItem
+			if hasUnread {
+				// Do NOT set phoneOrEmailAddress — its presence forces Siri into compose flow.
+				// With only conversationIdentifier + unread indicator, Siri enters read flow.
+				item = CPMessageListItem(
+					conversationIdentifier: convId,
+					text: name,
+					leadingConfiguration: leadingConfig,
+					trailingConfiguration: nil,
+					detailText: "\(unreadCount) unread",
+					trailingText: nil
+				)
+				donateLatestIncomingChannelMessage(channelIndex: Int32(channelIndex), conversationId: convId, channelName: name)
+			} else {
+				item = CPMessageListItem(
+					conversationIdentifier: convId,
+					text: name,
+					leadingConfiguration: leadingConfig,
+					trailingConfiguration: nil,
+					detailText: channel.index == 0 ? "Primary" : "Ch \(channel.index)",
+					trailingText: nil
+				)
+				item.phoneOrEmailAddress = "\(convId)@meshtastic.local"
+				donateChannelIntentIfNeeded(conversationId: convId, channelIndex: channelIndex, channelName: name)
+			}
 			item.userInfo = channelIndex
-
-			donateChannelIntentIfNeeded(conversationId: convId, channelIndex: channelIndex, channelName: name)
 
 			return item
 		}
 	}
 
 	private func fetchDirectMessageItems() -> [CPMessageListItem] {
-		let request: NSFetchRequest<UserEntity> = UserEntity.fetchRequest()
-		let connectedNum = AccessoryManager.shared.activeDeviceNum ?? 0
-
-		// Match the app's UserList: exclude self, ignored, favorites (shown above).
-		// Use `lastMessage != nil` instead of the expensive `@count` aggregate predicate
-		// to find nodes that have exchanged at least one message.
-		let notSelf = NSPredicate(format: "userNode.num != %lld", connectedNum)
-		let notIgnored = NSPredicate(format: "userNode.ignored == NO")
-		let notFavorite = NSPredicate(format: "userNode.favorite == NO")
-		let hasMessagesOrMessagable = NSCompoundPredicate(type: .or, subpredicates: [
-			NSPredicate(format: "unmessagable == NO"),
-			NSPredicate(format: "lastMessage != nil")
-		])
-		request.predicate = NSCompoundPredicate(type: .and, subpredicates: [notSelf, notIgnored, notFavorite, hasMessagesOrMessagable])
-		request.sortDescriptors = [
-			NSSortDescriptor(key: "userNode.lastHeard", ascending: false),
-			NSSortDescriptor(key: "lastMessage", ascending: false),
-			NSSortDescriptor(key: "longName", ascending: true)
-		]
-		request.fetchLimit = 24 // CarPlay limits list items
-		request.relationshipKeyPathsForPrefetching = ["userNode"]
-
 		do {
-			let users = try context.fetch(request)
-			let nodeNums = users.compactMap { $0.userNode?.num }
+			var descriptor = FetchDescriptor<UserEntity>(
+				predicate: #Predicate<UserEntity> { $0.userNode != nil },
+				sortBy: [SortDescriptor(\UserEntity.lastMessage, order: .reverse)]
+			)
+			descriptor.fetchLimit = 200
+			let users = try context.fetch(descriptor)
+			let connectedNum = AccessoryManager.shared.activeDeviceNum ?? 0
+			let filteredUsers = users
+				.filter { user in
+					guard let node = user.userNode else { return false }
+					let notSelf = node.num != connectedNum
+					let notIgnored = !node.ignored
+					let notFavorite = !node.favorite
+					let hasMessagesOrMessagable = !user.unmessagable || user.lastMessage != nil
+					return notSelf && notIgnored && notFavorite && hasMessagesOrMessagable
+				}
+				.sorted { lhs, rhs in
+					let lhsHeard = lhs.userNode?.lastHeard ?? .distantPast
+					let rhsHeard = rhs.userNode?.lastHeard ?? .distantPast
+					if lhsHeard != rhsHeard {
+						return lhsHeard > rhsHeard
+					}
+					let lhsLastMessage = lhs.lastMessage ?? .distantPast
+					let rhsLastMessage = rhs.lastMessage ?? .distantPast
+					if lhsLastMessage != rhsLastMessage {
+						return lhsLastMessage > rhsLastMessage
+					}
+					return (lhs.longName ?? lhs.shortName ?? "") < (rhs.longName ?? rhs.shortName ?? "")
+				}
+				.prefix(24)
+			let nodeNums = filteredUsers.compactMap { $0.userNode?.num }
 			let unreadCounts = fetchUnreadCountsForDMs(nodeNums: nodeNums)
 			let now = Date()
 
-			return users.compactMap { user -> CPMessageListItem? in
+			return filteredUsers.compactMap { user -> CPMessageListItem? in
 				guard let node = user.userNode else { return nil }
 				let name = user.longName ?? user.shortName ?? "Unknown"
 				let nodeNum = node.num
@@ -312,18 +375,33 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 					unread: hasUnread
 				)
 
-				let item = CPMessageListItem(
-					fullName: name,
-					phoneOrEmailAddress: "\(nodeNum)@meshtastic.local",
-					leadingConfiguration: leadingConfig,
-					trailingConfiguration: nil,
-					detailText: hasUnread ? "\(unreadCount) unread" : nil,
-					trailingText: lastHeardText(node.lastHeard, now: now)
-				)
-				item.conversationIdentifier = convId
+				let item: CPMessageListItem
+				if hasUnread {
+					// Use conversationIdentifier init WITHOUT phoneOrEmailAddress so Siri
+					// enters the read flow.
+					item = CPMessageListItem(
+						conversationIdentifier: convId,
+						text: name,
+						leadingConfiguration: leadingConfig,
+						trailingConfiguration: nil,
+						detailText: "\(unreadCount) unread",
+						trailingText: lastHeardText(node.lastHeard, now: now)
+					)
+					donateLatestIncomingDM(nodeNum: nodeNum, conversationId: convId, name: name)
+				} else {
+					// Use fullName init WITH phoneOrEmailAddress so Siri enters compose flow.
+					item = CPMessageListItem(
+						fullName: name,
+						phoneOrEmailAddress: "\(nodeNum)@meshtastic.local",
+						leadingConfiguration: leadingConfig,
+						trailingConfiguration: nil,
+						detailText: nil,
+						trailingText: lastHeardText(node.lastHeard, now: now)
+					)
+					item.conversationIdentifier = convId
+					donateMessageIntentIfNeeded(conversationId: convId, toNodeNum: nodeNum, name: name)
+				}
 				item.userInfo = nodeNum
-
-				donateMessageIntentIfNeeded(conversationId: convId, toNodeNum: nodeNum, name: name)
 
 				return item
 			}
@@ -340,18 +418,22 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	/// while staying compatible with Core Data's relationship keypath restrictions.
 	private func fetchUnreadCountsForDMs(nodeNums: [Int64]) -> [Int64: Int] {
 		guard !nodeNums.isEmpty else { return [:] }
+		let nodeNumSet = Set(nodeNums)
 
-		let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-		fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-			NSPredicate(format: "read == NO"),
-			NSPredicate(format: "fromUser.num IN %@", nodeNums)
-		])
-		fetchRequest.relationshipKeyPathsForPrefetching = ["fromUser"]
-
-		let results = (try? context.fetch(fetchRequest)) ?? []
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate { message in
+				message.read == false
+			}
+		)
+		let results = (try? context.fetch(descriptor)) ?? []
 		var counts = [Int64: Int]()
-		for message in results {
-			if let num = message.fromUser?.num {
+		// toUser != nil: only direct messages count toward a DM row. Without the
+		// filter, unread CHANNEL messages from the same sender inflated that
+		// sender's DM badge — diverging from the in-app DM counts, which have
+		// always excluded channel traffic. (Checked in Swift, not the predicate:
+		// optional-relationship nil compares in #Predicate crash on iOS 26.)
+		for message in results where message.toUser != nil {
+			if let num = message.fromUser?.num, nodeNumSet.contains(num) {
 				counts[num, default: 0] += 1
 			}
 		}
@@ -362,17 +444,16 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	/// then groups the results in-memory.
 	private func fetchUnreadCountsForChannels(channelIndices: [Int32]) -> [Int32: Int] {
 		guard !channelIndices.isEmpty else { return [:] }
+		let channelSet = Set(channelIndices)
 
-		let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-		fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-			NSPredicate(format: "read == NO"),
-			NSPredicate(format: "toUser == nil"),
-			NSPredicate(format: "channel IN %@", channelIndices)
-		])
-
-		let results = (try? context.fetch(fetchRequest)) ?? []
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate { message in
+				message.read == false
+			}
+		)
+		let results = (try? context.fetch(descriptor)) ?? []
 		var counts = [Int32: Int]()
-		for message in results {
+		for message in results where message.toUser == nil && channelSet.contains(message.channel) {
 			counts[message.channel, default: 0] += 1
 		}
 		return counts
@@ -383,7 +464,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 	/// Donates a contact intent for a DM conversation the first time it is seen this session.
 	/// Subsequent renders are no-ops, avoiding repeated IPC calls to the intents daemon.
 	private func donateMessageIntentIfNeeded(conversationId: String, toNodeNum: Int64, name: String) {
-		guard donatedConversationIds.insert(conversationId).inserted else { return }
+		guard donatedComposeIds.insert(conversationId).inserted else { return }
 
 		let handleValue = "\(toNodeNum)@meshtastic.local"
 		let person = INPerson(
@@ -415,7 +496,7 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 
 	/// Donates a contact intent for a channel conversation the first time it is seen this session.
 	private func donateChannelIntentIfNeeded(conversationId: String, channelIndex: Int, channelName: String) {
-		guard donatedConversationIds.insert(conversationId).inserted else { return }
+		guard donatedComposeIds.insert(conversationId).inserted else { return }
 
 		let channelHandle = "channel-\(channelIndex)@meshtastic.local"
 		let recipient = INPerson(
@@ -446,31 +527,216 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 		}
 	}
 
+	// MARK: - Incoming Intent Donation (Synchronous)
+
+	/// Posts a Communication Notification for the most recent unread channel message.
+	/// This is required for CarPlay to offer read-back instead of compose when tapped.
+	private func donateLatestIncomingChannelMessage(channelIndex: Int32, conversationId: String, channelName: String) {
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate { message in
+				message.read == false &&
+				message.admin == false &&
+				message.isEmoji == false &&
+				message.channel == channelIndex
+			},
+			sortBy: [SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse)]
+		)
+		// toUser == nil intentionally absent from predicate (crashes SwiftData on iOS 26).
+		// Fetch a small batch and pick the first channel message in Swift.
+		descriptor.fetchLimit = 5
+
+		guard let message = (try? context.fetch(descriptor))?.first(where: { $0.toUser == nil }),
+			  let fromUser = message.fromUser else { return }
+		// Dedup AFTER resolving the message, keyed by conversation + message, so a
+		// newer unread message re-donates and stays readable by Siri.
+		guard donatedReadKeys.insert("\(conversationId)#\(message.messageId)").inserted else { return }
+
+		postCommunicationNotification(
+			message: message,
+			fromUser: fromUser,
+			conversationId: conversationId,
+			channelName: channelName
+		)
+	}
+
+	/// Posts a Communication Notification for the most recent unread DM.
+	private func donateLatestIncomingDM(nodeNum: Int64, conversationId: String, name: String) {
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate { message in
+				message.read == false &&
+				message.admin == false &&
+				message.isEmoji == false &&
+				message.fromUser?.num == nodeNum
+			},
+			sortBy: [SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse)]
+		)
+		// Small batch + toUser filter in Swift (see channel variant): this donation
+		// must read back a DIRECT message — the sender's unread channel messages
+		// don't belong to this conversation.
+		descriptor.fetchLimit = 5
+
+		guard let message = (try? context.fetch(descriptor))?.first(where: { $0.toUser != nil }),
+			  let fromUser = message.fromUser else { return }
+		// Dedup AFTER resolving the message, keyed by conversation + message, so a
+		// newer unread message re-donates and stays readable by Siri.
+		guard donatedReadKeys.insert("\(conversationId)#\(message.messageId)").inserted else { return }
+
+		postCommunicationNotification(
+			message: message,
+			fromUser: fromUser,
+			conversationId: conversationId,
+			channelName: nil
+		)
+	}
+
+	/// Posts a Communication Notification for a message so CarPlay/Siri can read it aloud.
+	/// Communication Notifications are the mechanism iOS uses to determine whether to
+	/// offer read-back vs compose when a conversation is tapped in CarPlay.
+	private func postCommunicationNotification(message: MessageEntity, fromUser: UserEntity, conversationId: String, channelName: String?) {
+		let sender = IntentMessageConverters.inPerson(from: fromUser)
+		let me = CarPlayIntentDonation.mePerson()
+
+		let intent: INSendMessageIntent
+		if let channelName {
+			let groupName = INSpeakableString(spokenPhrase: channelName)
+			intent = INSendMessageIntent(
+				recipients: [me],
+				outgoingMessageType: .outgoingMessageText,
+				content: message.messagePayload,
+				speakableGroupName: groupName,
+				conversationIdentifier: conversationId,
+				serviceName: "Pangea",
+				sender: sender,
+				attachments: nil
+			)
+		} else {
+			intent = INSendMessageIntent(
+				recipients: [me],
+				outgoingMessageType: .outgoingMessageText,
+				content: message.messagePayload,
+				speakableGroupName: nil,
+				conversationIdentifier: conversationId,
+				serviceName: "Pangea",
+				sender: sender,
+				attachments: nil
+			)
+		}
+
+		// Donate the interaction
+		let interaction = INInteraction(intent: intent, response: nil)
+		interaction.direction = .incoming
+		interaction.donate(completion: nil)
+
+		// Post a Communication Notification — this is what CarPlay checks for read-back
+		let content = UNMutableNotificationContent()
+		content.body = message.messagePayload ?? "New message"
+		content.sound = nil // Silent — we don't want to alert the user again
+		content.threadIdentifier = conversationId
+		content.userInfo["carplay_repost"] = true
+		content.userInfo["messageId"] = message.messageId
+
+		if let updatedContent = try? content.updating(from: intent) {
+			let request = UNNotificationRequest(
+				identifier: "carplay.read.\(conversationId).\(message.messageId)",
+				content: updatedContent,
+				trigger: nil // Deliver immediately
+			)
+			UNUserNotificationCenter.current().add(request) { error in
+				if let error {
+					Logger.services.error("🚗 [CarPlay] Failed to post communication notification: \(error.localizedDescription, privacy: .public)")
+				} else {
+					Logger.services.info("🚗 [CarPlay] Posted communication notification for \(conversationId, privacy: .public)")
+				}
+			}
+		} else {
+			Logger.services.error("🚗 [CarPlay] content.updating(from:) failed for \(conversationId, privacy: .public) — check com.apple.developer.usernotifications.communication entitlement")
+		}
+	}
+
 	// MARK: - Unread Message Donation
 
-	/// Donate all unread messages as incoming Siri intents so that tapping a
+	/// Posts Communication Notifications for all unread messages so that tapping a
 	/// conversation in CarPlay triggers Siri to read them aloud — even for
 	/// messages that arrived before the CarPlay session started.
 	private func donateUnreadMessages() {
-		let bgContext = PersistenceController.shared.container.newBackgroundContext()
-		bgContext.automaticallyMergesChangesFromParent = true
-		bgContext.perform {
-			let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
-			fetchRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-				NSPredicate(format: "read == NO"),
-				NSPredicate(format: "admin == NO"),
-				NSPredicate(format: "isEmoji == NO")
-			])
-			fetchRequest.sortDescriptors = [NSSortDescriptor(key: "messageTimestamp", ascending: false)]
-			fetchRequest.fetchLimit = 50
-			fetchRequest.relationshipKeyPathsForPrefetching = ["fromUser", "toUser"]
+		Task { @MainActor in
+			let context = PersistenceController.shared.context
+			var descriptor = FetchDescriptor<MessageEntity>(
+				predicate: #Predicate<MessageEntity> { message in
+					message.read == false && message.admin == false && message.isEmoji == false
+				},
+				sortBy: [SortDescriptor(\.messageTimestamp, order: .reverse)]
+			)
+			descriptor.fetchLimit = 50
 
-			guard let messages = try? bgContext.fetch(fetchRequest) else { return }
+			guard let messages = try? context.fetch(descriptor) else { return }
 			for message in messages {
-				CarPlayIntentDonation.donateReceivedMessage(message)
+				guard let fromUser = message.fromUser else { continue }
+
+				let sender = IntentMessageConverters.inPerson(from: fromUser)
+				let me = CarPlayIntentDonation.mePerson()
+
+				let conversationId: String
+				let intent: INSendMessageIntent
+
+				if message.toUser != nil {
+					// DM
+					conversationId = "dm-\(fromUser.num)"
+					intent = INSendMessageIntent(
+						recipients: [me],
+						outgoingMessageType: .outgoingMessageText,
+						content: message.messagePayload,
+						speakableGroupName: nil,
+						conversationIdentifier: conversationId,
+						serviceName: "Pangea",
+						sender: sender,
+						attachments: nil
+					)
+				} else {
+					// Channel message
+					conversationId = "channel-\(message.channel)"
+					let channelName = CarPlayIntentDonation.channelDisplayName(for: message.channel)
+					let groupName = INSpeakableString(spokenPhrase: channelName)
+					intent = INSendMessageIntent(
+						recipients: [me],
+						outgoingMessageType: .outgoingMessageText,
+						content: message.messagePayload,
+						speakableGroupName: groupName,
+						conversationIdentifier: conversationId,
+						serviceName: "Pangea",
+						sender: sender,
+						attachments: nil
+					)
+				}
+
+				// Shared dedup with the per-row donations: skip if this exact
+				// message has already been donated this session (e.g. a reconnect).
+				guard donatedReadKeys.insert("\(conversationId)#\(message.messageId)").inserted else { continue }
+
+				// Donate the interaction
+				let interaction = INInteraction(intent: intent, response: nil)
+				interaction.direction = .incoming
+				interaction.donate(completion: nil)
+
+				// Post Communication Notification
+				let content = UNMutableNotificationContent()
+				content.body = message.messagePayload ?? "New message"
+				content.sound = nil
+				content.threadIdentifier = conversationId
+				content.userInfo["carplay_repost"] = true
+				content.userInfo["messageId"] = message.messageId
+
+				if let updatedContent = try? content.updating(from: intent) {
+					let request = UNNotificationRequest(
+						identifier: "carplay.read.\(conversationId).\(message.messageId)",
+						content: updatedContent,
+						trigger: nil
+					)
+					UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+				}
 			}
 			if !messages.isEmpty {
-				Logger.services.info("🚗 [CarPlay] Donated \(messages.count) unread message(s) for Siri read-back")
+				Logger.services.info("🚗 [CarPlay] Posted \(messages.count) communication notification(s) for Siri read-back")
 			}
 		}
 	}
@@ -500,23 +766,23 @@ class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPI
 		let nodeShortName = connectedNode?.user?.shortName ?? "?"
 
 		// Fetch latest local stats telemetry
-		let localStats = connectedNode?.telemetries?.filtered(using: NSPredicate(format: "metricsType == 4"))
-		let mostRecent = localStats?.lastObject as? TelemetryEntity
+		let localStats = connectedNode?.telemetries.filter { $0.metricsType == 4 }
+		let mostRecent = localStats?.last
 
 		let timerSeconds = 900 // 15 minute local stats interval
 		let future = Date(timeIntervalSinceNow: Double(timerSeconds))
 		let initialState = MeshActivityAttributes.ContentState(
-			uptimeSeconds: UInt32(mostRecent?.uptimeSeconds ?? 0),
+			uptimeSeconds: UInt32(bitPattern: mostRecent?.uptimeSeconds ?? 0),
 			channelUtilization: mostRecent?.channelUtilization ?? 0.0,
 			airtime: mostRecent?.airUtilTx ?? 0.0,
-			sentPackets: UInt32(mostRecent?.numPacketsTx ?? 0),
-			receivedPackets: UInt32(mostRecent?.numPacketsRx ?? 0),
-			badReceivedPackets: UInt32(mostRecent?.numPacketsRxBad ?? 0),
-			dupeReceivedPackets: UInt32(mostRecent?.numRxDupe ?? 0),
-			packetsSentRelay: UInt32(mostRecent?.numTxRelay ?? 0),
-			packetsCanceledRelay: UInt32(mostRecent?.numTxRelayCanceled ?? 0),
-			nodesOnline: UInt32(mostRecent?.numOnlineNodes ?? 0),
-			totalNodes: UInt32(mostRecent?.numTotalNodes ?? 0),
+			sentPackets: UInt32(bitPattern: mostRecent?.numPacketsTx ?? 0),
+			receivedPackets: UInt32(bitPattern: mostRecent?.numPacketsRx ?? 0),
+			badReceivedPackets: UInt32(bitPattern: mostRecent?.numPacketsRxBad ?? 0),
+			dupeReceivedPackets: UInt32(bitPattern: mostRecent?.numRxDupe ?? 0),
+			packetsSentRelay: UInt32(bitPattern: mostRecent?.numTxRelay ?? 0),
+			packetsCanceledRelay: UInt32(bitPattern: mostRecent?.numTxRelayCanceled ?? 0),
+			nodesOnline: UInt32(bitPattern: mostRecent?.numOnlineNodes ?? 0),
+			totalNodes: UInt32(bitPattern: mostRecent?.numTotalNodes ?? 0),
 			timerRange: Date.now...future
 		)
 

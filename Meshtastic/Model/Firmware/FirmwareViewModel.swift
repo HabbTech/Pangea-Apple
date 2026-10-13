@@ -7,7 +7,7 @@
 
 import Foundation
 import SwiftUI
-import CoreData
+@preconcurrency import SwiftData
 import OSLog
 
 extension FirmwareViewModel {
@@ -34,54 +34,81 @@ extension FirmwareViewModel {
 	}
 }
 
+@MainActor
 class FirmwareViewModel: ObservableObject {
 	@Published var firmwareFiles: [FirmwareFile] = []
 	let hardware: DeviceHardwareEntity
-	
-	init(forHardware: DeviceHardwareEntity) {
+	/// The exact target reported by the connected node. This may be a firmware flavor that is not
+	/// represented by its own hardware-catalog row, such as `thinknode_m1-inkhud`.
+	let platformioTarget: String?
+	/// The connected node's LoRa region; non-Latin regions get locale-tagged
+	/// remote artifact candidates so the right on-device fonts ship. `.unset`
+	/// keeps the previous generic-only behavior.
+	let preferredRegion: RegionCodes
+	private let localFirmwareStorageURL: URL
+
+	init(
+		forHardware: DeviceHardwareEntity,
+		platformioTarget: String? = nil,
+		preferredRegion: RegionCodes = .unset,
+		localFirmwareStorageURL: URL = FirmwareFile.localFirmwareStorageURL,
+		automaticallyRefresh: Bool = true
+	) {
 		self.hardware = forHardware
-		Task {
-			refresh()
+		self.platformioTarget = platformioTarget ?? forHardware.platformioTarget
+		self.preferredRegion = preferredRegion
+		self.localFirmwareStorageURL = localFirmwareStorageURL
+		if automaticallyRefresh {
+			Task {
+				refresh()
+			}
 		}
 	}
 	
 	func refresh() {
 		var newFirmwareList = [String: FirmwareFile]()
 
-		// Snapshot hardware properties safely on the viewContext queue
-		var hardwarePlatformioTarget: String?
-		var hardwareArchitecture: Architecture?
-		if let viewContext = hardware.managedObjectContext {
-			viewContext.performAndWait {
-				hardwarePlatformioTarget = hardware.platformioTarget
-				hardwareArchitecture = hardware.architecture.flatMap { Architecture(rawValue: $0) }
-			}
-		} else {
-			hardwarePlatformioTarget = hardware.platformioTarget
-			hardwareArchitecture = hardware.architecture.flatMap { Architecture(rawValue: $0) }
-		}
+		// Snapshot hardware properties safely
+		let hardwarePlatformioTarget = platformioTarget
+		let hardwareArchitecture = hardware.architecture.flatMap { Architecture(rawValue: $0) }
 
 		// First, loop through all firmware entities and create an entry for those
-		let context = PersistenceController.shared.container.newBackgroundContext()
-		context.performAndWait {
-			let fetchRequest = FirmwareReleaseEntity.fetchRequest()
-			do {
-				let firmwareReleases = try context.fetch(fetchRequest)
-				for release in firmwareReleases {
-					if let architecture = hardwareArchitecture {
-						for firmwareType in FirmwareFile.validFilenameSuffixes(forArchitecture: architecture) {
-							let firmwareFile = try FirmwareFile(firmware: release, hardware: hardware, type: firmwareType)
-							newFirmwareList[firmwareFile.localUrl.lastPathComponent] = firmwareFile
-						}
-					} else {
-						// Just the default
-						let firmwareFile = try FirmwareFile(firmware: release, hardware: hardware)
+		let context = PersistenceController.shared.container.mainContext
+		let descriptor = FetchDescriptor<FirmwareReleaseEntity>()
+		do {
+			let firmwareReleases = try context.fetch(descriptor)
+			let localeTags = preferredRegion.prefersLocalizedFontFirmware ? preferredRegion.firmwareLocaleTagCandidates : []
+			for release in firmwareReleases {
+				// One release that fails to parse must not blank the whole list — catch per
+				// release, log it, and keep building rows for the others.
+				do {
+				if let architecture = hardwareArchitecture {
+					for firmwareType in FirmwareFile.validFilenameSuffixes(forArchitecture: architecture) {
+						let firmwareFile = try FirmwareFile(
+							firmware: release,
+							hardware: hardware,
+							platformioTarget: hardwarePlatformioTarget,
+							type: firmwareType,
+							localeTags: localeTags
+						)
 						newFirmwareList[firmwareFile.localUrl.lastPathComponent] = firmwareFile
 					}
+				} else {
+					// Just the default
+					let firmwareFile = try FirmwareFile(
+						firmware: release,
+						hardware: hardware,
+						platformioTarget: hardwarePlatformioTarget,
+						localeTags: localeTags
+					)
+					newFirmwareList[firmwareFile.localUrl.lastPathComponent] = firmwareFile
 				}
-			} catch {
-				Logger.services.error("Error fetching firmware releases: \(error)")
+				} catch {
+					Logger.services.error("Skipping firmware release \(release.versionId): \(error)")
+				}
 			}
+		} catch {
+			Logger.services.error("Error fetching firmware releases: \(error)")
 		}
 		
 		// Now look for unlisted files on the filesystem
@@ -89,17 +116,20 @@ class FirmwareViewModel: ObservableObject {
 		var isDirectory: ObjCBool = false
 		
 		// 1. Check if directory exists
-		if !fileManager.fileExists(atPath: FirmwareFile.localFirmwareStorageURL.path, isDirectory: &isDirectory) {
+		if !fileManager.fileExists(atPath: localFirmwareStorageURL.path, isDirectory: &isDirectory) {
 			return
 		}
 		
 		// 2. Iterate the files in the folder
 		do {
-			let fileURLs = try fileManager.contentsOfDirectory(at: FirmwareFile.localFirmwareStorageURL, includingPropertiesForKeys: nil)
+			let fileURLs = try fileManager.contentsOfDirectory(at: localFirmwareStorageURL, includingPropertiesForKeys: nil)
 			
 			for url in fileURLs {
 				do {
-					let firmwareFile = try FirmwareFile(localFile: url)
+					let firmwareFile = try FirmwareFile(
+						localFile: url,
+						fallbackArchitecture: hardwareArchitecture
+					)
 					if firmwareFile.platformioTarget != hardwarePlatformioTarget {
 						// Skip if this is not for the current hardware we are dealing with
 						continue
@@ -118,36 +148,29 @@ class FirmwareViewModel: ObservableObject {
 			Logger.services.error("Error loading firmware files: \(error)")
 		}
 		
-		Task { @MainActor in
-			// Keep the list sorted by version, with deterministic ordering of the firmware type
-			self.firmwareFiles = newFirmwareList.values.sorted {
-				if ($0.versionMajor, $0.versionMinor, $0.versionPatch) == ($1.versionMajor, $1.versionMinor, $1.versionPatch) {
-					// If versions are equal, sort by firmwareType (assuming it's String or Comparable)
-					return String(describing: $0.firmwareType) < String(describing: $1.firmwareType)
-				}
-				return ($0.versionMajor, $0.versionMinor, $0.versionPatch) > ($1.versionMajor, $1.versionMinor, $1.versionPatch)
+		// Keep the list sorted by version, with deterministic ordering of the firmware type
+		firmwareFiles = newFirmwareList.values.sorted {
+			if ($0.versionMajor, $0.versionMinor, $0.versionPatch) == ($1.versionMajor, $1.versionMinor, $1.versionPatch) {
+				// If versions are equal, sort by firmwareType (assuming it's String or Comparable)
+				return String(describing: $0.firmwareType) < String(describing: $1.firmwareType)
 			}
+			return ($0.versionMajor, $0.versionMinor, $0.versionPatch) > ($1.versionMajor, $1.versionMinor, $1.versionPatch)
 		}
 	}
 
 	func mostRecentFirmwareVersion(forReleaseType releaseType: ReleaseType) -> String? {
-		let context = PersistenceController.shared.container.newBackgroundContext()
-		var versionId: String?
-		
-		try? context.performAndWait {
-			let fetchRequest = FirmwareReleaseEntity.fetchRequest()
-			fetchRequest.predicate = NSPredicate(format: "releaseType == %@", releaseType.rawValue)
-			fetchRequest.sortDescriptors = [NSSortDescriptor(key: "versionMajor", ascending: false),
-											NSSortDescriptor(key: "versionMinor", ascending: false),
-											NSSortDescriptor(key: "versionPatch", ascending: false)]
-			fetchRequest.fetchLimit = 1
-			do {
-				if let firmwareRelease = try context.fetch(fetchRequest).first {
-					versionId = firmwareRelease.versionId
-				}
-			}
-		}
-		return versionId
+		let context = PersistenceController.shared.container.mainContext
+		let releaseTypeRaw = releaseType.rawValue
+		var descriptor = FetchDescriptor<FirmwareReleaseEntity>(
+			predicate: #Predicate { $0.releaseType == releaseTypeRaw },
+			sortBy: [
+				SortDescriptor(\.versionMajor, order: .reverse),
+				SortDescriptor(\.versionMinor, order: .reverse),
+				SortDescriptor(\.versionPatch, order: .reverse)
+			]
+		)
+		descriptor.fetchLimit = 1
+		return try? context.fetch(descriptor).first?.versionId
 	}
 	
 	func firmwareFiles(forVersionId versionId: String) -> [FirmwareFile] {

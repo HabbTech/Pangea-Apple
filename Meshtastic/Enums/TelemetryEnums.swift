@@ -20,29 +20,29 @@ enum Aqi: Int, CaseIterable, Identifiable {
 	var description: String {
 		switch self {
 		case .good:
-			return "Good".localized
+			return String(localized: "Good", comment: "Aqi.description")
 		case .moderate:
-			return "Moderate".localized
+			return String(localized: "Moderate", comment: "Aqi.description")
 		case .sensitive:
-			return "Unhealthy for Sensitive Groups".localized
+			return String(localized: "Unhealthy for Sensitive Groups", comment: "Aqi.description")
 		case .unhealthy:
-			return "Unhealthy".localized
+			return String(localized: "Unhealthy", comment: "Aqi.description")
 		case .veryUnhealthy:
-			return "Very Unhealthy".localized
+			return String(localized: "Very Unhealthy", comment: "Aqi.description")
 		case .hazardous:
-			return "Hazardous".localized
+			return String(localized: "Hazardous", comment: "Aqi.description")
 		}
 	}
 	var color: Color {
 		switch self {
 		case .good:
-			return .green
+			return Color(uiColor: .systemGreen)
 		case .moderate:
 			return .yellow
 		case .sensitive:
-			return .orange
+			return Color(uiColor: .systemOrange)
 		case .unhealthy:
-			return .red
+			return Color(uiColor: .systemRed)
 		case .veryUnhealthy:
 			return .purple
 		case .hazardous:
@@ -119,15 +119,15 @@ enum Iaq: Int, CaseIterable, Identifiable {
 	var color: Color {
 		switch self {
 		case .excellent:
-			return .green
+			return Color(uiColor: .systemGreen)
 		case .good:
 			return .mint
 		case .lightlyPolluted:
 			return .yellow
 		case .moderatelyPolluted:
-			return .orange
+			return Color(uiColor: .systemOrange)
 		case .heavilyPolluted:
-			return .red
+			return Color(uiColor: .systemRed)
 		case .severelyPolluted:
 			return .magenta
 		case .extremelyPolluted:

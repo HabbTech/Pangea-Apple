@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct ContactProfileSheet: View {
-	@Environment(\.managedObjectContext) private var context
+	@Environment(\.modelContext) private var context
 	@Environment(\.dismiss) private var dismiss
 	@ObservedObject private var store = ProfileStore.shared
 	/// Only whether the radio can take a packet, not everything else AccessoryManager publishes.

@@ -39,14 +39,27 @@ extension Logger {
 	/// All logs related to TAK server and CoT messages
 	static let tak = Logger(subsystem: subsystem, category: "🎯 TAK")
 
-	/// Fetch from the logstore
-	static public func fetch(predicateFormat: String) async throws -> [OSLogEntryLog] {
+	/// All logs related to Local Mesh Discovery scans
+	static let discovery = Logger(subsystem: subsystem, category: "📡 Discovery")
+
+	/// All logs related to the documentation browser and AI assistant
+	static let docs = Logger(subsystem: subsystem, category: "📖 Docs")
+
+	/// All logs related to node database backup and restore operations
+	static let backup = Logger(subsystem: subsystem, category: "💾 Backup")
+
+	/// Fetch from the logstore.
+	/// - Parameter since: when provided, only entries at or after this date are scanned
+	///   (used for incremental live tailing, e.g. the Packet Stream). When `nil`, the scan
+	///   starts at boot — the historical/full-snapshot behavior.
+	static public func fetch(predicateFormat: String, since: Date? = nil) async throws -> [OSLogEntryLog] {
 
 		let store = try OSLogStore(scope: .currentProcessIdentifier)
-		let position = store.position(timeIntervalSinceLatestBoot: 0)
-		// let calendar = Calendar.current
-		// let dayAgo = calendar.date(byAdding: .day, value: -1, to: Date.now)
-		// let position = store.position(date: dayAgo!)
+		let position = if let since {
+			store.position(date: since)
+		} else {
+			store.position(timeIntervalSinceLatestBoot: 0)
+		}
 		let predicate = NSPredicate(format: predicateFormat)
 		let entries = try store.getEntries(at: position, matching: predicate)
 

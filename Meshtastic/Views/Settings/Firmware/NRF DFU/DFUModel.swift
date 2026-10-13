@@ -5,7 +5,6 @@
 //  Created by jake on 12/2/25.
 //
 
-
 import Foundation
 import NordicDFU
 import CoreBluetooth
@@ -19,6 +18,11 @@ enum DFUUpdateState: Equatable {
     case uploading
     case success
     case error(String)
+
+	var isError: Bool {
+		if case .error = self { return true }
+		return false
+	}
 }
 
 class DFUViewModel: NSObject, ObservableObject {
@@ -26,20 +30,16 @@ class DFUViewModel: NSObject, ObservableObject {
     @Published var progress: Double = 0.0
     @Published var state: DFUUpdateState = .idle
     @Published var statusMessage: String = "Ready"
+	/// Set when the library confirms an abort. Handing the radio back to the app before
+	/// this lands restarts discovery while NordicDFU still owns the peripheral.
+	@Published private(set) var didAbort = false
 	@Published var rotatingMessage: String = ""
 	
 	var lastRotatingMessageUpdate = Date.distantPast
 	var rotatingMessageIndex = -1
-	let rotatingMessages = [
-		"Keep your device close to your phone during the update.",
-		"Pangea uses LoRa to communicate without internet or cell service.",
-		"nRF52 devices are more power efficient than ESP32, ideal for solar deployments.",
-		"Pangea is 100% GPL V3 open source and community driven.",
-		"Do not close the app while the firmware update is in progress.",
-		"All messages on the mesh are encrypted by default.",
-		"Each device supports one connected phone at a time via Bluetooth.",
-		"Visit meshtastic.org/docs for guides, tips, and hardware info."
-	]
+	var rotatingMessages: [String] {
+		FirmwareUpdateTips.messages
+	}
 	
     // MARK: - DFU Controller
     private var dfuController: DFUServiceController?
@@ -52,6 +52,7 @@ class DFUViewModel: NSObject, ObservableObject {
     func startDFU(peripheral: CBPeripheral, zipFileUrl: URL) {
         
         guard let firmware = try? DFUFirmware(urlToZipFile: zipFileUrl) else {
+			Logger.services.error("NRF DFU: could not read the firmware zip")
             self.state = .error("Invalid Zip File")
             return
         }
@@ -72,7 +73,9 @@ class DFUViewModel: NSObject, ObservableObject {
         initiator.logger = self // Optional: For debugging
         
         // Start the process
+        self.didAbort = false
         self.state = .uploading
+		Logger.services.info("NRF DFU: starting on \(peripheral.identifier.uuidString, privacy: .public)")
 		self.dfuController = initiator.with(firmware: firmware)
 			.start(target: peripheral)
     }
@@ -106,6 +109,7 @@ extension DFUViewModel: DFUServiceDelegate {
 			UIApplication.shared.isIdleTimerDisabled = false
 			self.state = .error("Aborted")
 			self.statusMessage = "Update Aborted"
+			self.didAbort = true
 		case .uploading:
 			self.state = .uploading
 			self.statusMessage = "Uploading..."

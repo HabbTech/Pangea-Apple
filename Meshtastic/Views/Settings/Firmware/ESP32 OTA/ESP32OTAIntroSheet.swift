@@ -1,5 +1,5 @@
 //
-//  ESP32DFUSheet.swift
+//  ESP32OTAIntroSheet.swift
 //  Pangea
 //
 //  Created by Jake Bordens on 12/12/25.
@@ -21,7 +21,7 @@ struct ESP32OTAIntroSheet: View {
 
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@Environment(\.dismiss) var dismiss
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) var context
 
 	let binFileURL: URL
 
@@ -58,8 +58,8 @@ struct ESP32OTAIntroSheet: View {
 						}
 						.buttonStyle(.bordered)
 						.controlSize(.regular)
-					}.listRowBackground(Color(UIColor.tertiarySystemBackground))
-
+					}
+					.listRowBackground(Color(UIColor.tertiarySystemBackground))
 				} footer: {
 					Color.clear.frame(height: 5)
 				}
@@ -98,7 +98,7 @@ struct ESP32OTAIntroSheet: View {
 									.font(.callout)
 							}
 
-							Text("If you device has the proper updater loaded into the OTA_1 partition, you can attempt to use the WiFi update process.")
+							Text("If your device has the proper updater loaded into the OTA_1 partition, you can attempt to use the WiFi update process.")
 								.font(.caption)
 								.foregroundStyle(.secondary)
 
@@ -106,55 +106,69 @@ struct ESP32OTAIntroSheet: View {
 								self.showWifiUpdater = true
 							} label: {
 								Text("I Know What I'm Doing")
+									.frame(maxWidth: .infinity)
 							}
 							.buttonStyle(.borderedProminent)
+							.tint(.accentFill)
 							.controlSize(.large)
-							.frame(maxWidth: .infinity)
-							.cornerRadius(10)
+							.clipShape(RoundedRectangle(cornerRadius: 10))
 							.disabled(accessoryManager.activeDeviceNum == nil || !firmwareSupportsOTA)
 						}
 						.padding()
 						.listRowBackground(Color(UIColor.tertiarySystemBackground))
 					}
 				case .ble:
-					VStack(alignment: .leading, spacing: 12) {
-						Label {
-							Text("BLE OTA Updating")
-						} icon: {
-							Image("custom.bluetooth")
+					Section {
+						VStack(alignment: .leading, spacing: 12) {
+							Label {
+								Text("BLE OTA Updating")
+							} icon: {
+								Image("custom.bluetooth")
+							}
+							.font(.headline)
+
+							HStack(alignment: .top, spacing: 12) {
+								Image(systemName: "lock.shield")
+									.font(.title2)
+									.foregroundStyle(.blue)
+
+								Text("Advanced Users Only.")
+									.font(.callout)
+							}
+
+							Text("If your device has the proper updater loaded into the OTA_1 partition, you can attempt to use the BLE update process.")
+								.font(.caption)
+								.foregroundStyle(.secondary)
+
+							Button(role: .destructive) {
+								self.showBLEUpdater = true
+							} label: {
+								Text("I Know What I'm Doing")
+									.frame(maxWidth: .infinity)
+							}
+							.buttonStyle(.borderedProminent)
+							.tint(.accentFill)
+							.controlSize(.large)
+							.clipShape(RoundedRectangle(cornerRadius: 10))
+							.disabled(accessoryManager.activeDeviceNum == nil || !firmwareSupportsOTA)
 						}
-						.font(.headline)
-
-						HStack(alignment: .top, spacing: 12) {
-							Image(systemName: "lock.shield")
-								.font(.title2)
-								.foregroundStyle(.blue)
-
-							Text("Advanced Users Only.")
-								.font(.callout)
-						}
-
-						Text("If you device has the proper updater loaded into the OTA_1 partition, you can attempt to use the BLE update process.")
-							.font(.caption)
-							.foregroundStyle(.secondary)
-
-						Button(role: .destructive) {
-							self.showBLEUpdater = true
-						} label: {
-							Text("I Know What I'm Doing")
-						}
-						.buttonStyle(.borderedProminent)
-						.controlSize(.large)
-						.frame(maxWidth: .infinity)
-						.cornerRadius(10)
-						.disabled(accessoryManager.activeDeviceNum == nil || !firmwareSupportsOTA)
+						.padding()
+						.listRowBackground(Color(UIColor.tertiarySystemBackground))
 					}
-					.padding()
-					.listRowBackground(Color(UIColor.tertiarySystemBackground))
-					
-				default:
-					EmptyView()
+				case .none:
+					Section {
+						HStack(spacing: 12) {
+							Image(systemName: "antenna.radiowaves.left.and.right.slash")
+								.foregroundStyle(.secondary)
+							Text("Connect to your device via Bluetooth or Wi-Fi to use over-the-air firmware updates.")
+								.font(.caption)
+								.foregroundStyle(.secondary)
+								.fixedSize(horizontal: false, vertical: true)
+						}
+						.padding(.vertical, 4)
+					}
 				}
+
 				#if DEBUG
 				Section("Debug BLE") {
 					Button("Manually Start BLE OTA") {
@@ -168,8 +182,9 @@ struct ESP32OTAIntroSheet: View {
 					}
 				}
 				#endif
-				
-			}.sheet(isPresented: $showWifiUpdater) {
+
+			}
+			.sheet(isPresented: $showWifiUpdater) {
 				let theHost: String? = {
 					#if DEBUG
 					if !debugHost.isEmpty {
@@ -178,32 +193,40 @@ struct ESP32OTAIntroSheet: View {
 					#endif
 					return nil
 				}()
+				let _ = Logger.services.info("📡 [ESP32 OTA] Wi-Fi path, file \(binFileURL.lastPathComponent, privacy: .public)")
 				ESP32WifiOTASheet(binFileURL: binFileURL, host: theHost, onUpdateComplete: { dismiss() })
 					.environmentObject(accessoryManager)
-			}.sheet(isPresented: $showBLEUpdater) {
+			}
+			.sheet(isPresented: $showBLEUpdater) {
+				let _ = Logger.services.info("📡 [ESP32 OTA] BLE path, file \(binFileURL.lastPathComponent, privacy: .public)")
 				ESP32BLEOTASheet(binFileURL: binFileURL, onUpdateComplete: { dismiss() })
 					.environmentObject(accessoryManager)
 			}
 			.navigationTitle("ESP32 Update")
-				.navigationBarTitleDisplayMode(.inline)
-				.toolbar {
-					ToolbarItem(placement: .cancellationAction) { // Standard placement for "Done" or "Close"
-						Button("Done") {
-							dismiss()
-						}
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) {
+					Button {
+						dismiss()
+					} label: {
+						Image(systemName: "xmark")
 					}
+					.accessibilityLabel(String(localized: "Done", comment: "VoiceOver: dismiss the ESP32 update sheet"))
 				}
-		}.textCase(nil)
+			}
+		}
+		.textCase(nil)
 	}
-	
+
 	private enum SupportedOTAMode {
 		case none
 		case wifi
 		case ble
 	}
-	
+
 	private var OTAMode: SupportedOTAMode {
 		guard let connection = accessoryManager.activeConnection?.connection else {
+			Logger.services.info("📡 [ESP32 OTA] No active connection — no OTA path available")
 			return .none
 		}
 
@@ -220,4 +243,9 @@ struct ESP32OTAIntroSheet: View {
 			return .none
 		}
 	}
+}
+
+#Preview {
+	ESP32OTAIntroSheet(binFileURL: URL(fileURLWithPath: "/tmp/firmware-esp32-s3-2.5.18.bin"))
+		.environmentObject(AccessoryManager.shared)
 }

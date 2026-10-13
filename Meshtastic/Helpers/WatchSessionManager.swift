@@ -7,7 +7,8 @@
 
 import Foundation
 import WatchConnectivity
-import CoreData
+@preconcurrency import SwiftData
+import CoreLocation
 import os
 
 /// Manages the WatchConnectivity session on the iOS side, sending mesh node
@@ -21,6 +22,10 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
 	private let logger = Logger(subsystem: "gvh.PangeaClient", category: "⌚ Watch")
 	private var session: WCSession?
+	private var watchUpdateTask: Task<Void, Never>?
+	private var lastWatchSendTime: Date = .distantPast
+	/// Minimum interval between Watch updates (seconds)
+	private static let watchUpdateInterval: TimeInterval = 60
 
 	override init() {
 		super.init()
@@ -64,87 +69,67 @@ final class WatchSessionManager: NSObject, ObservableObject {
 		logger.info("Sent foxhunt target \(nodeNum) to Watch")
 	}
 
-	/// Fetch nodes from Core Data and push them to the Watch via application context.
+	/// Throttled: schedules a Watch update at most once per 60 seconds.
 	func sendNodesToWatch() {
 		guard let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else {
 			return
 		}
 
-		let context = PersistenceController.shared.container.viewContext
-		context.perform { [weak self] in
-			guard let self else { return }
-			let nodes = self.fetchNodesForWatch(context: context)
-			guard !nodes.isEmpty else { return }
-
-			do {
-				let data = try JSONEncoder().encode(nodes)
-				try session.updateApplicationContext(["nodes": data])
-				self.logger.info("Sent \(nodes.count) nodes to Watch via applicationContext")
-			} catch {
-				self.logger.error("Failed to send nodes to Watch: \(error.localizedDescription, privacy: .public)")
+		// If we sent recently, coalesce into a single deferred send
+		let now = Date()
+		if now.timeIntervalSince(lastWatchSendTime) < Self.watchUpdateInterval {
+			if watchUpdateTask == nil {
+				watchUpdateTask = Task { @MainActor in
+					let delay = Self.watchUpdateInterval - Date().timeIntervalSince(self.lastWatchSendTime)
+					if delay > 0 {
+						try? await Task.sleep(for: .seconds(delay))
+					}
+					guard !Task.isCancelled else { return }
+					await self.performSendNodesToWatch()
+					self.watchUpdateTask = nil
+				}
 			}
+			return
+		}
+
+		Task { @MainActor in
+			await self.performSendNodesToWatch()
 		}
 	}
 
-	// MARK: - Core Data → Watch Node Serialization
+	@MainActor
+	private func performSendNodesToWatch() async {
+		lastWatchSendTime = Date()
 
-	private func fetchNodesForWatch(context: NSManagedObjectContext) -> [WatchNode] {
-		let fetchRequest = NSFetchRequest<NSManagedObject>(entityName: "NodeInfoEntity")
-		fetchRequest.predicate = NSPredicate(format: "user != nil")
+		guard let userLocation = LocationsHandler.shared.locationsArray.last else {
+			logger.info("No user location available, skipping Watch update")
+			return
+		}
+
+		// Snapshot on the MeshPackets actor, which owns every node/position delete
+		// (cap eviction, near-duplicate position pruning). Walking main-context
+		// entities here raced those deletes: an instance whose row the actor had
+		// deleted passed the liveness guards until its next persisted-property read
+		// trapped in SwiftData's backing-data lookup. Serializing the read against
+		// the deletes removes the race instead of narrowing it.
+		let nodes = await MeshPackets.shared.watchNodeSnapshot(
+			userLatitude: userLocation.coordinate.latitude,
+			userLongitude: userLocation.coordinate.longitude,
+			maxDistanceMeters: Self.maxDistanceMeters
+		)
+		guard !nodes.isEmpty else { return }
 
 		do {
-			let results = try context.fetch(fetchRequest)
-			return results.compactMap { nodeInfo -> WatchNode? in
-				guard let user = nodeInfo.value(forKey: "user") as? NSManagedObject else { return nil }
-
-				let num = nodeInfo.value(forKey: "num") as? Int64 ?? 0
-				let longName = user.value(forKey: "longName") as? String ?? "Unknown"
-				let shortName = user.value(forKey: "shortName") as? String ?? "?"
-				let snr = nodeInfo.value(forKey: "snr") as? Float
-				let lastHeard = nodeInfo.value(forKey: "lastHeard") as? Date
-
-				// Get the latest position from the ordered set
-				var latitude: Double?
-				var longitude: Double?
-				var altitude: Int32?
-				var lastPositionTime: Date?
-
-				if let positions = nodeInfo.value(forKey: "positions") as? NSOrderedSet {
-					// Find the position marked as latest, or use the last one
-					let posArray = positions.array as? [NSManagedObject] ?? []
-					let latestPosition = posArray.first(where: {
-						($0.value(forKey: "latest") as? Bool) == true
-					}) ?? posArray.last
-
-					if let pos = latestPosition {
-						let latI = pos.value(forKey: "latitudeI") as? Int32 ?? 0
-						let lonI = pos.value(forKey: "longitudeI") as? Int32 ?? 0
-						if latI != 0, lonI != 0 {
-							latitude = Double(latI) / 1e7
-							longitude = Double(lonI) / 1e7
-							altitude = pos.value(forKey: "altitude") as? Int32
-							lastPositionTime = pos.value(forKey: "time") as? Date
-						}
-					}
-				}
-
-				return WatchNode(
-					num: UInt32(num),
-					longName: longName,
-					shortName: shortName,
-					latitude: latitude,
-					longitude: longitude,
-					altitude: altitude,
-					lastPositionTime: lastPositionTime,
-					lastHeard: lastHeard,
-					snr: snr
-				)
-			}
+			let data = try JSONEncoder().encode(nodes)
+			try session?.updateApplicationContext(["nodes": data])
+			logger.info("Sent \(nodes.count) nodes to Watch via applicationContext")
 		} catch {
-			logger.error("Failed to fetch nodes for Watch: \(error.localizedDescription, privacy: .public)")
-			return []
+			logger.error("Failed to send nodes to Watch: \(error.localizedDescription, privacy: .public)")
 		}
 	}
+
+	/// Maximum distance in meters to include a node (0.5 miles).
+	private static let maxDistanceMeters: Double = 804.672
 }
 
 // MARK: - WCSessionDelegate
@@ -176,7 +161,7 @@ extension WatchSessionManager: WCSessionDelegate {
 }
 
 // MARK: - WatchNode (mirrors the Watch app's MeshNode, Codable for transfer)
-struct WatchNode: Codable {
+struct WatchNode: Codable, Sendable {
 	let num: UInt32
 	let longName: String
 	let shortName: String
@@ -186,4 +171,38 @@ struct WatchNode: Codable {
 	let lastPositionTime: Date?
 	let lastHeard: Date?
 	let snr: Float?
+
+	static func make(from nodeInfo: NodeInfoEntity, userLocation: CLLocation, maxDistanceMeters: Double) -> WatchNode? {
+		// Liveness screens. These are a cheap backstop, not the fix: they only see
+		// deletions made through the entity's own context, which is why the walk kept
+		// crashing (`58e0e820`) when run on the main context against the ingest
+		// actor's deletes. The real protection is that this now runs ON the
+		// MeshPackets actor (see watchNodeSnapshot), serialized with those deletes;
+		// the screens still catch rows removed by main-context writers (admin node
+		// removal, database clear).
+		guard nodeInfo.modelContext != nil, !nodeInfo.isDeleted else { return nil }
+		guard let user = nodeInfo.user, user.modelContext != nil, !user.isDeleted else { return nil }
+		guard let pos = nodeInfo.latestPosition, pos.modelContext != nil, !pos.isDeleted else { return nil }
+
+		let latI = pos.latitudeI
+		let lonI = pos.longitudeI
+		guard latI != 0, lonI != 0 else { return nil }
+
+		let latitude = Double(latI) / 1e7
+		let longitude = Double(lonI) / 1e7
+		let nodeLocation = CLLocation(latitude: latitude, longitude: longitude)
+		guard userLocation.distance(from: nodeLocation) <= maxDistanceMeters else { return nil }
+
+		return WatchNode(
+			num: UInt32(nodeInfo.num),
+			longName: user.longName ?? "Unknown",
+			shortName: user.shortName ?? "?",
+			latitude: latitude,
+			longitude: longitude,
+			altitude: pos.altitude,
+			lastPositionTime: pos.time,
+			lastHeard: nodeInfo.lastHeard,
+			snr: nodeInfo.snr != 0 ? nodeInfo.snr : nil
+		)
+	}
 }

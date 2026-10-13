@@ -10,56 +10,61 @@ import SwiftUI
 struct LockLegend: View {
 
 	var body: some View {
-		VStack(alignment: .leading) {
-			Text("What does the lock mean?")
-				.font(.title2)
-				.padding(.bottom, 5)
-			VStack(alignment: .leading) {
-				HStack {
-					Image(systemName: "lock.open.fill")
-						.foregroundColor(.yellow)
-					Text("Shared Key")
-						.fontWeight(.semibold)
-				}
-				Text("Direct messages are using the shared key for the channel.")
-					.allowsTightening(/*@START_MENU_TOKEN@*/true/*@END_MENU_TOKEN@*/)
-					.font(.callout)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-			.padding(.bottom)
-			VStack(alignment: .leading) {
-				HStack {
-					Image(systemName: "lock.fill")
+		Section {
+			HelpItem(
+				symbol: AnyView(
+					VerifiedContactIcon.image
+						.font(.title3)
 						.foregroundColor(.green)
-					Text("Public Key Encryption")
-						.fontWeight(.semibold)
-				}
-				Text("Direct messages are using the new public key infrastructure for encryption. Requires firmware version 2.5 or greater.")
-					.allowsTightening(/*@START_MENU_TOKEN@*/true/*@END_MENU_TOKEN@*/)
-					.font(.callout)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-			.padding(.bottom)
-			VStack(alignment: .leading) {
-				HStack {
+				),
+				title: String(localized: "Verified Contact"),
+				subtitle: String(localized: "You verified this node's key in person, by exchanging contact QR codes. The strongest trust shown in the list. Nodes on firmware 2.8 or later show signing state instead of the locks.")
+			)
+			HelpItem(
+				symbol: AnyView(
+					SignedNodeIcon.image
+						.font(.title3)
+						.foregroundColor(.green)
+				),
+				title: String(localized: "Signed Node"),
+				subtitle: String(localized: "The radio verified this node's signed broadcasts, so its identity is consistent over time, but you have not verified it in person.")
+			)
+			HelpItem(
+				symbol: AnyView(
+					Image(systemName: "lock.fill")
+						.font(.title3)
+						.foregroundColor(.green)
+				),
+				title: String(localized: "Public Key Encryption"),
+				subtitle: String(localized: "Direct messages are using the public key infrastructure for encryption. Requires firmware version 2.5 or greater.")
+			)
+			HelpItem(
+				symbol: AnyView(
+					Image(systemName: "lock.open.fill")
+						.font(.title3)
+						.foregroundColor(.yellow)
+				),
+				title: String(localized: "Shared Key"),
+				subtitle: String(localized: "Direct messages are using the shared key for the channel. Shown for nodes on firmware before 2.5.")
+			)
+			HelpItem(
+				symbol: AnyView(
 					Image(systemName: "key.slash")
+						.font(.title3)
 						.foregroundColor(.red)
-					Text("Public Key Mismatch")
-						.fontWeight(.semibold)
-				}
-				Text("Verify who you are messaging with by comparing public keys in person or over the phone. The most recent public key for this node does not match the previously recorded key. You can delete the node and let it exchange keys again if the key change was due to a factory reset or other intentional action but this also may indicate a more serious security problem.")
-					.allowsTightening(/*@START_MENU_TOKEN@*/true/*@END_MENU_TOKEN@*/)
-					.font(.callout)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-			.padding(.bottom)
+				),
+				title: String(localized: "Public Key Mismatch"),
+				subtitle: String(localized: "The most recent public key for this node does not match the previously recorded key. Verify who you are messaging with by comparing public keys in person or over the phone. Shown at any firmware version.")
+			)
+		} header: {
+			Text("Security")
 		}
 	}
 }
 
 struct LockLegendPreviews: PreviewProvider {
 	static var previews: some View {
-		VStack {
+		List {
 			LockLegend()
 		}
 	}

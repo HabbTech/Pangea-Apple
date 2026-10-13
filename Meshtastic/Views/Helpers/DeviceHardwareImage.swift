@@ -6,78 +6,84 @@
 //
 
 import SwiftUI
-import CoreData
+@preconcurrency import SwiftData
 import SwiftDraw
 
 // 1. THE LOADER (Public API)
-// Responsibilities: Construct the FetchRequest only.
+// Responsibilities: Construct the Query only.
 // It creates no heavy objects and runs no logic in init.
 struct DeviceHardwareImage: View {
 	
-	// We hold the fetch request here
-	@FetchRequest var hardwareResults: FetchedResults<DeviceHardwareEntity>
+	@Query var hardwareResults: [DeviceHardwareEntity]
+	private let hardwareModel: Int64?
 	
 	// Init for Integer ID
-	init<T>(hwId: T) where T: BinaryInteger, T: CVarArg {
-		let predicate = NSPredicate(format: "hwModel == %d", hwId)
-		_hardwareResults = FetchRequest(
-			entity: DeviceHardwareEntity.entity(),
-			sortDescriptors: [NSSortDescriptor(key: "hwModelSlug", ascending: true)],
-			predicate: predicate,
-			animation: .default
-		)
+	init<T>(hwId: T) where T: BinaryInteger {
+		let hwModel = Int64(hwId)
+		hardwareModel = hwModel
+		_hardwareResults = Query(filter: #Predicate<DeviceHardwareEntity> { hw in
+			hw.hwModel == hwModel
+		}, sort: [SortDescriptor(\.hwModelSlug)])
 	}
 	
 	// Init for String Target
 	init(platformioTarget: String) {
-		let predicate = NSPredicate(format: "platformioTarget == %@", platformioTarget)
-		_hardwareResults = FetchRequest(
-			entity: DeviceHardwareEntity.entity(),
-			sortDescriptors: [NSSortDescriptor(key: "hwModelSlug", ascending: true)],
-			predicate: predicate,
-			animation: .default
-		)
+		hardwareModel = nil
+		_hardwareResults = Query(filter: #Predicate<DeviceHardwareEntity> { hw in
+			hw.platformioTarget == platformioTarget
+		}, sort: [SortDescriptor(\.hwModelSlug)])
 	}
 	
 	var body: some View {
 		// Pass the raw fetched results to the logic layer
-		DeviceHardwareImageProcessor(hardware: hardwareResults)
+		DeviceHardwareImageProcessor(hardware: hardwareResults, hardwareModel: hardwareModel)
 	}
 }
 
 // 2. THE PROCESSOR (Internal)
-// Responsibilities: Convert Core Data Entities into a flat array of images.
+// Responsibilities: Convert SwiftData Entities into a flat array of images.
 // This uses .task to step out of the Layout Loop.
 private struct DeviceHardwareImageProcessor: View {
-	let hardware: FetchedResults<DeviceHardwareEntity>
+	let hardware: [DeviceHardwareEntity]
+	let hardwareModel: Int64?
 	@EnvironmentObject var meshtasticAPI: MeshtasticAPI
 	
 	// We buffer the processed images in State.
-	// This prevents the Layout pass from triggering Core Data faults.
+	// This prevents the Layout pass from triggering faults.
 	@State private var sortedImages: [DeviceHardwareImageEntity] = []
 	
+	/// A stable identity that changes when the actual hardware models change, not just the count.
+	private var hardwareIdentity: String {
+		hardware.map { "\($0.hwModel):\($0.platformioTarget ?? "")" }.joined(separator: ",")
+	}
+
 	var body: some View {
 		DeviceHardwareImageLayout(
 			images: sortedImages,
 			isLoading: meshtasticAPI.isLoadingDeviceList
 		)
-		.task(id: hardware.count) {
-			// Re-calculate only when the hardware list actually changes,
-			// NOT when the scrollview bounces or layout shifts.
+		.task(id: hardwareIdentity) {
+			// Re-calculate when the hardware list actually changes
+			// (different node selected, not just layout shifts).
 			self.sortedImages = processImages()
 		}
 	}
 	
 	// The heavy logic moved out of the computed property
 	private func processImages() -> [DeviceHardwareImageEntity] {
+		let displayedHardware: [DeviceHardwareEntity]
+		if let hardwareModel,
+		   let target = HardwareCatalogResolver.presentation(for: hardwareModel, in: hardware)?.platformioTarget {
+			displayedHardware = hardware.filter { $0.platformioTarget == target }
+		} else {
+			displayedHardware = hardware
+		}
+
 		var returnImages = [DeviceHardwareImageEntity]()
 		var seenFileNames = Set<String>()
 		
-		// This traversal happens in the background task now
-		for item in hardware {
-			guard let imageList = item.images as? Set<DeviceHardwareImageEntity> else { continue }
-			
-			for image in imageList {
+		for item in displayedHardware {
+			for image in item.images {
 				if image.svgData != nil {
 					let name = image.fileName ?? ""
 					if !seenFileNames.contains(name) {
@@ -178,10 +184,12 @@ private struct SingleImageView: View {
 				Color.clear
 			}
 		}
-		.task {
-			// Parse SVG once, prevents lag during scroll/layout
-			if self.svg == nil, let data = entity.svgData {
+		.task(id: entity.fileName) {
+			// Re-parse SVG when the entity changes (e.g. switching nodes)
+			if let data = entity.svgData {
 				self.svg = SVG(data: data)
+			} else {
+				self.svg = nil
 			}
 		}
 	}

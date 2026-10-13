@@ -1,0 +1,145 @@
+//
+//  UserEntity.swift
+//  Meshtastic
+//
+//  SwiftData model for user information.
+//
+
+import Foundation
+import OSLog
+import SwiftData
+
+@Model
+final class UserEntity {
+	var hwDisplayName: String?
+	var hwModel: String?
+	var hwModelId: Int32 = 0
+	var isLicensed: Bool = false
+	var keyMatch: Bool = true
+	var lastMessage: Date?
+	var longName: String?
+	var mute: Bool = false
+	var newPublicKey: Data?
+	@Attribute(.unique) var num: Int64 = 0
+	var numString: String?
+	var pkiEncrypted: Bool = false
+	var publicKey: Data?
+	var role: Int32 = 0
+	var shortName: String?
+	var unmessagable: Bool = false
+	var userId: String?
+
+	@Relationship(inverse: \MessageEntity.fromUser)
+	var sentMessages: [MessageEntity] = []
+
+	@Relationship(inverse: \MessageEntity.toUser)
+	var receivedMessages: [MessageEntity] = []
+
+	var userNode: NodeInfoEntity?
+
+	/// Whether a direct message to this contact can actually be delivered.
+	///
+	/// Two independent gates. `unmessagable` is the node saying it does not accept messages.
+	/// The public key is what the sending radio needs: firmware has generated a keypair since 2.5,
+	/// so a direct message takes the PKC path, and a radio with no key for the destination refuses
+	/// to send (`PKI_SEND_FAIL_PUBLIC_KEY`) rather than falling back to channel encryption. A node we
+	/// have only heard packets from has no key until its NodeInfo arrives, and cannot be messaged.
+	var canDirectMessage: Bool {
+		!unmessagable && !(publicKey?.isEmpty ?? true)
+	}
+
+	/// Whether to offer the Message shortcut for this contact.
+	///
+	/// `canDirectMessage` with an escape hatch: a contact we can no longer send to may still have a
+	/// thread worth reading. The contact list keeps those rows for the same reason.
+	var showsDirectMessageAction: Bool {
+		canDirectMessage || lastMessage != nil
+	}
+
+	init() {}
+}
+
+// MARK: - First-wins public-key handling
+
+extension UserEntity {
+
+	/// The result of applying an inbound public key to this user via `applyInboundPublicKey(_:nodeNum:)`.
+	enum PublicKeyUpdateOutcome: Equatable {
+		/// The inbound key was empty — nothing to apply.
+		case ignoredEmpty
+		/// No key was on file yet, so the inbound key was stored (and `pkiEncrypted` set).
+		case stored
+		/// The inbound key matched the stored key — no change.
+		case matched
+		/// A *different* key arrived for a contact that already has one. The stored key is kept
+		/// (first-wins); `keyMatch` is cleared and `newPublicKey` records the rejected key so the UI
+		/// trust indicators surface the possible key-substitution attempt.
+		case mismatch
+	}
+
+	/// Applies **first-wins** semantics for an inbound public key.
+	///
+	/// Once a non-empty key is stored for a contact it is never silently overwritten by a different
+	/// inbound key — that would let any mesh/MQTT peer substitute a trusted contact's key and MITM the
+	/// victim's PKC direct messages. A differing key is refused and surfaced to the UI (`keyMatch =
+	/// false`, `newPublicKey = inbound`) rather than only logged; the stored key stands.
+	///
+	/// - Parameters:
+	///   - inboundKey: The public key carried by the inbound NodeInfo/User protobuf.
+	///   - nodeNum: The node number, used only for the security log line on a mismatch.
+	/// - Returns: The outcome, primarily for tests and callers that want to react to a mismatch.
+	@discardableResult
+	func applyInboundPublicKey(_ inboundKey: Data, nodeNum: Int64) -> PublicKeyUpdateOutcome {
+		guard !inboundKey.isEmpty else { return .ignoredEmpty }
+
+		if let storedKey = publicKey, !storedKey.isEmpty {
+			guard storedKey != inboundKey else { return .matched }
+			keyMatch = false
+			newPublicKey = inboundKey
+			Logger.data.error("🔐 [Security] Ignoring inbound public key change for node \(nodeNum, privacy: .public); a different key is already stored (possible key-substitution attempt).")
+			return .mismatch
+		}
+
+		pkiEncrypted = true
+		publicKey = inboundKey
+		return .stored
+	}
+
+	/// Accepts a public key the person deliberately imported, replacing the stored one.
+	///
+	/// First-wins exists because a key arriving over the mesh is unattested — nobody vouched for
+	/// it. A contact import is the opposite: the add-contact sheet showed that the key differs
+	/// from the one on file and the person confirmed the replacement. Refusing it here would
+	/// leave the radio holding the new key (the `add_contact` already applied it) while the app
+	/// kept the old one, which reads to the user as a permanent key mismatch and makes the sheet
+	/// warn again on every later import of the same contact.
+	///
+	/// Only ever called for an import the person confirmed; an unconfirmed one still goes through
+	/// `applyInboundPublicKey`.
+	func acceptImportedPublicKey(_ importedKey: Data) {
+		// Same well-formedness bar as the radio's own key: 32 bytes or nothing changes.
+		guard importedKey.count == 32 else { return }
+		publicKey = importedKey
+		pkiEncrypted = true
+		keyMatch = true
+		newPublicKey = nil
+	}
+
+	/// Accepts the connected radio's own public key as ground truth.
+	///
+	/// First-wins protects against a mesh peer substituting a contact's key, but the radio the
+	/// app is directly connected to reports its own key over BLE, USB or TCP — there is no mesh
+	/// hop to spoof. A 2.8 upgrade or factory reset regenerates the radio's keypair, and
+	/// refusing the radio's own new key left the connected node flagged as a key mismatch
+	/// forever. A changed key replaces the stored one and clears any recorded mismatch.
+	func acceptOwnRadioPublicKey(_ inboundKey: Data) {
+		// Only a well-formed Curve25519 public key (32 bytes) may replace the stored one and
+		// clear a recorded mismatch. Empty is what firmware sends when it has no key; any other
+		// length is malformed and changes nothing.
+		guard inboundKey.count == 32 else { return }
+		publicKey = inboundKey
+		pkiEncrypted = true
+		keyMatch = true
+		newPublicKey = nil
+	}
+}

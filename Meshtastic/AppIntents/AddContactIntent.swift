@@ -22,18 +22,23 @@ struct AddContactIntent: AppIntent {
 			throw AppIntentErrors.AppIntentError.notConnected
 		}
 
-		if contactUrl.absoluteString.lowercased().contains("meshtastic.org/v/#") {
-			let components = self.contactUrl.absoluteString.components(separatedBy: "#")
-			// Extract contact information from the URL
-			if let contactData = components.last {
-				let decodedString = contactData.base64urlToBase64()
-				if let _ = Data(base64Encoded: decodedString) {
-					do {
-						try await AccessoryManager.shared.addContactFromURL(base64UrlString: contactData)
-					} catch {
-						throw AppIntentErrors.AppIntentError.message("Failed to add/parse contact data: \(error.localizedDescription)")
-					}
-				}
+		if ContactURLHandler.canHandle(contactUrl) {
+			let parsed: MeshContactURL
+			do {
+				parsed = try MeshContactURL.parse(contactUrl.absoluteString)
+			} catch {
+				throw AppIntentErrors.AppIntentError.message("Failed to parse contact data: \(error.localizedDescription)")
+			}
+			// Confirm before adding a contact, mirroring the in-app
+			// AddContactConfirmationView — an untrusted Shortcut should not be able to
+			// silently inject a contact (and its public key) in the background.
+			try await requestConfirmation(
+				result: .result(dialog: "Add this Pangea contact to your nodes?")
+			)
+			do {
+				try await AccessoryManager.shared.addContactFromURL(base64UrlString: parsed.payload)
+			} catch {
+				throw AppIntentErrors.AppIntentError.message("Failed to add/parse contact data: \(error.localizedDescription)")
 			}
 			// Return a success result
 			return .result()

@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 
 /// App-wide hand-off for invites that arrive from outside the sheet (links, mentions).
 @MainActor
@@ -72,16 +72,15 @@ final class PangeaInbox: ObservableObject {
 
 /// Fetch without creating; upstream's getUser inserts a blank user when none exists.
 @MainActor
-func existingUser(num: Int64, context: NSManagedObjectContext) -> UserEntity? {
-	let request = UserEntity.fetchRequest()
-	request.predicate = NSPredicate(format: "num == %lld", num)
-	request.fetchLimit = 1
-	return try? context.fetch(request).first
+func existingUser(num: Int64, context: ModelContext) -> UserEntity? {
+	var descriptor = FetchDescriptor<UserEntity>(predicate: #Predicate { $0.num == num })
+	descriptor.fetchLimit = 1
+	return try? context.fetch(descriptor).first
 }
 
 struct NewMessageSheet: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@Environment(\.managedObjectContext) private var context
+	@Environment(\.modelContext) private var context
 	@Environment(\.dismiss) private var dismiss
 	@ObservedObject var router: Router
 	@ObservedObject private var inbox = PangeaInbox.shared

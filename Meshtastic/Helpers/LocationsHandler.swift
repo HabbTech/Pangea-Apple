@@ -11,17 +11,20 @@ import OSLog
 
 // The @MainActor annotation ensures that all state changes and UI updates happen on the main thread,
 // preventing potential race conditions and crashes related to UI updates from background threads.
-@MainActor class LocationsHandler: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
+@MainActor class LocationsHandler: NSObject, ObservableObject, CLLocationManagerDelegate {
 
 	static let shared = LocationsHandler()  // Create a single, shared instance of the object.
 	public var manager = CLLocationManager()
 	private var background: CLBackgroundActivitySession?
+	private var locationDeliveryStarted = false
 	var enableSmartPosition: Bool = UserDefaults.enableSmartPosition
 
 	@Published var locationsArray: [CLLocation] = [CLLocation]()
 	@Published var isStationary = false
 	@Published var count = 0
-	@Published var isRecording = false
+	@Published var isRecording = false {
+		didSet { updateAccuracyForRecordingState() }
+	}
 	@Published var isRecordingPaused = false
 	@Published var recordingStarted: Date?
 	@Published var distanceTraveled = 0.0
@@ -128,11 +131,10 @@ import OSLog
 		// Allow background location updates for continuous tracking.
 		self.manager.allowsBackgroundLocationUpdates = true
 		// Set desired accuracy for location updates.
-		// Consider your app's needs: kCLLocationAccuracyBestForNavigation, kCLLocationAccuracyBest, etc.
-		// For general tracking, kCLLocationAccuracyHundredMeters might be sufficient to save battery.
-		self.manager.desiredAccuracy = kCLLocationAccuracyBest
-		// Set the distance filter to only receive updates when the device has moved a certain distance.
-		self.manager.distanceFilter = kCLDistanceFilterNone // Receive all updates initially
+		// Use HundredMeters by default to save battery; escalate to Best during route recording.
+		self.manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+		// Only deliver updates when the device has moved at least 10 meters.
+		self.manager.distanceFilter = 10
 		if CLLocationManager.headingAvailable() {
 				self.manager.headingFilter = 1 // Update heading when it changes by 1 degree
 				self.manager.headingOrientation = .portrait // Adjust based on device orientation
@@ -146,57 +148,29 @@ import OSLog
 			Logger.services.warning("📍 [App] Cannot start location updates: insufficient authorization status: \(status.rawValue)")
 			return
 		}
+		guard !locationDeliveryStarted else { return }
 		Logger.services.info("📍 [App] Starting location updates")
-		// Using a Task for asynchronous operations. The @MainActor isolation of the class
-		// ensures that all state changes within this Task (accessing @Published properties)
-		// will be performed on the main actor.
-		Task { @MainActor in
-			do {
-				self.updatesStarted = true
-				// `liveUpdates()` provides a stream of location updates.
-				let updates = CLLocationUpdate.liveUpdates()
-				for try await update in updates {
-					// Check for task cancellation to allow graceful stopping.
-					try Task.checkCancellation()
-					// If `updatesStarted` is set to false (e.g., by `stopLocationUpdates`),
-					// break out of the loop to stop processing updates.
-					if !self.updatesStarted {
-						Logger.services.info("🛑 [App] Location updates loop stopped due to updatesStarted being false.")
-						break
-					}
-					if let loc = update.location {
-						self.isStationary = update.isStationary
-						let locationAdded = addLocation(loc, smartPostion: enableSmartPosition)
-						if !isRecording && locationAdded {
-							self.count = 1
-						} else if locationAdded && isRecording {
-							self.count += 1
-						}
-					}
-				}
-			} catch is CancellationError {
-				// Handle explicit task cancellation gracefully.
-				Logger.services.info("📍 [App] Location updates task was cancelled.")
-			} catch {
-				// Catch any other errors during location updates.
-				Logger.services.error("💥 [App] Could not start location updates: \(error.localizedDescription, privacy: .public)")
-			}
-			// The Task completes implicitly here.
-		}
+		updatesStarted = true
+		beginLocationDelivery()
 	}
-	
+
+	func beginLocationDelivery() {
+		locationDeliveryStarted = true
+		manager.startUpdatingLocation()
+	}
+
 	// New method to start heading updates
 	func startHeadingUpdates() {
 		guard CLLocationManager.headingAvailable() else {
 			Logger.services.warning("📍 [App] Heading updates not available on this device.")
 			return
 		}
-		
+
 		guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
 			Logger.services.warning("📍 [App] Cannot start heading updates: insufficient authorization status.")
 			return
 		}
-		
+
 		Logger.services.info("📍 [App] Starting heading updates")
 		manager.startUpdatingHeading()
 		headingUpdatesStarted = true
@@ -216,13 +190,45 @@ import OSLog
 			self.heading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
 		}
 	}
-	
+
+	func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+		Task { @MainActor in
+			guard self.updatesStarted else { return }
+			for location in locations {
+				self.recordLocation(location, isStationary: false)
+			}
+		}
+	}
+
 	/// Stops receiving live location updates.
 	func stopLocationUpdates() {
 		Logger.services.info("🛑 [App] Stopping location updates")
-		// Setting `updatesStarted` to false will cause the `liveUpdates()` loop to break.
 		self.updatesStarted = false
+		self.locationDeliveryStarted = false
+		self.manager.stopUpdatingLocation()
 	}
+
+	private func recordLocation(_ location: CLLocation, isStationary: Bool) {
+		self.isStationary = isStationary
+		let locationAdded = addLocation(location, smartPostion: enableSmartPosition)
+		if !isRecording && locationAdded {
+			self.count = 1
+		} else if locationAdded && isRecording {
+			self.count += 1
+		}
+	}
+
+	/// Escalates to best accuracy during route recording; reverts to battery-friendly defaults otherwise.
+	private func updateAccuracyForRecordingState() {
+		if isRecording {
+			manager.desiredAccuracy = kCLLocationAccuracyBest
+			manager.distanceFilter = kCLDistanceFilterNone
+		} else {
+			manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+			manager.distanceFilter = 10
+		}
+	}
+
 	/// Adds a location to the array and updates tracking metrics, applying smart position filters if enabled.
 	/// - Parameters:
 	///   - location: The `CLLocation` object to add.

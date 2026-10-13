@@ -6,26 +6,65 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 import TipKit
 
 struct Messages: View {
 
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@Environment(\.colorScheme) private var colorScheme
 	@ObservedObject	var router: Router
 	@Binding var unreadChannelMessages: Int
 	@Binding var unreadDirectMessages: Int
-	@State var node: NodeInfoEntity?
+	/// Store the connected node's `num`, NOT the `NodeInfoEntity` itself, and resolve the object
+	/// from the live context every render (see `node`). Caching the SwiftData model here traps
+	/// ("destroyed by ModelContext.reset") when the container is recreated (data clear / node
+	/// switch) while this view still reads `node?.myInfo`; a fresh fetch returns nil safely.
+	@State private var nodeNum: Int64?
 	@State private var userSelection: UserEntity? // Nothing selected by default.
 	@State private var channelSelection: ChannelEntity? // Nothing selected by default.
 
 	@State private var columnVisibility = NavigationSplitViewVisibility.all
 
+	/// Resolves the connected node from the current context on each access. Never cached, so it
+	/// can't outlive a container recreation. `getNodeInfo` is a `try?` fetch and returns nil if
+	/// the store is mid-reset.
+	private var node: NodeInfoEntity? {
+		guard let nodeNum else { return nil }
+		return getNodeInfo(id: nodeNum, context: context)
+	}
+
+	/// Binding handed to ChannelList/UserList. The getter resolves `node` from the live context on
+	/// every read (never a captured/cached object), so the retained closure can't read a reset
+	/// NodeInfoEntity if a container recreation happens before this view re-renders.
+	private var nodeBinding: Binding<NodeInfoEntity?> {
+		Binding(get: { self.node }, set: { self.nodeNum = $0?.num })
+	}
+
+	/// Sidebar selection binding. Reads/writes the durable, payload-free `router.messagesSection`,
+	/// so the bound value always matches a `.channels()` / `.directMessages()` row and the
+	/// collapsed `NavigationSplitView` back stack stays intact. The setter only fires on a user tap
+	/// (selecting a different section), where we also reset the detail pane so the new section
+	/// starts with nothing selected — matching the behavior of a fresh sidebar navigation — and
+	/// hide the sidebar so the channel or contact list is what's on screen.
+	private var sidebarSelection: Binding<MessagesNavigationState?> {
+		Binding(
+			get: { self.router.messagesSection },
+			set: { newValue in
+				self.router.messagesSection = newValue
+				self.channelSelection = nil
+				self.userSelection = nil
+				if newValue != nil {
+					self.columnVisibility = .doubleColumn
+				}
+			}
+		)
+	}
+
 	var body: some View {
 		NavigationSplitView(columnVisibility: $columnVisibility) {
-			List(selection: $router.messagesState) {
+			List(selection: sidebarSelection) {
 				NavigationLink(value: MessagesNavigationState.channels()) {
 					Spacer()
 					Label {
@@ -44,6 +83,10 @@ struct Messages: View {
 				.alignmentGuide(.listRowSeparatorLeading) {
 					$0[.leading]
 				}
+				.accessibilityElement(children: .combine)
+				.accessibilityLabel(unreadChannelMessages > 0
+					? String(localized: "Channels, \(unreadChannelMessages) unread", comment: "VoiceOver: Channels section with unread message count")
+					: String(localized: "Channels", comment: "VoiceOver: Channels section"))
 				NavigationLink(value: MessagesNavigationState.directMessages()) {
 					Spacer()
 					Label {
@@ -62,9 +105,13 @@ struct Messages: View {
 				.alignmentGuide(.listRowSeparatorLeading) {
 					$0[.leading]
 				}
+				.accessibilityElement(children: .combine)
+				.accessibilityLabel(unreadDirectMessages > 0
+					? String(localized: "Direct Messages, \(unreadDirectMessages) unread", comment: "VoiceOver: Direct Messages section with unread message count")
+					: String(localized: "Direct Messages", comment: "VoiceOver: Direct Messages section"))
 				Spacer()
 				TipView(MessagesTip(), arrowEdge: .top)
-					.tipViewStyle(PersistentTip())
+					.tipViewStyle(PersistentTipStyle())
 					.listRowSeparator(.hidden)
 				Spacer()
 					.listRowSeparator(.hidden)
@@ -72,78 +119,137 @@ struct Messages: View {
 			.listStyle(.plain)
 			.navigationTitle("Messages")
 			.navigationBarTitleDisplayMode(.large)
-			.navigationBarItems(leading: MeshtasticLogo(), trailing: NewMessageButton())
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					MeshtasticLogo()
+				}
+				ToolbarItem(placement: .topBarTrailing) {
+					NewMessageButton()
+				}
+			}
 		} content: {
-			switch router.messagesState {
-			case .channels(let channelId, let messageId):
-				ChannelList(node: $node, channelSelection: $channelSelection)
+			switch router.messagesSection {
+			case .channels:
+				ChannelList(node: nodeBinding, channelSelection: $channelSelection)
 					// Removed navigationTitle and navigationBarTitleDisplayMode here.
 					// ChannelList.swift now handles this within its own NavigationStack.
-			case .directMessages(let userNum, let messageId):
-				UserList(node: $node, userSelection: $userSelection)
+			case .directMessages:
+				UserList(node: nodeBinding, userSelection: $userSelection)
 					// Removed navigationTitle here. UserList will handle this.
 			case nil:
 				Text("Select a conversation type")
 			}
 		} detail: {
-			// The open list decides which chat shows, so a channel opened earlier doesn't
-			// stay up when a contact is picked (or a contact when a channel is).
-			switch router.messagesState {
-			case .channels:
-				if let myInfo = node?.myInfo, let channelSelection {
-					ChannelMessageList(myInfo: myInfo, channel: channelSelection)
-						.id(channelSelection.objectID)
-						// The toolbar is now defined inside ChannelMessageList.swift
-				} else {
-					Text("Select a channel")
+			NavigationStack {
+				Group {
+					// Pangea: the open list decides which chat shows, so a channel opened earlier doesn't
+					// stay up when a contact is picked (or a contact when a channel is).
+					switch router.messagesSection {
+					case .channels:
+						if let myInfo = node?.myInfo, let channelSelection {
+							ChannelMessageList(myInfo: myInfo, channel: channelSelection)
+								.id(channelSelection.persistentModelID)
+						} else {
+							Text("Select a channel")
+						}
+					case .directMessages:
+						if let userSelection {
+							UserMessageList(user: userSelection)
+								.id(userSelection.persistentModelID)
+						} else {
+							Text("Select a conversation")
+						}
+					case nil:
+						EmptyView()
+					}
 				}
-			case .directMessages:
-				if let userSelection {
-					UserMessageList(user: userSelection)
-						.id(userSelection.objectID)
-				} else {
-					Text("Select a conversation")
+				.navigationDestination(for: Int64.self) { nodeNum in
+					if let node = getNodeInfo(id: nodeNum, context: context) {
+						NodeDetail(node: node, nodeNum: nodeNum)
+					}
 				}
-			case nil:
-				EmptyView()
 			}
-		}.onChange(of: router.messagesState) {
-			setupNavigationState()
+		}
+		.navigationSplitViewStyle(.balanced)
+		.onAppear {
+			// Handles the deep link set by `route(url:)` before this view began observing.
+			consumeDeepLink(router.messagesState)
+			revealSidebarForEmptySelection()
+		}.onChange(of: router.messagesState) { _, newValue in
+			consumeDeepLink(newValue)
+		}.onChange(of: router.messagesSection) { _, newValue in
+			// A reset (e.g. `popToRoot` on disconnect) nils the section; clear the detail pane to
+			// match. Section *changes* between .channels/.directMessages are reset by the sidebar
+			// setter and by `consumeDeepLink`, so only the nil case needs handling here.
+			if newValue == nil {
+				channelSelection = nil
+				userSelection = nil
+				revealSidebarForEmptySelection()
+			}
 		}
 	}
 
-	private func setupNavigationState() {
-		let nodeId = Int64(UserDefaults.preferredPeripheralNum)
-		if nodeId > 0 {
-			node = getNodeInfo(id: nodeId, context: context)
+	/// The empty split view otherwise lands on "Select a conversation type" with the
+	/// sidebar collapsed, and the only way forward is the sidebar button. Open it
+	/// while nothing is selected. A dismissal made after a conversation type is
+	/// chosen is left alone — this is not called in that case, and the follow-up
+	/// bails if a selection arrived in the meantime.
+	private func revealSidebarForEmptySelection() {
+		guard router.messagesSection == nil else { return }
+		columnVisibility = .all
+		// The split view writes its own visibility during the first layout pass and
+		// can collapse the sidebar again after the assignment above.
+		Task { @MainActor in
+			guard router.messagesSection == nil else { return }
+			columnVisibility = .all
 		}
+	}
 
-		guard let state = router.messagesState else {
-			channelSelection = nil
-			userSelection = nil
-			return
+	private func bootstrapNodeNum() {
+		let nodeId = Int64(UserDefaults.preferredPeripheralNum)
+		if nodeId > 0 && nodeNum == nil {
+			nodeNum = nodeId
 		}
+	}
+
+	/// Resolves a deep-link `messagesState` into the selected conversation, then clears the payload
+	/// so it's consumed exactly once. Clearing `router.messagesState` re-fires the `onChange` above
+	/// with `nil`, which this guard turns into a no-op — selections are never clobbered. If the
+	/// target can't be resolved yet (e.g. channels not loaded on a cold launch) the payload is left
+	/// in place so a later `onAppear` can retry instead of silently dropping the deep link.
+	private func consumeDeepLink(_ state: MessagesNavigationState?) {
+		bootstrapNodeNum()
+		guard let state else { return }
 
 		switch state {
 		case .channels(channelId: let channelId, messageId: _):
-			userSelection = nil
-			if let channelId {
-				channelSelection = node?.myInfo?.channels?.first(where: { channel in
-					guard let channel = channel as? ChannelEntity else { return false }
-					return channel.id == channelId
-				}) as? ChannelEntity
-			} else {
+			router.messagesSection = .channels()
+			guard let channelId else {
 				channelSelection = nil
 				userSelection = nil
+				break
 			}
+			guard let channel = node?.myInfo?.channels.first(where: { $0.id == channelId }) else {
+				return // Not resolvable yet — keep the payload and retry on the next appear.
+			}
+			channelSelection = channel
+			// Clear the sibling DM selection so the detail pane (which prioritizes
+			// channelSelection) can't surface a stale conversation under the Channels section.
+			userSelection = nil
 		case .directMessages(userNum: let userNum, messageId: _):
-			channelSelection = nil
+			router.messagesSection = .directMessages()
 			if let userNum {
+				// getUser always resolves (creating a placeholder if needed), so a DM deep link
+				// never needs the cold-launch retry that the channel branch does.
 				userSelection = getUser(id: userNum, context: context)
 			} else {
-				channelSelection = nil
 				userSelection = nil
 			}
+			// Clear the sibling channel selection: the detail pane prioritizes channelSelection,
+			// so a previously-open channel would otherwise mask this DM and show the wrong thread.
+			channelSelection = nil
 		}
+
+		router.messagesState = nil // Consumed — prevents a re-appear from re-resolving it.
 	}
 }

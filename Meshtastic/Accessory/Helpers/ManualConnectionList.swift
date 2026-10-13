@@ -18,9 +18,7 @@ public class ManualConnectionList: ObservableObject {
 	}
 	
 	var connectionsList: [Device] {
-		get {
-			return _list
-		}
+		_list
 	}
 	
 	func insert(device: Device) {
@@ -52,6 +50,12 @@ public class ManualConnectionList: ObservableObject {
 		UserDefaults.manualConnections = list
 	}
 	
+	/// Clear App Data removes the saved list from UserDefaults (`RadioPairing.localDefaultsKeys`);
+	/// this drops the copy kept here, so the next save doesn't write it back.
+	func forgetAll() {
+		_list = []
+	}
+
 	func remove(atOffsets: IndexSet) {
 		var list = _list
 		list.remove(atOffsets: atOffsets)

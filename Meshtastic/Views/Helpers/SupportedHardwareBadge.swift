@@ -6,40 +6,38 @@
 //
 
 import SwiftUI
+@preconcurrency import SwiftData
 
 struct SupportedHardwareBadge: View {
 	
-	@Environment(\.managedObjectContext) var context
-	@FetchRequest var hardware: FetchedResults<DeviceHardwareEntity>
+	@Query var hardware: [DeviceHardwareEntity]
 	@EnvironmentObject var meshtasticAPI: MeshtasticAPI
 	
-	init<T>(hwModelId: T) where T: BinaryInteger, T: CVarArg {
-		let predicate = NSPredicate(format: "hwModel == %d", hwModelId)
-		_hardware = FetchRequest(
-			entity: DeviceHardwareEntity.entity(),
-			sortDescriptors: [NSSortDescriptor(key: "hwModelSlug", ascending: true)],
-			predicate: predicate,
-			animation: .default
-		)
+	init<T>(hwModelId: T) where T: BinaryInteger {
+		let hwModel = Int64(hwModelId)
+		_hardware = Query(filter: #Predicate<DeviceHardwareEntity> { hw in
+			hw.hwModel == hwModel
+		}, sort: [SortDescriptor(\.hwModelSlug)])
 	}
 	
 	init(platformioTarget: String) {
-		let predicate = NSPredicate(format: "platformioTarget == %@", platformioTarget)
-		_hardware = FetchRequest(
-			entity: DeviceHardwareEntity.entity(),
-			sortDescriptors: [NSSortDescriptor(key: "hwModelSlug", ascending: true)],
-			predicate: predicate,
-			animation: .default
-		)
+		_hardware = Query(filter: #Predicate<DeviceHardwareEntity> { hw in
+			hw.platformioTarget == platformioTarget
+		}, sort: [SortDescriptor(\.hwModelSlug)])
+	}
+
+	private var presentation: HardwareCatalogPresentation? {
+		guard let hwModel = hardware.first?.hwModel else { return nil }
+		return HardwareCatalogResolver.presentation(for: hwModel, in: hardware)
 	}
 	
 	var body: some View {
-		if let device = hardware.first {
+		if let activelySupported = presentation?.activelySupported {
 			VStack {
-				Image(systemName: device.activelySupported ? "checkmark.seal.fill" : "x.circle")
+				Image(systemName: activelySupported ? "checkmark.seal.fill" : "x.circle")
 					.font(.largeTitle)
-					.foregroundStyle(device.activelySupported ? .green : .red)
-				Text( device.activelySupported ? "Supported" : "Unsupported")
+					.foregroundStyle(activelySupported ? .green : .red)
+				Text( activelySupported ? "Supported" : "Unsupported")
 					.foregroundStyle(.gray)
 					.font(.caption2)
 					.fixedSize()

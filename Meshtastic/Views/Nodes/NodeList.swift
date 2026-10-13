@@ -7,26 +7,26 @@
 import SwiftUI
 import CoreLocation
 import OSLog
-import CoreData
+@preconcurrency import SwiftData
 import Foundation
 
 struct NodeList: View {
-	/// Debounce delay for node selection changes (100ms)
-	private static let nodeSelectionDebounceNs: UInt64 = 100_000_000
-
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@StateObject var router: Router
-	@State private var selectedNode: NodeInfoEntity?
-	@State private var nodeSelectionTask: Task<Void, Never>?
+	@EnvironmentObject var router: Router
+	@AppStorage("nodeListDensity") private var nodeListDensity: NodeListDensity = .standard
 	@State private var isPresentingTraceRouteSentAlert = false
 	@State private var isPresentingPositionSentAlert = false
 	@State private var isPresentingPositionFailedAlert = false
 	@State private var isPresentingDeleteNodeAlert = false
 	@State private var deleteNodeId: Int64 = 0
 	@State private var shareContactNode: NodeInfoEntity?
-	@StateObject var filters = NodeFilterParameters()
+	@State private var nodeForDisplayNameEdit: NodeInfoEntity?
+	@State private var nodeForStatusMessageEdit: NodeInfoEntity?
+	@EnvironmentObject private var filters: NodeFilterParameters
 	@State var isEditingFilters = false
+	@State private var showingHelp = false
 	@SceneStorage("selectedDetailView") var selectedDetailView: String?
 
 	var connectedNode: NodeInfoEntity? {
@@ -36,126 +36,241 @@ struct NodeList: View {
 		return nil
 	}
 
+	@State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+	/// The open iPhone Duo display is regular width but only about 669pt across, which
+	/// is not enough for two real columns. `NavigationSplitView` then draws the sidebar
+	/// as an overlay on top of the detail column, and with `columnVisibility` pinned to
+	/// `.all` it stays there — covering the detail column's navigation bar and the back
+	/// button with it, so a pushed screen like the Local Stats Log cannot be dismissed.
+	///
+	/// A phone-idiom device never has room for the two-column layout, so at this width it
+	/// gets the same single stack it gets folded. Compact width still goes through the
+	/// split view, which collapses to a stack on its own and is the path every iPhone
+	/// already takes.
+	private var prefersStackOverOverlaySidebar: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .phone
+	}
+
+	/// The stack's contents, expressed as the selected node so that everything which
+	/// drives the split view's detail column drives this too.
+	///
+	/// `selectedNodeNum` is the app's handle on this screen: `navigateToNodeDetail`
+	/// sets it for deep links and notification taps, and `popToRoot(tab: .nodes)`
+	/// clears it — which is how `popAllStacks()` unmounts the detail views holding
+	/// model objects before the store is replaced. A stack that only pushed on a row
+	/// tap would ignore both, so a deep link would go nowhere and a node switch would
+	/// leave this screen mounted across the container swap.
+	private var nodeDetailPath: Binding<[Int64]> {
+		Binding(
+			get: { router.selectedNodeNum.map { [$0] } ?? [] },
+			set: { router.selectedNodeNum = $0.first }
+		)
+	}
+
+	/// What a selected node opens. Shared so the stack and the split view's detail
+	/// column agree — including the seeded local-stats harness, which otherwise
+	/// worked folded and silently did nothing open.
+	@ViewBuilder
+	private func nodeDestination(_ node: NodeInfoEntity, nodeNum: Int64) -> some View {
+		if opensSeededLocalStatsLog {
+			LocalStatsLog(node: node)
+		} else {
+			NodeDetail(node: node, nodeNum: nodeNum)
+		}
+	}
+
+	@ViewBuilder
+	private var detailContent: some View {
+		if let selectedNum = router.selectedNodeNum,
+		   let node = router.cachedNodeInfo(id: selectedNum, context: context) {
+			nodeDestination(node, nodeNum: selectedNum)
+		} else {
+			ContentUnavailableView("Select a Node", systemImage: "flipphone")
+		}
+	}
+
 	var body: some View {
-		NavigationSplitView {
-			FilteredNodeList(
-				router: router,
-				withFilters: filters,
-				selectedNode: $selectedNode,
-				connectedNode: connectedNode,
-				isPresentingDeleteNodeAlert: $isPresentingDeleteNodeAlert,
-				deleteNodeId: $deleteNodeId,
-				shareContactNode: $shareContactNode
-			)
-			.sheet(isPresented: $isEditingFilters) {
-				NodeListFilter(
-					filters: filters
-				)
+		Group {
+			if prefersStackOverOverlaySidebar {
+				NavigationStack(path: nodeDetailPath) {
+					sidebarContent
+						// The sidebar's rows are `NavigationLink(value:)`, which the split
+						// view turns into a selection. In a stack they need a destination
+						// to push, and pushing is what gives the detail screens a back button.
+						.navigationDestination(for: Int64.self) { nodeNum in
+							if let node = router.cachedNodeInfo(id: nodeNum, context: context) {
+								nodeDestination(node, nodeNum: nodeNum)
+							}
+						}
+				}
+			} else {
+				NavigationSplitView(columnVisibility: $columnVisibility) {
+					sidebarContent
+				} detail: {
+					NavigationStack {
+						detailContent
+					}
+				}
+				.navigationSplitViewStyle(.balanced)
 			}
-			.safeAreaInset(edge: .bottom, alignment: .trailing) {
-				HStack {
+		}
+		.onAppear {
+			filters.fallbackLocation = connectedNode?.latestPosition?.nodeCoordinate
+		}
+		.onChange(of: accessoryManager.activeDeviceNum) {
+			filters.fallbackLocation = connectedNode?.latestPosition?.nodeCoordinate
+		}
+	}
+
+	private var opensSeededLocalStatsLog: Bool {
+		#if DEBUG
+		ProcessInfo.processInfo.arguments.contains("--meshtastic-perf-start-local-stats")
+		#else
+		false
+		#endif
+	}
+
+	// MARK: - Sidebar
+
+	@ViewBuilder
+	private var sidebarContent: some View {
+		FilteredNodeList(
+			withFilters: filters,
+			connectedNode: connectedNode,
+			isPresentingDeleteNodeAlert: $isPresentingDeleteNodeAlert,
+			deleteNodeId: $deleteNodeId,
+			shareContactNode: $shareContactNode,
+			nodeForDisplayNameEdit: $nodeForDisplayNameEdit,
+			nodeForStatusMessageEdit: $nodeForStatusMessageEdit,
+			nodeListDensity: $nodeListDensity,
+			selectedNodeNum: $router.selectedNodeNum
+		)
+		.sheet(isPresented: $isEditingFilters) {
+			NodeListFilter(
+				filters: filters
+			)
+		}
+		.sheet(isPresented: $showingHelp) {
+			NodeListHelp()
+		}
+		.safeAreaInset(edge: .top) {
+			// Shown after the radio's LoRa settings move it to a different channel. A banner rather
+			// than an alert on the settings screen: a LoRa write reboots the radio, so anything modal
+			// at save time competes with the reconnect, and this needs to survive being missed.
+			UnheardNodesBanner()
+		}
+		.safeAreaInset(edge: .bottom, alignment: .leading) {
+			HStack {
+				Button(action: {
+					withAnimation {
+						showingHelp = !showingHelp
+					}
+				}) {
+					Image(systemName: !showingHelp ? "questionmark.circle" : "questionmark.circle.fill")
+						.padding(.vertical, 5)
+				}
+				.tint(Color(UIColor.secondarySystemBackground))
+				.foregroundColor(.accentColor)
+				.buttonStyle(.borderedProminent)
+				.accessibilityLabel(showingHelp ? String(localized: "Hide help", comment: "VoiceOver label for the help toggle button when help is showing") : String(localized: "Show help", comment: "VoiceOver label for the help toggle button when help is hidden"))
+				Spacer()
+				if filters.isFiltering {
 					Button(action: {
 						withAnimation {
-							isEditingFilters = !isEditingFilters
+							filters.reset()
 						}
 					}) {
-						Image(systemName: !isEditingFilters ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+						Image(systemName: "arrow.counterclockwise.circle")
 							.padding(.vertical, 5)
 					}
 					.tint(Color(UIColor.secondarySystemBackground))
 					.foregroundColor(.accentColor)
 					.buttonStyle(.borderedProminent)
+					.accessibilityLabel(String(localized: "Reset node filters", comment: "VoiceOver label for the reset node filters button"))
+					.accessibilityHint(String(localized: "Clears all active node filters.", comment: "VoiceOver hint for the reset node filters button"))
 				}
-				.controlSize(.regular)
-				.padding(5)
-			}
-			.searchable(text: $filters.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Find a node")
-			.autocorrectionDisabled(true)
-			.scrollDismissesKeyboard(.immediately)
-			.navigationTitle(String.localizedStringWithFormat("Nodes (%@)".localized, String(getNodeCount())))
-			.listStyle(.plain)
-			.alert("Position Exchange Requested", isPresented: $isPresentingPositionSentAlert) {
-				Button("OK") { }.keyboardShortcut(.defaultAction)
-			} message: {
-				Text("Your position has been sent with a request for a response with their position. You will receive a notification when a position is returned.")
-			}
-			.alert("Position Exchange Failed", isPresented: $isPresentingPositionFailedAlert) {
-				Button("OK") { }.keyboardShortcut(.defaultAction)
-			} message: {
-				Text("Failed to get a valid position to exchange")
-			}
-			.alert("Trace Route Sent", isPresented: $isPresentingTraceRouteSentAlert) {
-				Button("OK") { }.keyboardShortcut(.defaultAction)
-			} message: {
-				Text("This could take a while, response will appear in the trace route log for the node it was sent to.")
-			}
-			.confirmationDialog("Are you sure?", isPresented: $isPresentingDeleteNodeAlert, titleVisibility: .visible) {
-				Button("Delete Node", role: .destructive) {
-					let deleteNode = getNodeInfo(id: deleteNodeId, context: context)
-					if connectedNode != nil {
-						if let node = deleteNode {
-							Task {
-								do {
-									try await accessoryManager.removeNode(node: node, connectedNodeNum: Int64(accessoryManager.activeDeviceNum ?? -1))
-								} catch {
-									Logger.data.error("Failed to delete node \(node.user?.longName ?? "Unknown".localized, privacy: .public)")
-								}
-							}
-						}
+				Button(action: {
+					withAnimation {
+						isEditingFilters = !isEditingFilters
 					}
+				}) {
+					Image(systemName: filters.isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+						.padding(.vertical, 5)
 				}
+				.tint(Color(UIColor.secondarySystemBackground))
+				.foregroundColor(.accentColor)
+				.buttonStyle(.borderedProminent)
+				.accessibilityLabel(isEditingFilters ? String(localized: "Hide node filters", comment: "VoiceOver label for the node filter toggle button when filters are showing") : String(localized: "Show node filters", comment: "VoiceOver label for the node filter toggle button when filters are hidden"))
 			}
-			.sheet(item: $shareContactNode) { selectedNode in
-				ShareContactQRDialog(node: selectedNode.toProto())
+			.controlSize(.regular)
+			.padding(5)
+		}
+		.searchable(text: $filters.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Find a node")
+		.autocorrectionDisabled(true)
+		.scrollDismissesKeyboard(.immediately)
+		.listStyle(.plain)
+		.alert("Position Exchange Requested", isPresented: $isPresentingPositionSentAlert) {
+			Button("OK") { }.keyboardShortcut(.defaultAction)
+		} message: {
+			Text("Your position has been sent with a request for a response with their position. You will receive a notification when a position is returned.")
+		}
+		.alert("Position Exchange Failed", isPresented: $isPresentingPositionFailedAlert) {
+			Button("OK") { }.keyboardShortcut(.defaultAction)
+		} message: {
+			Text("Failed to get a valid position to exchange")
+		}
+		.alert("Trace Route Sent", isPresented: $isPresentingTraceRouteSentAlert) {
+			Button("OK") { }.keyboardShortcut(.defaultAction)
+		} message: {
+			Text("This could take a while, response will appear in the trace route log for the node it was sent to.")
+		}
+		.confirmationDialog("Are you sure?", isPresented: $isPresentingDeleteNodeAlert, titleVisibility: .visible) {
+			deleteNodeButton
+		}
+		.sheet(item: $shareContactNode) { selectedNode in
+			// Mirror NodeDetail's rule: only your own (connected) node is marked
+			// manually verified when shared.
+			ShareContactQRDialog(
+				manuallyVerified: selectedNode.num == accessoryManager.activeDeviceNum,
+				node: selectedNode.toProto()
+			)
+		}
+		.displayNameAlert(node: $nodeForDisplayNameEdit)
+		.statusMessageAlert(node: $nodeForStatusMessageEdit)
+		.navigationSplitViewColumnWidth(min: 100, ideal: 300, max: .infinity)
+		.toolbar {
+			ToolbarItem(placement: .topBarLeading) {
+				MeshtasticLogo()
 			}
-			.navigationSplitViewColumnWidth(min: 100, ideal: 300, max: .infinity)
-			.navigationBarItems(leading: MeshtasticLogo(), trailing: ZStack {
+			ToolbarItem(placement: .topBarTrailing) {
 				ConnectedDevice(
 					deviceConnected: accessoryManager.isConnected,
 					name: accessoryManager.activeConnection?.device.shortName ?? "?",
 					phoneOnly: true
 				)
-			}
-			.accessibilityElement(children: .contain))
-		} detail: {
-			if let node = selectedNode {
-				NodeDetail(
-					node: node
-				)
-			} else {
-				ContentUnavailableView("Select a Node", systemImage: "flipphone")
-			}
-		}
-		.onChange(of: router.nodeListSelectedNodeNum) { _, newNum in
-			// Debounce rapid route changes — only process the last selection after a short delay
-			nodeSelectionTask?.cancel()
-			nodeSelectionTask = Task { @MainActor in
-				do {
-					try await Task.sleep(nanoseconds: Self.nodeSelectionDebounceNs)
-				} catch {
-					return // Cancelled by a newer selection
-				}
-				if let num = newNum {
-					self.selectedNode = router.cachedNodeInfo(id: num, context: context)
-				} else {
-					self.selectedNode = nil
-				}
-			}
-		}
-		.onChange(of: selectedNode) { _, node in
-			if let num = node?.num {
-				router.nodeListSelectedNodeNum = num
-			} else {
-				router.nodeListSelectedNodeNum = nil
+				.accessibilityElement(children: .contain)
 			}
 		}
 	}
 
-	// Helper to get the count of nodes for the navigation title
-	private func getNodeCount() -> Int {
-		let request: NSFetchRequest<NodeInfoEntity> = NodeInfoEntity.fetchRequest()
-		request.predicate = filters.buildPredicate()
-		return (try? context.count(for: request)) ?? 0
+	@ViewBuilder
+	private var deleteNodeButton: some View {
+		Button("Remove", role: .destructive) {
+			let deleteNode = getNodeInfo(id: deleteNodeId, context: context)
+			if connectedNode != nil {
+				if let node = deleteNode {
+					Task {
+						do {
+							try await accessoryManager.removeNode(node: node, connectedNodeNum: accessoryManager.activeDeviceNum ?? -1)
+						} catch {
+							let nodeName = node.user?.longName ?? "Unknown"
+							Logger.data.error("Failed to delete node \(nodeName, privacy: .public)")
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -163,88 +278,233 @@ struct NodeList: View {
 //  FilteredNodeList.swift
 //  Pangea
 //
-fileprivate struct FilteredNodeList: View {
-	@EnvironmentObject var accessoryManager: AccessoryManager
-	@FetchRequest private var nodes: FetchedResults<NodeInfoEntity>
-	@Environment(\.managedObjectContext) var context
-	var router: Router
+/// Wraps a NodeInfoEntity with a pre-extracted stable identity so that List/ForEach never
+/// reads a key path on a live SwiftData object during diffing. If the backing object is
+/// faulted between snapshot and render, the identity comparison still works safely.
+private struct NodeListEntry: Identifiable {
+	let id: Int64
+	let node: NodeInfoEntity
+}
 
-	@Binding var selectedNode: NodeInfoEntity?
+private struct FilteredNodeList: View {
+	@EnvironmentObject var accessoryManager: AccessoryManager
+	@EnvironmentObject var router: Router
+	@Environment(\.modelContext) private var context
+	/// Throttled snapshot of the filtered/sorted nodes actually shown. Recomputed on a gentle
+	/// cadence (see `.task`) instead of in `body`, so the full-node-set scan in `displayNodes`
+	/// doesn't run on every SwiftData write — which pegged the CPU on reconnect with a large DB.
+	@State private var displayedNodes: [NodeListEntry] = []
+	/// Kept in view state so a controller swap invalidates this task until SwiftUI remounts the
+	/// list against the new root `.modelContainer` and `databaseResetID`.
+	@State private var boundContainerGeneration = PersistenceController.shared.containerGeneration
+
 	var connectedNode: NodeInfoEntity?
 	@Binding var isPresentingDeleteNodeAlert: Bool
 	@Binding var deleteNodeId: Int64
 	@Binding var shareContactNode: NodeInfoEntity?
+	@Binding var nodeForDisplayNameEdit: NodeInfoEntity?
+	@Binding var nodeForStatusMessageEdit: NodeInfoEntity?
+	@Binding var nodeListDensity: NodeListDensity
+	@Binding var selectedNodeNum: Int64?
+	var filters: NodeFilterParameters
 
-	// The initializer for the FetchRequest
 	init(
-		router: Router,
 		withFilters: NodeFilterParameters,
-		selectedNode: Binding<NodeInfoEntity?>,
 		connectedNode: NodeInfoEntity?,
 		isPresentingDeleteNodeAlert: Binding<Bool>,
 		deleteNodeId: Binding<Int64>,
-		shareContactNode: Binding<NodeInfoEntity?>
+		shareContactNode: Binding<NodeInfoEntity?>,
+		nodeForDisplayNameEdit: Binding<NodeInfoEntity?>,
+		nodeForStatusMessageEdit: Binding<NodeInfoEntity?>,
+		nodeListDensity: Binding<NodeListDensity>,
+		selectedNodeNum: Binding<Int64?>
 	) {
-		self.router = router
-		let request: NSFetchRequest<NodeInfoEntity> = NodeInfoEntity.fetchRequest()
-		request.sortDescriptors = [
-			NSSortDescriptor(key: "ignored", ascending: true),
-			NSSortDescriptor(key: "favorite", ascending: false),
-			NSSortDescriptor(key: "lastHeard", ascending: false),
-			NSSortDescriptor(key: "user.longName", ascending: true)
-		]
-		request.predicate = withFilters.buildPredicate()
-		request.fetchBatchSize = 50
-		request.relationshipKeyPathsForPrefetching = ["user"]
-		self._nodes = FetchRequest(fetchRequest: request)
-
-		self._selectedNode = selectedNode
+		self.filters = withFilters
 		self.connectedNode = connectedNode
 		self._isPresentingDeleteNodeAlert = isPresentingDeleteNodeAlert
 		self._deleteNodeId = deleteNodeId
 		self._shareContactNode = shareContactNode
+		self._nodeForDisplayNameEdit = nodeForDisplayNameEdit
+		self._nodeForStatusMessageEdit = nodeForStatusMessageEdit
+		self._nodeListDensity = nodeListDensity
+		self._selectedNodeNum = selectedNodeNum
+	}
+
+	/// Fetch descriptor for the node set, built from this window's `filters` at fetch time so
+	/// predicate-level filter edits apply on the next refresh tick. Applied via explicit fetches
+	/// on a throttled cadence (see `.task`) rather than a live `@Query` — a live query
+	/// re-evaluated `body` on every SwiftData write, and under heavy ingestion that meant a
+	/// full-node-set scan per packet, even while the Nodes tab was off-screen (TabView keeps
+	/// tabs alive). Simple filters are pushed into the predicate to reduce in-memory work.
+	private func makeNodeFetchDescriptor() -> FetchDescriptor<NodeInfoEntity> {
+		let showIgnored = filters.isIgnored
+		let showFavorite = filters.isFavorite
+		let filterViaLoraOnly = filters.viaLora && !filters.viaMqtt
+		let filterViaMqttOnly = !filters.viaLora && filters.viaMqtt
+		let filterHopsDirect = filters.hopsAway == 0.0
+		let filterHopsMax = filters.hopsAway > 0.0
+		let maxHops = Int32(filters.hopsAway)
+
+		return FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { node in
+				// Ignored filter (always applied)
+				(showIgnored || !node.ignored) &&
+				(!showIgnored || node.ignored) &&
+				// Favorite filter
+				(!showFavorite || node.favorite) &&
+				// Via LoRa only (exclude MQTT)
+				(!filterViaLoraOnly || !node.viaMqtt) &&
+				// Via MQTT only
+				(!filterViaMqttOnly || node.viaMqtt) &&
+				// Direct nodes only
+				(!filterHopsDirect || node.hopsAway == 0) &&
+				// Hops within range
+				(!filterHopsMax || (node.hopsAway > 0 && node.hopsAway <= maxHops))
+			},
+			sortBy: [SortDescriptor(\NodeInfoEntity.lastHeard, order: .reverse)]
+		)
+	}
+
+	private func displayNodes(from allNodes: [NodeInfoEntity], activeNodeNum: Int64?) -> [NodeListEntry] {
+		let searchText = filters.searchText.lowercased()
+		let onlineThreshold = filters.isOnline ? Date().addingTimeInterval(-7_200) : nil
+		let distanceBounds = filters.currentDistanceBounds
+		let filterLookup = NodeListFilterLookup(
+			nodes: allNodes,
+			needsEnvironment: filters.isEnvironment,
+			distanceBounds: filters.distanceFilter ? distanceBounds : nil,
+			context: context
+		)
+		var seenNodeNums = Set<Int64>()
+		seenNodeNums.reserveCapacity(allNodes.count)
+		var connectedNode: NodeInfoEntity?
+		var favoriteNodes: [NodeInfoEntity] = []
+		var regularNodes: [NodeInfoEntity] = []
+		favoriteNodes.reserveCapacity(allNodes.count / 20)
+		regularNodes.reserveCapacity(allNodes.count)
+
+		for node in allNodes where filters.matchesPostPredicate(
+			node,
+			normalizedSearchText: searchText,
+			onlineThreshold: onlineThreshold,
+			distanceBounds: distanceBounds,
+			lookup: filterLookup
+		) {
+			guard seenNodeNums.insert(node.num).inserted else { continue }
+			if let activeNodeNum, node.num == activeNodeNum {
+				connectedNode = node
+			} else if node.favorite {
+				favoriteNodes.append(node)
+			} else {
+				regularNodes.append(node)
+			}
+		}
+
+		var nodes: [NodeInfoEntity] = []
+		nodes.reserveCapacity((connectedNode == nil ? 0 : 1) + favoriteNodes.count + regularNodes.count)
+		if let connectedNode {
+			nodes.append(connectedNode)
+		}
+		nodes.append(contentsOf: favoriteNodes)
+		nodes.append(contentsOf: regularNodes)
+		return nodes.map { NodeListEntry(id: $0.num, node: $0) }
+	}
+
+	private func replaceDisplayedNodesIfNeeded(with newNodes: [NodeListEntry]) {
+		guard displayedNodeIDsDiffer(from: newNodes) else { return }
+		displayedNodes = newNodes
+	}
+
+	private func displayedNodeIDsDiffer(from newNodes: [NodeListEntry]) -> Bool {
+		guard displayedNodes.count == newNodes.count else { return true }
+		for (currentNode, newNode) in zip(displayedNodes, newNodes)
+			where currentNode.id != newNode.id || currentNode.node !== newNode.node {
+			return true
+		}
+		return false
 	}
 
 	// The body of the view
 	var body: some View {
-		// If the connected node passes filters, always show it first (single-pass)
-		let nodesWithConnectedFirst: [NodeInfoEntity] = {
-			let activeNum = accessoryManager.activeDeviceNum
-			var result: [NodeInfoEntity] = []
-			result.reserveCapacity(nodes.count)
-			var connectedNode: NodeInfoEntity?
-			for node in nodes {
-				if node.num == activeNum {
-					connectedNode = node
+		List(displayedNodes, selection: $selectedNodeNum) { entry in
+			// `!isDeleted` matters as much as the context check: `context.delete()` marks
+			// isDeleted while modelContext stays non-nil until the save completes, and row
+			// bodies re-evaluate mid-save via SwiftData's change notification — reading a
+			// persisted property in that window traps (the NodeListItem SIGTRAP family).
+			if entry.node.modelContext != nil && !entry.node.isDeleted {
+				NavigationLink(value: entry.id) {
+					switch nodeListDensity {
+					case .compact:
+						NodeListItemCompact(
+							node: entry.node,
+							isDirectlyConnected: entry.id == accessoryManager.activeDeviceNum,
+							connectedNode: accessoryManager.activeConnection?.device.num ?? -1)
+					case .standard:
+						NodeListItem(
+							node: entry.node,
+							isDirectlyConnected: entry.id == accessoryManager.activeDeviceNum,
+							connectedNode: accessoryManager.activeConnection?.device.num ?? -1
+						)
+					}
+				}
+				.contextMenu {
+					contextMenuActions(
+						node: entry.node,
+						connectedNode: connectedNode
+					)
+				}
+			} else {
+				// Keep a row for an entry whose node died since the last snapshot tick (cap
+				// eviction, user delete). A conditional row that silently produces nothing
+				// desyncs the List's item counts from its data and crashes in UICollectionView
+				// batch updates ("attempt to delete item N from section 0..."). The purge pass
+				// in the cadence task removes the entry through a real, consistent diff.
+				Color.clear
+					.frame(height: 1)
+					.accessibilityHidden(true)
+			}
+		}
+		.navigationTitle(String.localizedStringWithFormat("Nodes (%@)".localized, String(displayedNodes.count)))
+		.task(id: router.selectedTab) {
+			// Recompute the displayed list on a gentle cadence instead of inside `body`.
+			// During live ingestion every packet writes to SwiftData; running displayNodes
+			// (a scan over the whole node set) per write pegged the main thread on reconnect
+			// with a large DB. ~3/sec is imperceptible and keeps CPU sane. The full scan only
+			// runs while the Nodes tab is frontmost — TabView keeps this view alive on other
+			// tabs (and this task re-fires on every tab switch), so entering the tab refreshes
+			// immediately. While parked on another tab the loop still ticks, but only to drop
+			// entries whose nodes have been deleted (cap evictions keep running during
+			// ingestion): the stale snapshot otherwise holds dead nodes for as long as the
+			// user stays away, and any row re-evaluation in that window hits them.
+			refreshDisplayedNodes()
+			while !Task.isCancelled {
+				try? await Task.sleep(for: .milliseconds(350))
+				if router.selectedTab == .nodes {
+					refreshDisplayedNodes()
 				} else {
-					result.append(node)
+					purgeDeadDisplayedNodes()
 				}
 			}
-			if let connectedNode {
-				result.insert(connectedNode, at: 0)
-			}
-			return result
-		}()
-		List(nodesWithConnectedFirst, id: \.self, selection: $selectedNode) { node in
-			NavigationLink(value: node) {
-				NodeListItem(
-					node: node,
-					isDirectlyConnected: node.num == accessoryManager.activeDeviceNum,
-					connectedNode: accessoryManager.activeConnection?.device.num ?? -1
-				)
-			}
-			.contextMenu {
-				contextMenuActions(
-					node: node,
-					connectedNode: connectedNode
-				)
-			}
 		}
-		.onAppear {
-			router.updateNodeIndex(from: nodes)
-		}
-		.onChange(of: nodes.map(\.objectID)) { _, _ in
-			router.updateNodeIndex(from: nodes)
+	}
+
+	private func refreshDisplayedNodes() {
+		// Accessing any property on a ModelContext whose container was replaced can trap in SwiftData.
+		guard boundContainerGeneration == PersistenceController.shared.containerGeneration else { return }
+		guard router.selectedTab == .nodes else { return }
+		let allNodes = (try? context.fetch(makeNodeFetchDescriptor())) ?? []
+		replaceDisplayedNodesIfNeeded(with: displayNodes(from: allNodes, activeNodeNum: accessoryManager.activeDeviceNum))
+		router.updateNodeIndex(from: allNodes)
+	}
+
+	/// Drops entries whose backing node has been deleted, without the full fetch/sort of a
+	/// real refresh — cheap enough to run while the tab is parked in the background.
+	/// `modelContext`/`isDeleted` are safe to read on a dead object; persisted properties are not.
+	private func purgeDeadDisplayedNodes() {
+		guard boundContainerGeneration == PersistenceController.shared.containerGeneration else { return }
+		let live = displayedNodes.filter { $0.node.modelContext != nil && !$0.node.isDeleted }
+		if live.count != displayedNodes.count {
+			displayedNodes = live
 		}
 	}
 
@@ -253,20 +513,30 @@ fileprivate struct FilteredNodeList: View {
 		node: NodeInfoEntity,
 		connectedNode: NodeInfoEntity?
 	) -> some View {
-		if let user = node.user {
-			NodeAlertsButton(context: context, node: node, user: user)
-			if !user.unmessagable && user.num == UserDefaults.preferredPeripheralNum {
-				Button(action: {
-					shareContactNode = node
-				}) {
-					Label("Share Contact QR", systemImage: "qrcode")
-				}
+		// Local-only rename — never touches the mesh (NodeDisplayNameStore), so unlike the actions
+		// below it doesn't need an active device connection. Available for any node in the local
+		// database regardless of connection state.
+		Button {
+			nodeForDisplayNameEdit = node
+		} label: {
+			Label("Display name", systemImage: "person.crop.circle")
+		}
+		// Status message the connected node broadcasts to the mesh. Only for your own
+		// node, with the same firmware 2.8+ gate the old Settings entry used.
+		if node.num == connectedNode?.num, accessoryManager.supportsStatusMessage {
+			Button {
+				nodeForStatusMessageEdit = node
+			} label: {
+				Label("Status Message", systemImage: "text.bubble")
 			}
 		}
 		if let connectedNode {
 			FavoriteNodeButton(node: node)
+			if let user = node.user {
+				NodeAlertsButton(context: context, node: node, user: user)
+			}
 			if connectedNode.num != node.num {
-				if !(node.user?.unmessagable ?? true) {
+				if node.user?.showsDirectMessageAction == true {
 					Button(action: {
 						if let url = URL(string: "meshtastic:///messages?userNum=\(node.num)") {
 							UIApplication.shared.open(url)
@@ -274,37 +544,6 @@ fileprivate struct FilteredNodeList: View {
 					}) {
 						Label("Message", systemImage: "message")
 					}
-				}
-				Button {
-					Task {
-						do {
-							try await accessoryManager.sendPosition(
-								channel: node.channel,
-								destNum: node.num,
-								wantResponse: true
-							)
-							Task { @MainActor in
-								// Update state to show alert
-							}
-						} catch {
-							Logger.mesh.warning("Failed to sendPosition")
-						}
-					}
-				} label: {
-					Label("Exchange Positions", systemImage: "arrow.triangle.2.circlepath")
-				}
-				Button {
-					Task {
-						if let fromUser = connectedNode.user, let toUser = node.user {
-							do {
-								_ = try await accessoryManager.exchangeUserInfo(fromUser: fromUser, toUser: toUser)
-							} catch {
-								Logger.mesh.warning("Failed to exchange user info")
-							}
-						}
-					}
-				} label: {
-					Label("Exchange User Info", systemImage: "person.2.badge.gearshape")
 				}
 				TraceRouteButton(
 					node: node
@@ -316,10 +555,100 @@ fileprivate struct FilteredNodeList: View {
 					deleteNodeId = node.num
 					isPresentingDeleteNodeAlert = true
 				} label: {
-					Label("Delete Node", systemImage: "trash")
+					Label("Remove", systemImage: "trash")
 				}
 			}
 		}
+	}
+}
+
+private struct NodeListFilterLookup {
+	private let environmentNodeNums: Set<Int64>?
+	private let distanceNodeNums: Set<Int64>?
+	/// Node nums that have at least one `latest` PositionEntity. Used by `isWithinDistance`
+	/// so that nodes with no position data pass through the distance filter rather than
+	/// being silently excluded.
+	private let positionedNodeNums: Set<Int64>?
+
+	init(
+		nodes: [NodeInfoEntity],
+		needsEnvironment: Bool,
+		distanceBounds: NodeDistanceFilterBounds?,
+		context: ModelContext
+	) {
+		// Only materialize the node-num set (a scan over every node) when a filter actually
+		// needs it; the common no-filter case skips this work entirely.
+		guard needsEnvironment || distanceBounds != nil else {
+			self.environmentNodeNums = nil
+			self.distanceNodeNums = nil
+			self.positionedNodeNums = nil
+			return
+		}
+		let nodeNums = Array(Set(nodes.map(\.num)))
+		if needsEnvironment {
+			self.environmentNodeNums = Self.fetchEnvironmentNodeNums(nodeNums: nodeNums, context: context)
+		} else {
+			self.environmentNodeNums = nil
+		}
+		if let distanceBounds {
+			let (within, positioned) = Self.fetchDistanceNodeNums(nodeNums: nodeNums, bounds: distanceBounds, context: context)
+			self.distanceNodeNums = within
+			self.positionedNodeNums = positioned
+		} else {
+			self.distanceNodeNums = nil
+			self.positionedNodeNums = nil
+		}
+	}
+
+	func hasEnvironmentMetrics(_ node: NodeInfoEntity) -> Bool {
+		environmentNodeNums?.contains(node.num) ?? node.hasEnvironmentMetrics
+	}
+
+	func isWithinDistance(_ node: NodeInfoEntity) -> Bool {
+		guard let distanceNodeNums else { return true }
+		// Nodes with no known position are not excluded by the distance filter.
+		guard positionedNodeNums?.contains(node.num) == true else { return true }
+		return distanceNodeNums.contains(node.num)
+	}
+
+	private static func fetchEnvironmentNodeNums(nodeNums: [Int64], context: ModelContext) -> Set<Int64> {
+		guard !nodeNums.isEmpty else { return [] }
+		let metricsType: Int32 = 1
+		let descriptor = FetchDescriptor<TelemetryEntity>(
+			predicate: #Predicate<TelemetryEntity> {
+				$0.metricsType == metricsType
+				&& $0.nodeTelemetry != nil
+				&& ($0.nodeTelemetry.flatMap { nodeNums.contains($0.num) } ?? false)
+			}
+		)
+		let metrics = (try? context.fetch(descriptor)) ?? []
+		return Set(metrics.compactMap { $0.nodeTelemetry?.num })
+	}
+
+	private static func fetchDistanceNodeNums(
+		nodeNums: [Int64],
+		bounds: NodeDistanceFilterBounds,
+		context: ModelContext
+	) -> (withinBounds: Set<Int64>, withAnyPosition: Set<Int64>) {
+		guard !nodeNums.isEmpty else { return ([], []) }
+		let descriptor = FetchDescriptor<PositionEntity>(
+			predicate: #Predicate<PositionEntity> {
+				$0.latest == true
+				&& $0.nodePosition != nil
+				&& ($0.nodePosition.flatMap { nodeNums.contains($0.num) } ?? false)
+			}
+		)
+		let positions = (try? context.fetch(descriptor)) ?? []
+		var withinBounds = Set<Int64>()
+		var withAnyPosition = Set<Int64>()
+		for position in positions {
+			guard let num = position.nodePosition?.num else { continue }
+			withAnyPosition.insert(num)
+			if bounds.contains(position) {
+				withinBounds.insert(num)
+			}
+		}
+		return (withinBounds, withAnyPosition)
 	}
 }
 
@@ -329,87 +658,66 @@ fileprivate struct FilteredNodeList: View {
 //
 
 fileprivate extension NodeFilterParameters {
-	func buildPredicate() -> NSPredicate? {
-		var predicates: [NSPredicate] = []
-
-		// Search text predicates
-		if !searchText.isEmpty {
-			let searchKeys = [
-				"user.userId", "user.numString", "user.hwModel",
-				"user.hwDisplayName", "user.longName", "user.shortName"
-			]
-			let textPredicates = searchKeys.map {
-				NSPredicate(format: "%K CONTAINS[c] %@", $0, searchText)
-			}
-			predicates.append(NSCompoundPredicate(orPredicateWithSubpredicates: textPredicates))
+	/// Filters already pushed into the @Query predicate: ignored, favorite, viaLora/viaMqtt, hopsAway.
+	func matchesPostPredicate(
+		_ node: NodeInfoEntity,
+		normalizedSearchText: String,
+		onlineThreshold: Date?,
+		distanceBounds: NodeDistanceFilterBounds?,
+		lookup: NodeListFilterLookup
+	) -> Bool {
+		// Search text (requires relationship traversal)
+		if !normalizedSearchText.isEmpty {
+			let matchesSearch = [
+				node.user?.userId,
+				node.user?.numString,
+				node.user?.hwModel,
+				node.user?.hwDisplayName,
+				node.user?.longName,
+				node.user?.shortName
+			].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(normalizedSearchText) }
+			if !matchesSearch { return false }
 		}
 
-		// Favorite filter
-		if isFavorite {
-			predicates.append(NSPredicate(format: "favorite == YES"))
-		}
-
-		// Via Lora/MQTT filters
-		if viaLora && !viaMqtt {
-			predicates.append(NSPredicate(format: "viaMqtt == NO"))
-		} else if !viaLora && viaMqtt {
-			predicates.append(NSPredicate(format: "viaMqtt == YES"))
-		}
-
-		// Role filter
+		// Role filter (requires relationship traversal)
 		if roleFilter && !deviceRoles.isEmpty {
-			let rolesPredicates = deviceRoles.map {
-				NSPredicate(format: "user.role == %i", Int32($0))
-			}
-			predicates.append(NSCompoundPredicate(type: .or, subpredicates: rolesPredicates))
+			guard let role = node.user?.role else { return false }
+			if !deviceRoles.contains(Int(role)) { return false }
 		}
 
-		// Hops Away filter
-		if hopsAway == 0.0 {
-			predicates.append(NSPredicate(format: "hopsAway == %i", 0))
-		} else if hopsAway > 0.0 {
-			predicates.append(NSPredicate(format: "hopsAway > 0 AND hopsAway <= %i", Int32(hopsAway)))
-		}
-
-		// Online filter
+		// Online filter (requires date computation)
 		if isOnline {
-			let isOnlinePredicate = NSPredicate(format: "lastHeard >= %@", Calendar.current.date(byAdding: .minute, value: -120, to: Date())! as NSDate)
-			predicates.append(isOnlinePredicate)
+			guard let lastHeard = node.lastHeard,
+				  let threshold = onlineThreshold else {
+				return false
+			}
+			if lastHeard < threshold { return false }
 		}
 
-		// Encrypted filter
+		if hidesUnheardOnCurrentLora && node.isUnheardOnCurrentLora { return false }
+
+		// Signed filter
+		if isSigned {
+			if !node.hasXeddsaSigned { return false }
+		}
+
+		// Encrypted filter (requires relationship traversal)
 		if isPkiEncrypted {
-			predicates.append(NSPredicate(format: "user.pkiEncrypted == YES"))
+			if node.user?.pkiEncrypted != true { return false }
 		}
 
-		// Ignored filter
-		if isIgnored {
-			predicates.append(NSPredicate(format: "ignored == YES"))
-		} else {
-			predicates.append(NSPredicate(format: "ignored == NO"))
-		}
-
-		// Environment filter
+		// Environment filter (requires to-many relationship traversal)
 		if isEnvironment {
-			predicates.append(NSPredicate(format: "SUBQUERY(telemetries, $tel, $tel.metricsType == 1).@count > 0"))
+			if !lookup.hasEnvironmentMetrics(node) { return false }
 		}
 
-		// Distance filter — only apply when we have a valid, precise phone GPS fix
-		if distanceFilter {
-			if let pointOfInterest = LocationsHandler.currentPreciseLocation {
-				let d: Double = maxDistance * 1.1
-				let r: Double = 6371009
-				let meanLatitidue = pointOfInterest.latitude * .pi / 180
-				let deltaLatitude = d / r * 180 / .pi
-				let deltaLongitude = d / (r * cos(meanLatitidue)) * 180 / .pi
-				let minLatitude: Double = pointOfInterest.latitude - deltaLatitude
-				let maxLatitude: Double = pointOfInterest.latitude + deltaLatitude
-				let minLongitude: Double = pointOfInterest.longitude - deltaLongitude
-				let maxLongitude: Double = pointOfInterest.longitude + deltaLongitude
-				let distancePredicate = NSPredicate(format: "(SUBQUERY(positions, $position, $position.latest == TRUE && (%lf <= ($position.longitudeI / 1e7)) AND (($position.longitudeI / 1e7) <= %lf) AND (%lf <= ($position.latitudeI / 1e7)) AND (($position.latitudeI / 1e7) <= %lf))).@count > 0", minLongitude, maxLongitude, minLatitude, maxLatitude)
-				predicates.append(distancePredicate)
+		// Distance filter (requires latest position lookup)
+		if distanceFilter, distanceBounds != nil {
+			guard lookup.isWithinDistance(node) else {
+				return false
 			}
 		}
-		return predicates.isEmpty ? nil : NSCompoundPredicate(type: .and, subpredicates: predicates)
+
+		return true
 	}
 }

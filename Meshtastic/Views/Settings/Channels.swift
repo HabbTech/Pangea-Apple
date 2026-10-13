@@ -5,7 +5,7 @@
 //  Copyright(c) Garth Vander Houwen 4/8/22.
 //
 
-import CoreData
+@preconcurrency import SwiftData
 import MapKit
 import MeshtasticProtobufs
 import OSLog
@@ -20,15 +20,78 @@ func generateChannelKey(size: Int) -> String {
 	return keyData.base64EncodedString()
 }
 
+func projectedDisplayChannels(from channels: [ChannelEntity]) -> [ChannelEntity] {
+	canonicalValidUniqueChannels(from: channels)
+}
+
+/// The connected radio's channels as name|key identity strings, for suppressing beacon
+/// offers the radio already has (design#140 behavior 10 — a beacon inviting you to a
+/// mesh you are already on is not an invitation).
+///
+/// A fetch failure returns an empty set on purpose: suppression quietly turns off and
+/// every offer stays visible, which is the pre-suppression behavior and the safe
+/// direction — hiding an offer on bad data would be the harmful failure.
+@MainActor
+func configuredChannelOfferKeys(context: ModelContext) -> Set<String> {
+	let num = Int64(UserDefaults.preferredPeripheralNum)
+	guard num > 0 else { return [] }
+	var descriptor = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == num })
+	descriptor.fetchLimit = 1
+	guard let node = (try? context.fetch(descriptor))?.first else { return [] }
+	return Set(canonicalValidUniqueChannels(from: node.myInfo?.channels ?? []).map {
+		"\($0.name ?? "")|\(($0.psk ?? Data()).base64EncodedString())"
+	})
+}
+
+func canonicalValidUniqueChannels(from channels: [ChannelEntity]) -> [ChannelEntity] {
+	var byIndex: [Int32: ChannelEntity] = [:]
+	for channel in channels where (Int32(0)...Int32(7)).contains(channel.index) {
+		byIndex[channel.index] = channel
+	}
+	return byIndex.values.sorted { $0.index < $1.index }
+}
+
+func validUniqueChannelIndexes(from channels: [ChannelEntity]) -> [Int32] {
+	canonicalValidUniqueChannels(from: channels).map(\.index)
+}
+
+/// Slots the radio keeps. It is a fixed array with a role per slot, not a list that grows.
+let maxChannelSlots: Int32 = 8
+
+func availableChannelIndexes(from channels: [ChannelEntity]) -> [Int32] {
+	let occupied = Set(validUniqueChannelIndexes(from: channels))
+	return (Int32(0)..<maxChannelSlots).filter { !occupied.contains($0) }
+}
+
+func nextAvailableSecondaryChannelIndex(from channels: [ChannelEntity]) -> Int32? {
+	availableChannelIndexes(from: channels).first { $0 > 0 }
+}
+
+func channelSettingsForSharing(
+	from channels: [ChannelEntity],
+	includedIndexes: Set<Int32>
+) -> [ChannelSettings] {
+	canonicalValidUniqueChannels(from: channels).compactMap { channel in
+		guard channel.role > 0, includedIndexes.contains(channel.index) else { return nil }
+		var settings = ChannelSettings()
+		settings.name = channel.name ?? ""
+		settings.psk = channel.psk ?? Data()
+		settings.id = UInt32(truncatingIfNeeded: channel.id)
+		settings.moduleSettings.positionPrecision = UInt32(truncatingIfNeeded: channel.positionPrecision)
+		settings.moduleSettings.isMuted = channel.mute
+		return settings
+	}
+}
+
 struct Channels: View {
 
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@Environment(\.dismiss) private var goBack
 	@Environment(\.sizeCategory) var sizeCategory
 	@Environment(\.colorScheme) private var colorScheme
 
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
 
 	@State var hasChanges = false
 	@State var hasValidKey = true
@@ -50,13 +113,40 @@ struct Channels: View {
 	@State var minimumVersion = "2.2.24"
 	@State private var showingHelp = false
 
-	@FetchRequest(
-		sortDescriptors: [NSSortDescriptor(key: "favorite", ascending: false),
-						  NSSortDescriptor(key: "lastHeard", ascending: false),
-						  NSSortDescriptor(key: "user.longName", ascending: true)],
-		animation: .default)
+	private var displayChannels: [ChannelEntity] {
+		guard let channels = node.myInfo?.channels else { return [] }
+		return projectedDisplayChannels(from: channels)
+	}
 
-	var nodes: FetchedResults<NodeInfoEntity>
+	private var locationSharingChannelIndex: Int32? {
+		if accessoryManager.checkIsVersionSupported(forVersion: "2.6.10") {
+			return displayChannels.first { $0.positionPrecision > 0 }?.index
+		}
+		guard let primary = displayChannels.first(where: { $0.index == 0 || $0.role == 1 }),
+			  primary.positionPrecision > 0 else {
+			return nil
+		}
+		return primary.index
+	}
+
+	private var primaryChannelName: String {
+		if let primary = displayChannels.first(where: { $0.index == 0 || $0.role == 1 }),
+		   let name = primary.name,
+		   !name.isEmpty {
+			return name
+		}
+		if node.loRaConfig?.usePreset == false {
+			return "Custom"
+		}
+		guard let preset = ModemPresets(rawValue: Int(node.loRaConfig?.modemPreset ?? 0)) else {
+			return "LongFast"
+		}
+		return preset.androidChannelName
+	}
+
+	private var channelFrequencySummary: ChannelFrequencySummary? {
+		ChannelFrequencySummary(loRaConfig: node.loRaConfig, primaryChannelName: primaryChannelName)
+	}
 
 	var body: some View {
 
@@ -66,7 +156,10 @@ struct Channels: View {
 					.tipBackground(colorScheme == .dark ? Color(.systemBackground) : Color(.secondarySystemBackground))
 					.listRowSeparator(.hidden)
 				if node.myInfo != nil {
-					ForEach(node.myInfo?.channels?.array as? [ChannelEntity] ?? [], id: \.self) { (channel: ChannelEntity) in
+					if let channelFrequencySummary {
+						ChannelConfigSummaryRow(summary: channelFrequencySummary)
+					}
+					ForEach(displayChannels, id: \.self) { (channel: ChannelEntity) in
 						Button(action: {
 							channelIndex = channel.index
 							channelRole = Int(channel.role)
@@ -121,40 +214,17 @@ struct Channels: View {
 							hasChanges = false
 							selectedChannel = channel
 						}) {
-							VStack(alignment: .leading) {
-								HStack {
-									CircleText(text: String(channel.index), color: .accentColor, circleSize: 45)
-										.padding(.trailing, 5)
-										.brightness(0.1)
-									VStack {
-										HStack {
-											ChannelLock(channel: channel)
-											if channel.name?.isEmpty ?? false {
-												if channel.role == 1 {
-													Text(String("PrimaryChannel").camelCaseToWords()).font(.headline)
-												} else {
-													Text(String("Channel \(channel.index)").camelCaseToWords()).font(.headline)
-												}
-											} else {
-												Text(String(channel.name ?? "Channel \(channel.index)").camelCaseToWords()).font(.headline)
-											}
-										}
-									}
-								}
-							}
+							ChannelRow(channel: channel, sharesLocation: channel.index == locationSharingChannelIndex)
 						}
+						.buttonStyle(.plain)
 					}
 				}
-				if node.myInfo?.channels?.array.count ?? 0 < 8 {
+				if let nextChannelIndex = nextAvailableSecondaryChannelIndex(from: node.myInfo?.channels ?? []) {
 					Button {
-						let channelIndexes = node.myInfo?.channels?.compactMap({(ch) -> Int in
-							return (ch as AnyObject).index
-						})
-						let firstChannelIndex = firstMissingChannelIndex(channelIndexes ?? [])
 						channelKeySize = 16
 						let key = generateChannelKey(size: channelKeySize)
 						channelName = ""
-						channelIndex = Int32(firstChannelIndex)
+						channelIndex = nextChannelIndex
 						channelRole = 2
 						channelKey = key
 						positionsEnabled = false
@@ -163,7 +233,7 @@ struct Channels: View {
 						uplink = false
 						downlink = false
 
-						let newChannel = ChannelEntity(context: context)
+						let newChannel = ChannelEntity()
 						newChannel.id = channelIndex
 						newChannel.index = channelIndex
 						newChannel.uplinkEnabled = uplink
@@ -193,7 +263,9 @@ struct Channels: View {
 				#endif
 				ChannelForm(channelIndex: $channelIndex, channelName: $channelName, channelKeySize: $channelKeySize, channelKey: $channelKey, channelRole: $channelRole, uplink: $uplink, downlink: $downlink, positionPrecision: $positionPrecision, preciseLocation: $preciseLocation, positionsEnabled: $positionsEnabled, hasChanges: $hasChanges, hasValidKey: $hasValidKey, supportedVersion: $supportedVersion)
 					.presentationDetents([.large])
+					#if !targetEnvironment(macCatalyst)
 					.presentationDragIndicator(.visible)
+					#endif
 				.onFirstAppear {
 					supportedVersion = accessoryManager.checkIsVersionSupported(forVersion: minimumVersion)
 				}
@@ -216,23 +288,28 @@ struct Channels: View {
 							selectedChannel!.downlinkEnabled = downlink
 							selectedChannel!.positionPrecision = Int32(positionPrecision)
 
-							guard let mutableChannels = node.myInfo?.channels?.mutableCopy() as? NSMutableOrderedSet else {
+							guard var channels = node.myInfo?.channels else {
 								return
 							}
-							if mutableChannels.contains(selectedChannel as Any) {
-								let replaceChannel = mutableChannels.first(where: { selectedChannel?.psk == ($0 as AnyObject).psk && selectedChannel?.name == ($0 as AnyObject).name})
-								mutableChannels.replaceObject(at: mutableChannels.index(of: replaceChannel as Any), with: selectedChannel as Any)
+							if let idx = channels.firstIndex(where: { $0.index == selectedChannel?.index }) {
+								channels[idx] = selectedChannel!
 							} else {
-								mutableChannels.add(selectedChannel as Any)
+								channels.append(selectedChannel!)
 							}
-							node.myInfo?.channels = mutableChannels.copy() as? NSOrderedSet
-							context.refresh(selectedChannel!, mergeChanges: true)
+
+							var uniqueChannels: [Int32: ChannelEntity] = [:]
+							for channel in channels {
+								uniqueChannels[channel.index] = channel
+							}
+							node.myInfo?.channels = uniqueChannels.values.sorted { $0.index < $1.index }
 						if channel.role != Channel.Role.disabled {
+							if let selected = selectedChannel, selected.modelContext == nil {
+								context.insert(selected)
+							}
 							do {
 								try context.save()
 								Logger.data.info("💾 Saved Channel: \(channel.settings.name, privacy: .public)")
 							} catch {
-								context.rollback()
 								let nsError = error as NSError
 								Logger.data.error("Unresolved Core Data error in the channel editor. Error: \(nsError, privacy: .public)")
 							}
@@ -241,21 +318,32 @@ struct Channels: View {
 							for object in objects {
 								context.delete(object)
 							}
-							for node in nodes where node.channel == channel.index {
-								context.delete(node)
+							let channelIdx = channel.index
+							var nodeDescriptor = FetchDescriptor<NodeInfoEntity>(
+								predicate: #Predicate { $0.channel == channelIdx }
+							)
+							nodeDescriptor.fetchLimit = 100
+							if let matchingNodes = try? context.fetch(nodeDescriptor) {
+								for matchingNode in matchingNodes {
+									context.delete(matchingNode)
+								}
 							}
 							context.delete(selectedChannel!)
 							do {
 								try context.save()
 								Logger.data.info("💾 Deleted Channel: \(channel.settings.name, privacy: .public)")
 							} catch {
-								context.rollback()
 								let nsError = error as NSError
 								Logger.data.error("Unresolved Core Data error in the channel editor. Error: \(nsError, privacy: .public)")
 							}
 						}
 						Task {
-							_ = try await accessoryManager.saveChannel(channel: channel, fromUser: node.user!, toUser: node.user!)
+							_ = try await accessoryManager.saveChannel(
+								channel: channel,
+								fromUser: node.user!,
+								toUser: node.user!,
+								refreshShareSnapshot: true
+							)
 							Task { @MainActor in
 								selectedChannel = nil
 								channelName = ""
@@ -289,7 +377,9 @@ struct Channels: View {
 		.sheet(isPresented: $showingHelp) {
 			ChannelsHelp()
 				.presentationDetents([.large])
+				#if !targetEnvironment(macCatalyst)
 				.presentationDragIndicator(.visible)
+				#endif
 		}
 		.safeAreaInset(edge: .bottom, alignment: .leading) {
 			HStack {
@@ -301,7 +391,11 @@ struct Channels: View {
 					Image(systemName: !showingHelp ? "questionmark.circle" : "questionmark.circle.fill")
 						.padding(.vertical, 5)
 				}
+				.tint(Color(UIColor.secondarySystemBackground))
 				.foregroundColor(.accentColor)
+				.buttonStyle(.borderedProminent)
+				.buttonBorderShape(.circle)
+				.accessibilityLabel(showingHelp ? String(localized: "Hide help", comment: "VoiceOver label for the help toggle button when help is showing") : String(localized: "Show help", comment: "VoiceOver label for the help toggle button when help is hidden"))
 			}
 			.controlSize(.regular)
 			.padding(5)
@@ -312,17 +406,6 @@ struct Channels: View {
 			ConnectedDeviceItem(device: ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?"))
 		}
 	}
-}
-
-func firstMissingChannelIndex(_ indexes: [Int]) -> Int {
-	let smallestIndex = 1
-	if indexes.isEmpty { return smallestIndex }
-	if smallestIndex <= indexes.count {
-		for element in smallestIndex...indexes.count where !indexes.contains(element) {
-			return element
-		}
-	}
-	return indexes.count + 1
 }
 
 enum PositionPrecision: Int, CaseIterable, Identifiable {
@@ -409,3 +492,95 @@ enum PositionPrecision: Int, CaseIterable, Identifiable {
 		return String.localizedStringWithFormat("Within %@".localized, String(distanceFormatter.string(fromDistance: precisionMeters)))
 	}
 }
+
+private struct ChannelConfigSummaryRow: View {
+	let summary: ChannelFrequencySummary
+
+	var body: some View {
+		HStack(spacing: 8) {
+			Image(systemName: "antenna.radiowaves.left.and.right")
+				.foregroundStyle(.secondary)
+			Text(summary.regionName)
+			Spacer(minLength: 8)
+			Text("\(summary.frequencyText) · Slot \(summary.slotText)")
+				.monospacedDigit()
+		}
+		.font(.caption)
+		.foregroundStyle(.secondary)
+		.listRowSeparator(.hidden)
+		.accessibilityElement(children: .combine)
+	}
+}
+
+private struct ChannelRow: View {
+	let channel: ChannelEntity
+	let sharesLocation: Bool
+
+	private var title: String {
+		if let name = channel.name, !name.isEmpty {
+			return name
+		}
+		if channel.role == 1 {
+			return "Primary Channel"
+		}
+		return "Channel \(channel.index)"
+	}
+
+	private var subtitle: String {
+		if channel.role == 1 {
+			return "Primary channel"
+		}
+		return "Channel \(channel.index)"
+	}
+
+	var body: some View {
+		HStack(alignment: .center, spacing: 10) {
+			CircleText(text: String(channel.index), color: .accentFill, circleSize: 45)
+				.padding(.trailing, 5)
+				.brightness(0.1)
+			VStack(alignment: .leading, spacing: 3) {
+				HStack(spacing: 6) {
+					ChannelLock(channel: channel)
+					Text(title)
+						.font(.headline)
+						.foregroundStyle(.primary)
+				}
+				Text(subtitle)
+					.font(.caption)
+					.foregroundStyle(.secondary)
+			}
+			Spacer(minLength: 0)
+			// MQTT uplink/downlink cloud icons used to render here too, but downlink is
+			// commonly enabled by default, so nearly every channel row carried a cloud
+			// that read as a download button rather than status — removed. The uplink/
+			// downlink toggles remain visible in the channel editor itself.
+			if sharesLocation {
+				ChannelStatusIcon(
+					systemImage: "location.fill",
+					color: .green,
+					accessibilityLabel: String(localized: "Position sharing", comment: "VoiceOver: this channel shares location")
+				)
+			}
+		}
+		.padding(.vertical, 4)
+		.accessibilityElement(children: .combine)
+	}
+}
+
+private struct ChannelStatusIcon: View {
+	let systemImage: String
+	let color: Color
+	let accessibilityLabel: String
+
+	var body: some View {
+		Image(systemName: systemImage)
+			.font(.caption)
+			.foregroundStyle(color)
+			.accessibilityLabel(accessibilityLabel)
+	}
+}
+
+// `ChannelFrequencySummary`, `LoRaChannelCalculator`, `RegionInfo`, and the
+// `ModemPresets` bandwidth/name helpers moved to
+// `Meshtastic/Helpers/LoRaChannelCalculator.swift` so the Mesh Beacons join
+// enhancement can reuse the firmware-accurate slot math.

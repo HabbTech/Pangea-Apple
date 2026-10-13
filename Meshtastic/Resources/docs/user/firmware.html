@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firmware Updates</title>
+  <link rel="stylesheet" href="../assets/docs.css">
+</head>
+<body data-page="firmware">
+<h1>Firmware Updates</h1>
+<p>The app can check for and install Meshtastic firmware updates directly on your connected radio over Bluetooth.</p>
+<h2>Checking for Updates</h2>
+<ol>
+<li>Connect to your radio.</li>
+<li>Go to <strong>Settings → Firmware Updates</strong>.</li>
+<li>The app shows the firmware version currently running on your radio and the latest stable release available from GitHub.</li>
+</ol>
+<p>Opening the screen fetches the release list and the hardware catalog. Previously the list was only fetched at launch, so if that fetch failed the screen stayed empty until you pulled to refresh; now it fills in on its own. Refreshing the catalog means a board added since your build of the app shipped is recognized by its exact firmware target instead of falling back to another board that shares its hardware model.</p>
+<p>Neither fetch is rate limited, because both are cached: opening the screen repeatedly is served from the cache or answered with an empty &quot;not modified&quot; reply rather than downloading the lists again.</p>
+<p>The screen shows a picture of your radio above the details. Images for supported hardware ship with the app, so the picture appears even without an internet connection. A radio reporting a specialized firmware target with its own artwork gets that artwork; otherwise the app shows the base hardware image. If no image is available for your hardware, the screen leaves the picture out instead of showing an empty space.</p>
+<p>When you connect to a node running firmware older than the latest stable release, the app can send a firmware update notification. For hardware the app can update directly, tapping the notification opens <strong>Firmware Updates</strong> so you can review and start the OTA update. For hardware that needs an external updater, the notification tells you to use <strong>Meshtastic Flasher</strong> instead.</p>
+<p>The app remembers each node, hardware target, and stable version it has already notified you about, so it will not keep sending the same reminder.</p>
+<p>Some radios report a specialized firmware target that is not a separate entry in the hardware catalog. In that case, the app uses the base hardware entry for details such as the device name and processor architecture, but it keeps the radio's exact target when choosing downloads and local files. The suggested filename on the Firmware Updates screen uses that exact target, such as <code>firmware-thinknode_m1-inkhud-&lt;version&gt;.uf2</code>.</p>
+<h2>Installing an Update</h2>
+<ol>
+<li>Tap <strong>Update Firmware</strong> when a newer version is available.</li>
+<li>The app downloads the correct firmware binary for your hardware.</li>
+<li>The radio enters update mode (DFU) and the new firmware is transferred over BLE.</li>
+<li>The radio reboots automatically when the update completes.</li>
+</ol>
+<p>For ESP32 BLE updates, the app waits for the radio's final verification response before showing success. If the radio reports an error or does not send the final success response, the app keeps the update in a failed state instead of treating the upload as complete.</p>
+<table>
+<thead>
+<tr>
+<th>Icon</th>
+<th>Progress</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><img src="../assets/screenshots/progressZero.png" alt="0%" /></td>
+<td>Starting</td>
+<td>Update initiating — firmware binary downloading.</td>
+</tr>
+<tr>
+<td><img src="../assets/screenshots/progressHalf.png" alt="50%" /></td>
+<td>In Progress</td>
+<td>Firmware transfer in progress over BLE.</td>
+</tr>
+<tr>
+<td><img src="../assets/screenshots/progressComplete.png" alt="Complete" /></td>
+<td>Complete</td>
+<td>Transfer finished — radio is rebooting.</td>
+</tr>
+<tr>
+<td><img src="../assets/screenshots/progressError.png" alt="Error" /></td>
+<td>Error</td>
+<td>Update failed — see Troubleshooting below.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Do not close the app or move out of Bluetooth range during a firmware update.</strong></p>
+<h2>Upgrading the Bootloader (nRF52)</h2>
+<p>Radios with an nRF52 processor can install Meshtastic's OTAFIX bootloader, which makes Bluetooth firmware updates faster and more reliable. When your connected radio supports it, a <strong>Bootloader</strong> section appears on the Firmware Updates screen.</p>
+<ol>
+<li>Tap <strong>Upgrade Bootloader</strong> and follow the steps: reboot the radio into DFU mode (or double-press its reset button) and connect it to this device with a USB cable. The radio appears as a USB drive.</li>
+<li>Choose the radio's drive in the file picker. The app reads the drive's <code>INFO_UF2.TXT</code> file to identify the board — the board on the drive decides which image is installed, so the wrong file can never be written to your hardware.</li>
+<li>Tap <strong>Install Bootloader Update</strong>. The app downloads the image for your board, checks it against the checksum published for that board, and writes it to the drive. The radio installs the bootloader and reboots itself.</li>
+</ol>
+<p>If the drive is not a bootloader drive, the board is not one OTAFIX supports, or the download does not match its checksum, nothing is written.</p>
+<p>The list of supported boards and the checksums it is verified against are refreshed from meshtastic.org in the background, so a newly supported board works without waiting for an app update. The app ships with a copy, so this screen still works offline.</p>
+<h2>Factory Erase (nRF52)</h2>
+<p>Factory erase wipes an nRF52 radio from its bootloader drive — the owner, channels, identity keys, settings, Bluetooth bonds, and node database are permanently removed. Because it runs from the bootloader, it works on a radio whose firmware cannot boot, and it is the right way to wipe a radio before selling or handing it off.</p>
+<ol>
+<li>Tap <strong>Factory Erase</strong> in the Maintenance section, put the radio in DFU mode (double-press its reset button if the app cannot reach it), and connect it by USB.</li>
+<li>Choose the radio's drive in the file picker. The app reads the drive's <code>INFO_UF2.TXT</code> to choose the erase file, so the wrong file can never be written.</li>
+<li>Confirm the erase. The app downloads the file, checks it against its published checksum and against what the drive reported, and writes it to the drive. The radio erases itself.</li>
+</ol>
+<p>What happens next depends on the bootloader. A recent OTAFIX bootloader erases its own settings itself and keeps the installed firmware: the radio comes back as a bootloader drive for a few seconds, and unplugging it starts the firmware as a brand-new device. On older bootloaders only the SoftDevice and bootloader remain, so install firmware next from the Firmware Updates screen. Nothing is restored automatically either way.</p>
+<h2>During the Transfer</h2>
+<p>While a supported OTA transfer is active, the update screen rotates short tips, and you can tap <strong>Play Chirpy Hop</strong> to play without leaving the updater. Firmware progress remains visible above the game, and the back button returns to the normal update screen at any time. Keep the Meshtastic app in the foreground until the update finishes.</p>
+<h2>Update Channels</h2>
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Stable</td>
+<td>Recommended for most users. Tested releases.</td>
+</tr>
+<tr>
+<td>Alpha</td>
+<td>Early access — may contain bugs. Use on secondary/test devices only.</td>
+</tr>
+</tbody>
+</table>
+<p>Select the update channel in <strong>Settings → App Settings → Firmware Channel</strong>.</p>
+<h2>Event Firmware</h2>
+<p>Some radios ship with special <strong>event firmware</strong> for gatherings like DEF CON, FAB, Open Sauce, Hamvention, or Burning Man. When you connect to a device running event firmware, the Meshtastic logo in the navigation bar changes to the event artwork. The Connect screen also shows the event's human-readable name in the firmware section.</p>
+<p>Tap the event artwork to open the <strong>event info sheet</strong>, which shows the event's location, dates, useful links, and event firmware version. <strong>Use Event Theme</strong> applies event highlight colors to interactive controls and event fonts inside this dedicated surface. Standard navigation backgrounds remain unchanged.</p>
+<p>If new-node notifications are enabled, the app temporarily mutes them while you're connected to event firmware (events are busy — many nodes appear at once). It restores them when you return to standard firmware. A notification preference you had already turned off stays off.</p>
+<p>Event details are fetched from Meshtastic's servers with a persistent offline fallback, so a newly announced event can appear without an app update. Hosted artwork and links are restricted to HTTPS, and invalid content falls back to bundled artwork or the standard Meshtastic logo.</p>
+<p>The metadata feed is informational. The app does not download or install firmware packages from event metadata; updates continue to use the app's verified firmware workflow.</p>
+<h2>Troubleshooting</h2>
+<p><strong>Update fails mid-way</strong></p>
+<ul>
+<li>Keep the radio within 1–2 meters of your phone during the update.</li>
+<li>If the radio appears bricked after a failed update, it can usually be recovered using the <a href="https://flasher.meshtastic.org/">Meshtastic Flasher</a> on a computer.</li>
+</ul>
+<p><strong>Firmware below the supported minimum</strong>
+The radio stays connected and the app shows the firmware update screen, with everything else blocked until the radio is updated. Update from that screen, or disconnect to use a different radio.</p>
+<p><strong>Security update recommended</strong>
+Firmware before 2.6 works but has known security fixes available, so the app recommends updating without blocking anything.</p>
+<p><img src="../assets/screenshots/securityVersionNag.png" alt="Security update recommended" /></p>
+<p><strong>Radio not appearing in firmware list</strong></p>
+<ul>
+<li>The firmware update feature requires a connected radio (BLE or TCP).</li>
+<li>Some older radios do not support OTA updates. Check the <a href="https://meshtastic.org/docs/hardware/">hardware compatibility list</a>.</li>
+</ul>
+<p><strong>Version shown as unknown</strong></p>
+<ul>
+<li>Ensure the radio has fully connected and synced (usually takes 5–10 seconds after BLE connection is established).</li>
+</ul>
+</body>
+</html>

@@ -143,17 +143,38 @@ struct GeoJSONFeature: Codable {
 
 	// MARK: - Computed Rendering Properties
 
-	/// Get effective stroke color (fallback to marker color for points)
-	var effectiveStrokeColor: String {
-		return strokeColor ?? markerColor ?? "#000000"
+	/// A generic `color` property, used by some producers (e.g. the Meshtastic Site Planner's coverage
+	/// export) instead of the simplestyle `fill`/`stroke` keys. Fallback for both stroke and fill.
+	var color: String? {
+		if case .string(let value) = properties?["color"] {
+			return value
+		}
+		return nil
 	}
 
-	/// Get effective fill color (fallback to stroke color if fill opacity > 0)
+	/// Get effective stroke color (falls back to `color`, then marker color).
+	var effectiveStrokeColor: String {
+		return strokeColor ?? color ?? markerColor ?? "#000000"
+	}
+
+	/// Get effective fill color (falls back to `color`, then the stroke color).
 	var effectiveFillColor: String {
-		if fillOpacity > 0 {
-			return fillColor ?? effectiveStrokeColor
-		}
-		return "#000000"
+		return fillColor ?? color ?? effectiveStrokeColor
+	}
+
+	/// True when `fill-opacity` was explicitly provided in the feature's properties.
+	private var hasExplicitFillOpacity: Bool {
+		if case .double = properties?["fill-opacity"] { return true }
+		if case .int = properties?["fill-opacity"] { return true }
+		return false
+	}
+
+	/// Fill opacity to render with. Honors an explicit `fill-opacity` (including `0` for "no fill");
+	/// otherwise, when the feature carries a fill/`color`, defaults to a visible value so colored
+	/// polygons (e.g. coverage contours) actually fill instead of rendering as bare outlines.
+	var effectiveFillOpacity: Double {
+		if hasExplicitFillOpacity { return fillOpacity }
+		return (fillColor != nil || color != nil) ? 0.35 : 0.0
 	}
 
 	/// Convert marker size to point radius
@@ -163,6 +184,19 @@ struct GeoJSONFeature: Codable {
 		case "medium": return 8.0
 		case "large": return 12.0
 		default: return 4.0
+		}
+	}
+
+	/// Coordinates to draw as map markers. A Point yields one coordinate; a MultiPoint yields
+	/// one per sub-coordinate. Empty for every other geometry type (those render as overlays).
+	var markerCoordinates: [CLLocationCoordinate2D] {
+		switch geometry.type.lowercased() {
+		case "point":
+			return geometry.coordinates.toCoordinate().map { [$0] } ?? []
+		case "multipoint":
+			return geometry.coordinates.toCoordinates()
+		default:
+			return []
 		}
 	}
 }
@@ -188,6 +222,13 @@ struct GeoJSONStyledFeature: Identifiable {
 
 	/// Builds an MKOverlay from a GeoJSON feature. Static so it can be called from init.
 	private static func makeOverlay(for feature: GeoJSONFeature) -> MKOverlay? {
+		// Point/MultiPoint geometries render as map annotations (markers), not overlays —
+		// MKGeoJSONDecoder returns an MKPointAnnotation (not an MKOverlay) for them, so running them
+		// through the overlay path below logged a spurious "no valid MKOverlay geometry" error for
+		// every point. Skip them silently; they're drawn via the annotation path (#1970).
+		let geometryType = feature.geometry.type.lowercased()
+		guard geometryType != "point", geometryType != "multipoint" else { return nil }
+
 		let featureDict: [String: Any] = [
 			"type": feature.type,
 			"geometry": [
@@ -236,12 +277,12 @@ struct GeoJSONStyledFeature: Identifiable {
 
 	/// Get stroke color with opacity
 	var strokeColor: Color {
-		return Color(hex: feature.effectiveStrokeColor).opacity(feature.strokeOpacity)
+		return Color(css: feature.effectiveStrokeColor).opacity(feature.strokeOpacity)
 	}
 
 	/// Get fill color with opacity
 	var fillColor: Color {
-		return Color(hex: feature.effectiveFillColor).opacity(feature.fillOpacity)
+		return Color(css: feature.effectiveFillColor).opacity(feature.effectiveFillOpacity)
 	}
 }
 
@@ -346,5 +387,12 @@ enum AnyCodableValue: Codable {
 			return CLLocationCoordinate2D(latitude: lat, longitude: lon)
 		}
 		return nil
+	}
+
+	/// Convert a MultiPoint-style array of [lon, lat] pairs to coordinates.
+	/// Malformed entries are skipped rather than failing the whole set.
+	func toCoordinates() -> [CLLocationCoordinate2D] {
+		guard case .array(let items) = self else { return [] }
+		return items.compactMap { $0.toCoordinate() }
 	}
 }

@@ -8,7 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -97,13 +101,21 @@ public struct ChannelSettings: Sendable {
   ///
   /// Per-channel module settings.
   public var moduleSettings: ModuleSettings {
-    get {return _moduleSettings ?? ModuleSettings()}
+    get {_moduleSettings ?? ModuleSettings()}
     set {_moduleSettings = newValue}
   }
   /// Returns true if `moduleSettings` has been explicitly set.
-  public var hasModuleSettings: Bool {return self._moduleSettings != nil}
+  public var hasModuleSettings: Bool {self._moduleSettings != nil}
   /// Clears the value of `moduleSettings`. Subsequent reads from it will return its default value.
   public mutating func clearModuleSettings() {self._moduleSettings = nil}
+
+  ///
+  /// Enable authenticated encryption (AES-CCM) for this channel.
+  /// When true, messages include a 12-byte authentication tag that prevents
+  /// forgery and bit-flipping attacks. All nodes on the channel must have
+  /// this enabled - unauthenticated (AES-CTR) packets are rejected.
+  /// Experimental. Default: false (standard AES-CTR encryption).
+  public var useAead: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -149,11 +161,11 @@ public struct Channel: Sendable {
   ///
   /// The new settings, or NULL to disable that channel
   public var settings: ChannelSettings {
-    get {return _settings ?? ChannelSettings()}
+    get {_settings ?? ChannelSettings()}
     set {_settings = newValue}
   }
   /// Returns true if `settings` has been explicitly set.
-  public var hasSettings: Bool {return self._settings != nil}
+  public var hasSettings: Bool {self._settings != nil}
   /// Clears the value of `settings`. Subsequent reads from it will return its default value.
   public mutating func clearSettings() {self._settings = nil}
 
@@ -232,7 +244,7 @@ fileprivate let _protobuf_package = "meshtastic"
 
 extension ChannelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ChannelSettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}channel_num\0\u{1}psk\0\u{1}name\0\u{1}id\0\u{3}uplink_enabled\0\u{3}downlink_enabled\0\u{3}module_settings\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}channel_num\0\u{1}psk\0\u{1}name\0\u{1}id\0\u{3}uplink_enabled\0\u{3}downlink_enabled\0\u{3}module_settings\0\u{3}use_aead\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -247,6 +259,7 @@ extension ChannelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
       case 5: try { try decoder.decodeSingularBoolField(value: &self.uplinkEnabled) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.downlinkEnabled) }()
       case 7: try { try decoder.decodeSingularMessageField(value: &self._moduleSettings) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.useAead) }()
       default: break
       }
     }
@@ -278,6 +291,9 @@ extension ChannelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
     try { if let v = self._moduleSettings {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
     } }()
+    if self.useAead != false {
+      try visitor.visitSingularBoolField(value: self.useAead, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -289,6 +305,7 @@ extension ChannelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplemen
     if lhs.uplinkEnabled != rhs.uplinkEnabled {return false}
     if lhs.downlinkEnabled != rhs.downlinkEnabled {return false}
     if lhs._moduleSettings != rhs._moduleSettings {return false}
+    if lhs.useAead != rhs.useAead {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1,7 +1,7 @@
 // Copyright (C) 2022 Garth Vander Houwen
 
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 import TipKit
 import MeshtasticProtobufs
@@ -14,185 +14,258 @@ struct MeshtasticAppleApp: App {
 	@UIApplicationDelegateAdaptor(MeshtasticAppDelegate.self) private var appDelegate
 #endif
 	@StateObject var appState: AppState
-	private let persistenceController: PersistenceController
+	@StateObject private var lockdownCoordinator: LockdownCoordinator
+	@ObservedObject private var legacyImport = LegacyStoreImport.shared
+	private let persistenceController: PersistenceController?
 	private let accessoryManager: AccessoryManager
 	@Environment(\.scenePhase) var scenePhase
-	@State var saveChannelLink: SaveChannelLinkData?
-	@State var incomingUrl: URL?
 
+	private static let isRunningTests = NSClassFromString("XCTestCase") != nil || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+	private static let isChirpyOTADemo: Bool = {
+		#if DEBUG
+		return CommandLine.arguments.contains("--chirpy-ota-demo")
+		#else
+		return false
+		#endif
+	}()
+	private static var shouldInitializeAppServices: Bool {
+		!isRunningTests && !isChirpyOTADemo
+	}
 	init() {
 
-		let persistenceController = PersistenceController.shared
+		let persistenceController: PersistenceController? = Self.shouldInitializeAppServices ? PersistenceController.shared : nil
+#if DEBUG
+		let performanceSeedConfiguration = PerformanceSeedData.configuration
+		if let performanceSeedConfiguration {
+			PerformanceSeedData.prepareDefaults(for: performanceSeedConfiguration)
+		}
+		let performanceSeedDisablesDiscovery = performanceSeedConfiguration?.disableDiscovery == true
+#else
+		let performanceSeedDisablesDiscovery = false
+#endif
 
-		let appState = AppState(
-			router: Router()
-		)
+		let appState = AppState()
+
 		accessoryManager = AccessoryManager.shared
 		accessoryManager.appState = appState
+
+		// Lockdown coordinator. Constructed here so it lives at app scope and is
+		// injected into the SwiftUI environment for views to observe. The sender
+		// is wired after construction to avoid an init-time cycle with AccessoryManager.
+		let lockdown = LockdownCoordinator()
+		lockdown.setSender(accessoryManager)
+		accessoryManager.lockdownCoordinator = lockdown
+		self._lockdownCoordinator = StateObject(wrappedValue: lockdown)
 
 		self._appState = StateObject(wrappedValue: appState)
 
 		self.persistenceController = persistenceController
-		// Wire up router
 #if os(iOS)
-		self.appDelegate.router = appState.router
+		self.appDelegate.appState = appState
 #endif
 
-		// Initialize map data manager
-		MapDataManager.shared.initialize()
-
-		// Initialize WatchConnectivity session
-		_ = WatchSessionManager.shared
 #if DEBUG
-		// Show tips in development
-		try? Tips.resetDatastore()
+		if let persistenceController, let performanceSeedConfiguration {
+			PerformanceSeedData.seedIfNeeded(
+				using: persistenceController,
+				configuration: performanceSeedConfiguration,
+				appState: appState
+			)
+		}
+		// Independent of the node performance seed: seeds a sample Discovery session with beacons
+		// when launched with --meshtastic-seed-beacons, without resetting the store or blocking a
+		// live radio connection.
+		if let persistenceController {
+			PerformanceSeedData.seedDiscoveryBeaconsIfRequested(using: persistenceController)
+		}
 #endif
-		if !UserDefaults.firstLaunch {
-			// If this is first launch, we will show onboarding screens which
-			// Step through the authorization process. Do not start discovery
-			// unitl this workflow completes, otherwise the discovery process
+
+		if Self.shouldInitializeAppServices {
+			// Initialize map data manager
+			MapDataManager.shared.initialize()
+
+			// Initialize WatchConnectivity session
+			_ = WatchSessionManager.shared
+#if DEBUG
+			// Show tips in development — but not during marketing screenshot capture, where TipKit
+			// popovers would clutter the shots.
+			if !CommandLine.arguments.contains("--marketing-capture") {
+				try? Tips.resetDatastore()
+			}
+#endif
+			// Pangea: an old store's chats are imported off the main thread. The window shows
+			// "Updating your chats…" meanwhile, and nothing connects until it has saved
+			// (connect(to:) waits for it too).
+			let legacyImport = LegacyStoreImport.shared
+			if let persistenceController, persistenceController.needsLegacyImport {
+				legacyImport.start(into: persistenceController.container)
+			}
+			if !UserDefaults.firstLaunch {
+				// If this is first launch, we will show onboarding screens which
+				// Step through the authorization process. Do not start discovery
+				// unitl this workflow completes, otherwise the discovery process
 			// may trigger permission dialogs too soon.
-			accessoryManager.startDiscovery()
+				if !performanceSeedDisablesDiscovery {
+					if legacyImport.holdsStore {
+						let manager = accessoryManager
+						Task {
+							await legacyImport.waitUntilFinished()
+							guard !legacyImport.needsFreeSpace else { return }
+							manager.startDiscovery()
+						}
+					} else {
+						accessoryManager.startDiscovery()
+					}
+				}
+			}
+#if DEBUG
+			// Automated perf/stress testing: connect straight to a TCP radio (or replay
+			// server) with `-meshtastic-connect-tcp <host[:port]>`, skipping the Connect
+			// tab entirely. DEBUG-only, like the other automation hooks above.
+			let arguments = ProcessInfo.processInfo.arguments
+			if let flagIndex = arguments.firstIndex(of: "-meshtastic-connect-tcp"),
+			   arguments.indices.contains(flagIndex + 1),
+			   let tcpTransport = accessoryManager.transportForType(.tcp),
+			   let device = tcpTransport.device(forManualConnection: arguments[flagIndex + 1]) {
+				let manager = accessoryManager
+				Task {
+					// Give startup (container, transports, discovery) a beat to settle.
+					try? await Task.sleep(for: .seconds(2))
+					Logger.services.info("🧪 [App] Auto-connecting to TCP device \(device.identifier, privacy: .public) (launch argument)")
+					try? await manager.connect(to: device)
+				}
+			}
+#endif
 		}
 	}
 
-	private func handleChannelLinkURL(_ url: URL, fromActivity: Bool) {
-		// Reset the state before processing a new URL
-		self.saveChannelLink = nil
-
-		guard url.absoluteString.lowercased().contains("meshtastic.org/e/") else {
-			return
+	/// Runs the work the app owes at backgrounding — the main-context save, then the
+	/// entity-cap eviction — under one background task assertion.
+	///
+	/// `beginBackgroundTask` is what asks iOS for time to finish work after the app leaves
+	/// the screen. Both pieces need it: between them they are the app's heaviest SwiftData
+	/// work and they start at the moment iOS begins charging for background CPU. The
+	/// expiration handler fires shortly before the grant runs out and sets the flag the
+	/// chunked eviction checks, so the pass ends at a committed boundary and whatever is
+	/// left waits for the next background transition.
+	///
+	/// The save goes first and stays on the main actor: it is the one that must happen (it
+	/// is flushing edits the user just made), while the eviction is housekeeping that can
+	/// resume later.
+	///
+	/// On Mac Catalyst the assertion is a no-op the system accepts, so the same path runs
+	/// everywhere without a platform branch here.
+	private func startBackgroundMaintenance(_ persistenceController: PersistenceController) {
+		// Numbered, because backgrounding twice in quick succession leaves two passes in
+		// flight and each has its own grant. The handler quotes its own number so an older
+		// pass expiring cannot stop a newer one.
+		let generation = MeshPackets.beginMaintenance()
+		var taskID = UIBackgroundTaskIdentifier.invalid
+		taskID = UIApplication.shared.beginBackgroundTask(withName: "BackgroundMaintenance") {
+			MeshPackets.expireMaintenance(generation)
+			Logger.services.warning("🗄️ [Caps] Background time expired; eviction will stop at the next chunk")
 		}
-
-		let queryParams = url.queryParameters
-		let addChannels = Bool(queryParams?["add"] ?? "false") ?? false
-		var channelData: String?
-		let urlString = url.absoluteString
-
-		if let fragment = urlString.components(separatedBy: "#").last, !fragment.isEmpty {
-			channelData = fragment.components(separatedBy: "?").first
+		Task { @MainActor in
+			do {
+				try persistenceController.container.mainContext.save()
+				Logger.services.info("💾 [App] Saved SwiftData context when the app went to the background.")
+			} catch {
+				Logger.services.error("💥 [App] Failed to save context when the app goes to the background.")
+			}
+			await MeshPackets.shared.enforceEntityCapsAndSave()
+			// Nothing to clear: the next pass takes a new number, which supersedes any
+			// expiry recorded against this one.
+			if taskID != .invalid {
+				UIApplication.shared.endBackgroundTask(taskID)
+			}
 		}
-		
-		guard let finalChannelData = channelData, !finalChannelData.isEmpty else {
-			Logger.mesh.error("Could not extract channel data from URL: \(url.absoluteString, privacy: .public)")
-			return
-		}
-
-		self.saveChannelLink = SaveChannelLinkData(data: finalChannelData, add: addChannels)
-		Logger.services.debug("Add Channel \(addChannels, privacy: .public) with data: \(finalChannelData, privacy: .public)")
-		
-		// Log based on the calling context
-		let source = fromActivity ? "User Activity" : "Open URL"
-		Logger.mesh.debug("User wants to open a Channel Settings URL (\(source)): \(url.absoluteString, privacy: .public)")
 	}
-	
+
 	var body: some Scene {
 		WindowGroup {
-			ContentView(
-				appState: appState,
-				router: appState.router
-			)
-			// The AccentColor asset alone doesn't reach every SwiftUI surface, so
-			// tint the scene explicitly to keep the Fossil primary consistent.
-			.tint(Color.pangeaPrimary)
-			.sheet(item: $saveChannelLink
-			) { link in
-				SaveChannelQRCode(
-					channelSetLink: link.data,
-					addChannels: link.add, // <-- Uses the now reliable 'add' boolean
-					accessoryManager: accessoryManager				)
-				.presentationDetents([.large])
-				.presentationDragIndicator(.visible)
+			Group {
+			if Self.isRunningTests {
+				Color.clear
+			} else if Self.isChirpyOTADemo {
+				// Kept out of the release build's view type on purpose, not just behind a flag
+				// that is false there: this type can never be on screen in release.
+				#if DEBUG
+				FirmwareUpdateGameDemoHost()
+				#endif
+			} else if let persistenceController {
+				// Stays mounted across a node switch so this window's router survives.
+				// The SwiftData tree unmounts inside MainScene.
+				MainScene(persistenceController: persistenceController)
 			}
-			.onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
-				Logger.mesh.debug("URL received \(userActivity, privacy: .public)")
-				self.incomingUrl = userActivity.webpageURL
-				self.saveChannelLink = nil
-
-				if let url = userActivity.webpageURL {
-					if url.absoluteString.lowercased().contains("meshtastic.org/v/#") == true {
-						ContactURLHandler.handleContactUrl(url: url, accessoryManager: accessoryManager)
-					} else if url.absoluteString.lowercased().contains("meshtastic.org/e/") == true {
-						// **Consolidated Call for User Activity**
-						handleChannelLinkURL(url, fromActivity: true)
-					}
-				}
-
-				if self.saveChannelLink != nil {
-					Logger.mesh.debug("User wants to open Channel Settings URL: \(String(describing: self.incomingUrl!.relativeString), privacy: .public)")
-				}
 			}
-			.onOpenURL(perform: { (url) in
-				Logger.mesh.debug("Some sort of URL was received \(url, privacy: .public)")
-				self.incomingUrl = url
-				
-				if PangeaInbox.shared.handle(url: url) {
-					return
-				} else if url.absoluteString.lowercased().contains("meshtastic.org/v/#") {
-					if let invite = PangeaCode.invite(from: url) {
-						PangeaInbox.shared.open(invite)
-					} else {
-						ContactURLHandler.handleContactUrl(url: url, accessoryManager: accessoryManager)
-					}
-				} else if url.absoluteString.lowercased().contains("meshtastic.org/e/") {
-					// **Consolidated Call for Open URL**
-					handleChannelLinkURL(url, fromActivity: false)
-				} else if url.absoluteString.lowercased().contains("meshtastic:///") {
-					appState.router.route(url: url)
+			.onChange(of: lockdownCoordinator.state) { _, newState in
+				// US-3: when the coordinator resolves to .lockNowAcknowledged
+				// (either via inbound LOCKED status or a BLE disconnect race),
+				// tear down the connection so the next reconnect re-auths.
+				if case .lockNowAcknowledged = newState {
+					Task { try? await accessoryManager.closeConnection() }
 				}
-			})
-			.task {
-				let background = PersistenceController.shared.container.newBackgroundContext()
-				background.perform { renameOldPlaceholderNames(context: background) }
-				try? Tips.configure(
-					[
-						// Reset which tips have been shown and what parameters have been tracked, useful during testing and for this sample project
-						.datastoreLocation(.applicationDefault),
-						// When should the tips be presented? If you use .immediate, they'll all be presented whenever a screen with a tip appears.
-						// You can adjust this on per tip level as well
-						.displayFrequency(.immediate)
-					]
-				)
 			}
 		}
 		.onChange(of: scenePhase) { (_, newScenePhase) in
+			// Also skipped in Chirpy OTA demo mode, where persistenceController is nil —
+			// backgrounding the demo must not touch (or force-unwrap) SwiftData.
+			guard Self.shouldInitializeAppServices, let persistenceController else { return }
 			accessoryManager.isInBackground = (newScenePhase == .background)
 			switch newScenePhase {
 			case .background:
 				Logger.services.info("🎬 [App] Scene is in the background")
 				accessoryManager.appDidEnterBackground()
-				do {
-					try persistenceController.container.viewContext.save()
-					Logger.services.info("💾 [App] Saved CoreData ViewContext when the app went to the background.")
-
-				} catch {
-
-					Logger.services.error("💥 [App] Failed to save viewContext when the app goes to the background.")
+				// Entity-cap evictions run now, while no view is mid-render on the
+				// doomed entities. Foregrounded, the packet actor defers them.
+				//
+				// Held under a background task assertion: this is the app's heaviest
+				// SwiftData work and it starts at the moment iOS begins charging for
+				// background CPU. Without the assertion there is no time granted and no
+				// warning before the process is killed for the budget, which reads as a
+				// Background High CPU termination. The expiration handler stops the
+				// eviction on a committed chunk boundary instead.
+				MeshPackets.appIsActive = false
+				// Pangea: the store is the import's until it has saved.
+				if !legacyImport.holdsStore {
+					startBackgroundMaintenance(persistenceController)
 				}
 			case .inactive:
 				Logger.services.info("🎬 [App] Scene is inactive")
 			case .active:
 				Logger.services.info("🎬 [App] Scene is active")
+				MeshPackets.appIsActive = true
 				accessoryManager.appDidBecomeActive()
+				if !legacyImport.holdsStore {
+					appState.refreshBadgeCount(context: persistenceController.container.mainContext)
+				}
 			@unknown default:
 				Logger.services.error("🍎 [App] Apple must have changed something")
 			}
 		}
-		.environment(\.managedObjectContext, persistenceController.container.viewContext)
 		.environmentObject(appState)
 		.environmentObject(accessoryManager)
-		.environmentObject(appState.router)
+		.environmentObject(lockdownCoordinator)
 		.environmentObject(MeshtasticAPI.shared)
 
-		WindowGroup("Mesh Map", id: "meshmap-window") {
-			MapWindow()
-				.tint(Color.pangeaPrimary)
-				.environment(\.managedObjectContext, persistenceController.container.viewContext)
-				.environmentObject(appState)
-				.environmentObject(accessoryManager)
-				.environmentObject(appState.router)
-				.environmentObject(MeshtasticAPI.shared)
-		}
+			WindowGroup("Mesh Map", id: "meshmap-window") {
+				// Gated on shouldInitializeAppServices (not just tests): in Chirpy OTA demo mode
+				// persistenceController is nil, so building this scene would force-unwrap-crash.
+				// Also gated on the database reset, for the same stale-bridge reason as the main
+				// window: this scene's .modelContainer must unmount during a container swap.
+				if Self.shouldInitializeAppServices, let persistenceController, !appState.isDatabaseResetting, !legacyImport.holdsStore {
+					EventFirmwareTintScope {
+						MapWindow()
+							.id(appState.databaseResetID)
+					}
+					.tint(Color.pangeaPrimary)
+					.modelContainer(persistenceController.container)
+					.environmentObject(appState)
+					.environmentObject(accessoryManager)
+					.environmentObject(lockdownCoordinator)
+					.environmentObject(MeshtasticAPI.shared)
+				}
+			}
 		.handlesExternalEvents(matching: [])
 		.windowResizability(.contentMinSize)
 		#if os(visionOS)

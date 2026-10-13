@@ -5,7 +5,20 @@ struct SaveConfigButton: View {
 	@State private var isPresentingSaveConfirm = false
 	let node: NodeInfoEntity?
 	@Binding var hasChanges: Bool
+	let confirmationMessage: String
 	let onConfirmation: () -> Void
+
+	init(
+		node: NodeInfoEntity?,
+		hasChanges: Binding<Bool>,
+		confirmationMessage: String = "After config values save the node will reboot.".localized,
+		onConfirmation: @escaping () -> Void
+	) {
+		self.node = node
+		_hasChanges = hasChanges
+		self.confirmationMessage = confirmationMessage
+		self.onConfirmation = onConfirmation
+	}
 	
 	var body: some View {
 		if accessoryManager.isConnected && hasChanges {
@@ -18,6 +31,7 @@ struct SaveConfigButton: View {
 				.padding(.bottom)
 				.controlSize(.large)
 				.buttonStyle(.borderedProminent)
+				.tint(.accentFill)
 				.confirmationDialog(
 					"Are you sure?",
 					isPresented: $isPresentingSaveConfirm,
@@ -29,8 +43,12 @@ struct SaveConfigButton: View {
 						onConfirmation()
 					}
 				} message: {
-					Text("After config values save the node will reboot.")
+					Text(confirmationMessage)
 				}
+				// After the dialog modifier, so this tints the dialog's actions rather than the
+				// Save button. The button above is a filled shape and uses `accentFill`; the
+				// dialog's action is plain text on glass and needs the text accent.
+				.tint(.accentColor)
 			} else {
 				Button {
 					isPresentingSaveConfirm = true
@@ -40,6 +58,7 @@ struct SaveConfigButton: View {
 				.padding(.bottom)
 				.controlSize(.large)
 				.buttonStyle(.borderedProminent)
+				.tint(.accentFill)
 				.buttonBorderShape(.capsule)
 				.confirmationDialog(
 					"Are you sure?",
@@ -52,7 +71,7 @@ struct SaveConfigButton: View {
 						onConfirmation()
 					}
 				} message: {
-					Text("After config values save the node will reboot.")
+					Text(confirmationMessage)
 				}
 			}
 		}

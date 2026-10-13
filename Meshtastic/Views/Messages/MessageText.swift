@@ -6,33 +6,21 @@ import Translation
 #endif
 
 struct MessageText: View {
-	static let linkBlue = Color(red: 0.4627, green: 0.8392, blue: 1) /* #76d6ff */
-	static let localeDateFormat = DateFormatter.dateFormat(
-		fromTemplate: "yyMMddjmmssa",
-		options: 0,
-		locale: Locale.current
-	)
-	static let localeTimeFormat = DateFormatter.dateFormat(
-		fromTemplate: "jmmssa",
-		options: 0,
-		locale: Locale.current
-	)
-	static let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mm:ss:a")
-	static let timeFormatString = (localeTimeFormat ?? "j:mm:ss:a")
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	
+	@EnvironmentObject private var router: Router
+
 	let message: MessageEntity
 	let tapBackDestination: MessageDestination
 	let isCurrentUser: Bool
 	let onReply: () -> Void
+	let onTapback: () -> Void
 	// State for handling channel URL sheet
 	@State private var saveChannelLink: SaveChannelLinkData?
+	@State private var pendingContact: PendingContact?
 	@State private var isShowingDeleteConfirmation = false
 	@State private var isShowingTranslationPresentation = false
-	@State private var tapbackText = ""
-	@FocusState private var isTapbackInputFocused: Bool
-	
+
 	var body: some View {
 		messageContent
 			.environment(\.openURL, OpenURLAction { url in
@@ -45,8 +33,11 @@ struct MessageText: View {
 					accessoryManager: accessoryManager
 				)
 				.presentationDetents([.large])
+				#if !targetEnvironment(macCatalyst)
 				.presentationDragIndicator(.visible)
+				#endif
 			}
+			.contactImportSheet($pendingContact, accessoryManager: accessoryManager)
 			.confirmationDialog(
 				"Are you sure you want to delete this message?",
 				isPresented: $isShowingDeleteConfirmation,
@@ -58,7 +49,7 @@ struct MessageText: View {
 				Button("Cancel", role: .cancel) {}
 			}
 	}
-	
+
 	private var sourceMessageText: String {
 		message.messagePayload ?? "EMPTY MESSAGE"
 	}
@@ -66,7 +57,7 @@ struct MessageText: View {
 	private var hasTranslatedText: Bool { message.hasTranslatedPayload }
 
 	private var isShowingTranslatedText: Bool {
-		message.showTranslatedMessage && hasTranslatedText
+		message.isShowingTranslatedText
 	}
 
 	private var canTranslate: Bool {
@@ -102,29 +93,48 @@ struct MessageText: View {
 		return AnyView(baseMessageContent)
 	}
 
-	private var baseMessageContent: some View {
-		let markdownText = LocalizedStringKey(Mentions.linkify(message.displayedMarkdownPayload))
-		return Group {
-			Text(markdownText)
+	private func colorLinks(in source: AttributedString) -> AttributedString {
+		var result = source
+		for run in result.runs where run.link != nil {
+			result[run.range].foregroundColor = linkColor
+			if isCurrentUser {
+				// Same colour as the text around it, so underlined to read as a link.
+				result[run.range].underlineStyle = .single
+			}
 		}
-			.tint(Self.linkBlue)
+		return result
+	}
+
+	/// Pangea: on the user's own Fossil bubble any blue is hard to read (the palette's link
+	/// blue, and even a light one, are about 2:1 on it), so links there are white like the
+	/// text, as in Messages. SwiftUI draws link runs in the tint, so both use this.
+	private var linkColor: Color {
+		isCurrentUser ? .white : Color("Colors/MeshtasticLink")
+	}
+
+	private var baseMessageContent: some View {
+		// Pangea: @names of people in the chat become links to them first.
+		let payload = MentionParser.resolveMentions(
+			in: Mentions.linkify(message.displayedMarkdownPayload),
+			context: context
+		)
+		return Group {
+			if let attributed = try? AttributedString(markdown: payload, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+				Text(colorLinks(in: attributed))
+			} else {
+				Text(LocalizedStringKey(payload))
+			}
+		}
+			// Never yield vertical space to row siblings: without this, a flexible sibling in the
+			// message row (the tapback pill's ScrollView) could win the height auction and the
+			// bubble text tail-truncated with "…" on long wrapping messages.
+			.fixedSize(horizontal: false, vertical: true)
+			.tint(linkColor)
 			.padding(.vertical, 10)
 			.padding(.horizontal, 8)
-			.foregroundColor(.white)
-			.background(isCurrentUser ? .accentColor : Color(.gray))
+			.foregroundColor(isCurrentUser ? .white : Color("Colors/MeshtasticBubbleText"))
+			.background(isCurrentUser ? Color.accentFill : Color("Colors/MeshtasticBubble"))
 			.cornerRadius(15)
-			.background {
-				TextField("", text: $tapbackText)
-					.keyboardType(.emoji)
-					.scrollDismissesKeyboard(.immediately)
-					.focused($isTapbackInputFocused)
-					.frame(width: 1, height: 1)
-					.opacity(0.01)
-					.allowsHitTesting(false)
-					.onChange(of: tapbackText) {
-						processTapback()
-					}
-			}
 			.overlay(messageOverlays)
 			.contextMenu {
 				MessageContextMenuItems(
@@ -132,10 +142,7 @@ struct MessageText: View {
 					tapBackDestination: tapBackDestination,
 					isCurrentUser: isCurrentUser,
 					isShowingDeleteConfirmation: $isShowingDeleteConfirmation,
-					isShowingTapbackInput: Binding(
-						get: { isTapbackInputFocused },
-						set: { isTapbackInputFocused = $0 }
-					),
+					onTapback: onTapback,
 					onReply: onReply,
 					canTranslate: canTranslate,
 						hasTranslatedText: hasTranslatedText,
@@ -147,35 +154,63 @@ struct MessageText: View {
 			}
 	}
 	
+	/// A bottom-trailing status badge (encryption lock, signing shield, store-forward envelope) with
+	/// its symbol, tint, and localized VoiceOver label.
+	private struct CornerBadge: Identifiable {
+		/// Symbols are distinct within a single message's badge set, so this is a stable identity.
+		var id: String { symbol }
+		let symbol: String
+		let tint: Color
+		let label: String
+	}
+
+	/// Bottom-trailing status badges (encryption lock, signing shield, store-forward envelope), laid out
+	/// in a single row so they sit side by side instead of stacking on the same corner pixel when a
+	/// message qualifies for more than one (e.g. a signed store-and-forward broadcast).
+	///
+	/// Symbols/tints are drawn per badge here; the underlying flags and labels come from
+	/// `MessageEntity.activeStatusBadges`, the single source of truth shared with the message rows'
+	/// combined `accessibilityLabel` (issue #016 T003).
+	private var cornerBadges: [CornerBadge] {
+		message.activeStatusBadges(destination: tapBackDestination, isCurrentUser: isCurrentUser).compactMap { badge in
+			switch badge {
+			// Lock = private: a PKI-encrypted DM.
+			case .encrypted:
+				return CornerBadge(symbol: "lock.circle.fill", tint: .green, label: badge.label)
+			// Shield = authentic: a radio-verified, XEdDSA-signed broadcast. Affirmative only —
+			// unsigned traffic shows nothing, and the ingest path only sets the flag on broadcasts,
+			// never DMs.
+			case .verified:
+				return CornerBadge(symbol: "checkmark.shield.fill", tint: .green, label: badge.label)
+			case .storeForward:
+				return CornerBadge(symbol: "envelope.circle.fill", tint: .gray, label: badge.label)
+			case .detectionSensor, .translated:
+				// Rendered as their own overlays below, not as corner badges.
+				return nil
+			}
+		}
+	}
+
 	@ViewBuilder
 	private var messageOverlays: some View {
-		if message.pkiEncrypted && message.realACK || !isCurrentUser && message.pkiEncrypted {
+		let badges = cornerBadges
+		if !badges.isEmpty {
 			VStack(alignment: .trailing) {
 				Spacer()
-				HStack {
+				HStack(spacing: 2) {
 					Spacer()
-					Image(systemName: "lock.circle.fill")
-						.symbolRenderingMode(.palette)
-						.foregroundStyle(.white, .green)
-						.font(.system(size: 20))
-						.offset(x: 8, y: 8)
+					ForEach(badges) { badge in
+						Image(systemName: badge.symbol)
+							.symbolRenderingMode(.palette)
+							.foregroundStyle(.white, badge.tint)
+							.font(.system(size: 20))
+							.accessibilityLabel(badge.label)
+					}
 				}
+				.offset(x: 8, y: 8)
 			}
 		}
-		if message.portNum == Int32(PortNum.storeForwardApp.rawValue) {
-			VStack(alignment: .trailing) {
-				Spacer()
-				HStack {
-					Spacer()
-					Image(systemName: "envelope.circle.fill")
-						.symbolRenderingMode(.palette)
-						.foregroundStyle(.white, .gray)
-						.font(.system(size: 20))
-						.offset(x: 8, y: 8)
-				}
-			}
-		}
-		if tapBackDestination.overlaySensorMessage && message.portNum == Int32(PortNum.detectionSensorApp.rawValue) {
+		if message.isDetectionSensorMessage(destination: tapBackDestination) {
 			Image(systemName: "sensor.fill")
 				.padding()
 				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -183,6 +218,7 @@ struct MessageText: View {
 				.symbolRenderingMode(.multicolor)
 				.symbolEffect(.variableColor.reversing.cumulative, options: .repeat(20).speed(3))
 				.offset(x: 20, y: -20)
+				.accessibilityLabel(MessageEntity.StatusBadge.detectionSensor.label)
 		}
 		if isShowingTranslatedText {
 			Image(systemName: "translate")
@@ -191,42 +227,47 @@ struct MessageText: View {
 				.foregroundStyle(Color.blue)
 				.symbolRenderingMode(.hierarchical)
 				.offset(x: 38, y: 8)
+				.accessibilityLabel(MessageEntity.StatusBadge.translated.label)
 		}
 	}
-	
+
 	private func handleURL(_ url: URL) -> OpenURLAction.Result {
 		saveChannelLink = nil
-		var addChannels = false
-		if url.absoluteString.lowercased().contains("meshtastic.org/v/#") {
-			// Handle contact URL
-			ContactURLHandler.handleContactUrl(url: url, accessoryManager: AccessoryManager.shared)
-			return .handled // Prevent default browser opening
-		} else if url.absoluteString.lowercased().contains("meshtastic.org/e/") {
-			// Handle channel URL
-			let components = url.absoluteString.components(separatedBy: "#")
-			guard !components.isEmpty, let lastComponent = components.last else {
-				Logger.services.error("No valid components found in channel URL: \(url.absoluteString, privacy: .public)")
-				return .discarded
-			}
-			addChannels = Bool(url.query?.contains("add=true") ?? false)
-			guard let lastComponent = components.last else {
-				Logger.services.error("Channel URL missing fragment component: \(url.absoluteString, privacy: .public)")
-				self.saveChannelLink = nil
-				return .discarded
-			}
-			let cs = lastComponent.components(separatedBy: "?").first ?? ""
-			self.saveChannelLink = SaveChannelLinkData(data: cs, add: addChannels)
-			Logger.services.debug("Add Channel: \(addChannels, privacy: .public)")
-			Logger.mesh.debug("Opening Channel Settings URL: \(url.absoluteString, privacy: .public)")
-			return .handled // Prevent default browser opening
-		}
-		// Mentions and group invites open right here instead of going out to the system and back.
+		// Pangea: mentions and group invites open right here instead of going out to the system and back.
 		if PangeaInbox.shared.handle(url: url) {
 			return .handled
 		}
+		// Handle meshtastic:/// deep links — node navigation from @mention taps
+		if url.scheme == "meshtastic",
+		   let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+		   components.path == "/nodes",
+		   let nodeNumStr = components.queryItems?.first(where: { $0.name == "nodenum" })?.value,
+		   let nodeNum = Int64(nodeNumStr) {
+			router.navigateToNodeDetail(nodeNum: nodeNum)
+			return .handled
+		}
+		var addChannels = false
+		if ContactURLHandler.canHandle(url) {
+			if let pending = ContactURLHandler.makePendingContact(from: url, accessoryManager: accessoryManager) {
+				pendingContact = pending
+			}
+			return .handled // Prevent default browser opening
+		} else if MeshtasticChannelURL.canHandle(url) {
+			do {
+				let channelLink = try MeshtasticChannelURL.parse(url.absoluteString)
+				addChannels = channelLink.addChannels
+				self.saveChannelLink = SaveChannelLinkData(data: channelLink.payload, add: addChannels)
+				Logger.services.debug("Add Channel: \(addChannels, privacy: .public)")
+				Logger.mesh.debug("Opening Channel Settings URL")
+				return .handled // Prevent default browser opening
+			} catch {
+				Logger.services.error("Invalid channel URL: \(error.localizedDescription, privacy: .public)")
+				return .discarded
+			}
+		}
 		return .systemAction // Open other URLs in browser
 	}
-	
+
 	private func deleteMessage() {
 		context.delete(message)
 		do {
@@ -268,45 +309,6 @@ struct MessageText: View {
 			try context.save()
 		} catch {
 			Logger.data.error("Failed to clear translated message \(message.messageId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-		}
-	}
-	
-	private func processTapback() {
-		guard !tapbackText.isEmpty else { return }
-		let emojiToSend = tapbackText
-		
-		Task {
-			do {
-				try await accessoryManager.sendMessage(
-					message: emojiToSend,
-					toUserNum: tapBackDestination.userNum,
-					channel: tapBackDestination.channelNum,
-					isEmoji: true,
-					replyID: message.messageId
-				)
-				await MainActor.run {
-					switch tapBackDestination {
-					case let .channel(channel):
-						context.refresh(channel, mergeChanges: true)
-					case let .user(user):
-						context.refresh(user, mergeChanges: true)
-					}
-				}
-			} catch {
-				Logger.services.warning("Failed to send tapback.")
-			}
-		}
-		
-		tapbackText = ""
-		isTapbackInputFocused = false
-	}
-}
-
-private extension MessageDestination {
-	var overlaySensorMessage: Bool {
-		switch self {
-		case .user: return false
-		case .channel: return true
 		}
 	}
 }

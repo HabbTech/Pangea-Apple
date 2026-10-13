@@ -399,6 +399,30 @@ final class ProfileStore: ObservableObject {
 		save()
 	}
 
+	/// Settings → Clear App Data: my profile and photo, and everyone else's cards, photos,
+	/// nicknames and saved contacts, as on a fresh install. Unlike `resetSentCards`, nothing stays.
+	func eraseAll() {
+		me = MyProfile()
+		contacts = [:]
+		groupSends = [:]
+		photoCache = [:]
+		myPhotoImage = nil
+		downloading = []
+		downloadProgress = [:]
+		presentedProfile = nil
+		// Photos, and copies of files that couldn't be read. profiles.json is written empty
+		// below rather than removed, so a removal that fails can't bring it back next launch.
+		let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+		for file in files where file.lastPathComponent != "profiles.json" {
+			do {
+				try FileManager.default.removeItem(at: file)
+			} catch {
+				Logger.data.error("👤 [Profiles] Couldn't remove \(file.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+			}
+		}
+		save()
+	}
+
 	// MARK: Names
 
 	/// Nickname, then the name they chose in Pangea, then their radio name.

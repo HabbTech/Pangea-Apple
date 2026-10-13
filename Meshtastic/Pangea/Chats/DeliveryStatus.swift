@@ -7,7 +7,7 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 
 enum DeliveryStatus {
@@ -46,7 +46,7 @@ enum DeliveryStatus {
 			return String(localized: "Your radio has reached its sending limit for now. Try again in a few minutes.")
 		case .rateLimitExceeded:
 			return String(localized: "Sending too fast. Wait a moment and try again.")
-		case .pkiFailed, .pkiUnknownPubkey:
+		case .pkiFailed, .pkiUnknownPubkey, .pkiSendFailPublicKey:
 			return String(localized: "Couldn't send privately yet. Try again in a minute.")
 		case .gotNak, .badRequest, .notAuthorized, .adminBadSessionKey, .adminPublicKeyUnauthorized:
 			return String(localized: "Not delivered. Try again.")
@@ -81,17 +81,30 @@ extension DeliveryStatus {
 	///   marked until `replyGrace` after it.
 	@MainActor
 	@discardableResult
-	static func markStaleSends(fromNum: Int64, connectedSince: Date = .distantPast, now: Date = Date(), context: NSManagedObjectContext) -> Int {
+	static func markStaleSends(fromNum: Int64, connectedSince: Date = .distantPast, now: Date = Date(), context: ModelContext) -> Int {
 		guard shouldSweep(connectedSince: connectedSince, now: now) else { return 0 }
-		let request = MessageEntity.fetchRequest()
 		let cutoff = Int32(clamping: Int64(now.timeIntervalSince1970 - staleAfter))
-		request.predicate = NSPredicate(format: "fromUser.num == %lld AND receivedACK == false AND ackError == 0 AND admin == false AND portNum == 0 AND messageTimestamp > 0 AND messageTimestamp <= %d", fromNum, cutoff)
-		guard let stale = try? context.fetch(request), !stale.isEmpty else { return 0 }
+		// Every condition in the store query: incoming messages are all receivedACK == false, so
+		// filtering by sender in memory loaded nearly the whole message table on the main actor.
+		let none: Int32 = 0
+		let fromMe = #Predicate<MessageEntity> { message in
+			message.fromUser?.num == fromNum && message.receivedACK == false && message.admin == false
+		}
+		let unansweredText = #Predicate<MessageEntity> { message in
+			message.ackError == none && message.portNum == none
+				&& message.messageTimestamp > none && message.messageTimestamp <= cutoff
+		}
+		let descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate<MessageEntity> { message in
+			fromMe.evaluate(message) && unansweredText.evaluate(message)
+		})
+		let stale: [MessageEntity] = (try? context.fetch(descriptor)) ?? []
+		guard !stale.isEmpty else { return 0 }
 		for message in stale {
 			message.ackError = Int32(RoutingError.timeout.rawValue)
 		}
 		do {
 			try context.save()
+			NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
 			Logger.data.info("💬 [Chats] \(stale.count, privacy: .public) unanswered sends marked not delivered")
 		} catch {
 			context.rollback()
@@ -101,12 +114,46 @@ extension DeliveryStatus {
 		return stale.count
 	}
 
-	/// Checks again once anything sent before now has had `staleAfter` to be answered.
+	/// Checks again once anything sent before now has had `staleAfter` to be answered. Only if
+	/// the same radio is still connected then: after a disconnect, a Forget, a radio switch or a
+	/// data clear the context of now may belong to a replaced store or another radio's rows, and
+	/// the next connection runs its own sweep anyway. The context is read again after the wait.
 	@MainActor
-	static func checkForStaleSends(fromNum: Int64, context: NSManagedObjectContext) {
+	static func checkForStaleSends(fromNum: Int64, accessoryManager: AccessoryManager) {
+		guard let deviceId = accessoryManager.activeConnection?.device.id else { return }
 		Task { @MainActor in
 			try? await Task.sleep(for: .seconds(staleAfter + 5))
-			markStaleSends(fromNum: fromNum, context: context)
+			guard accessoryManager.isConnected,
+				  accessoryManager.activeDeviceNum == fromNum,
+				  accessoryManager.activeConnection?.device.id == deviceId,
+				  // A reconnect meanwhile is a new connection: its queued replies get the same
+				  // grace as on any connect, and none while its download is still running. A
+				  // connection that asked for no download counts from its configuration.
+				  !accessoryManager.nodeDatabaseDumpInProgress,
+				  let connectedSince = accessoryManager.databaseDownloadedAt ?? accessoryManager.lastConfigRefresh else { return }
+			markStaleSends(fromNum: fromNum, connectedSince: connectedSince, context: accessoryManager.context)
 		}
+	}
+}
+
+// MARK: Plain wording for the status line
+
+extension DeliveryStatus {
+
+	/// Pangea: the status upstream works out, with its words swapped for plain ones outside
+	/// Expert Mode. Icon, colour and whether Try Again shows stay as they are.
+	static func plain(_ status: MessageDeliveryStatus, receivedACK: Bool, realACK: Bool, ackError: Int32,
+					  timedOut: Bool, isDirect: Bool) -> MessageDeliveryStatus {
+		guard plainWording else { return status }
+		let text: String
+		if receivedACK {
+			text = isDirect ? (realACK ? String(localized: "Delivered") : relayedOnly) : String(localized: "Sent")
+		} else if ackError == 0 {
+			text = timedOut ? Self.text(for: nil, isDirect: isDirect) : waiting
+		} else {
+			text = Self.text(for: RoutingError(rawValue: Int(ackError)), isDirect: isDirect)
+		}
+		return MessageDeliveryStatus(text: text, detail: status.detail, systemImage: status.systemImage,
+									 color: status.color, canRetry: status.canRetry)
 	}
 }

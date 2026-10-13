@@ -6,27 +6,32 @@
 //
 
 import SwiftUI
+@preconcurrency import SwiftData
 import Charts
 import MeshtasticProtobufs
 import OSLog
 
 struct DetectionSensorLog: View {
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsWideTable: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+	}
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@State private var isPresentingClearLogConfirm: Bool = false
 	@State var isExporting = false
 	@State var exportString = ""
-	@ObservedObject var node: NodeInfoEntity
-	@FetchRequest(sortDescriptors: [NSSortDescriptor(key: "messageTimestamp", ascending: false)],
-				  predicate: NSPredicate(format: "portNum == %d", Int32(PortNum.detectionSensorApp.rawValue)), animation: .none)
-	private var detections: FetchedResults<MessageEntity>
+	@Bindable var node: NodeInfoEntity
+	@State private var detections: [MessageEntity] = []
+	@State private var chartData: [MessageEntity] = []
+
+	init(node: NodeInfoEntity) {
+		self.node = node
+	}
 
 	var body: some View {
-		let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date())
-		let chartData = detections
-			.filter { $0.timestamp >= oneDayAgo! && $0.fromUser?.num ?? -1 == node.user?.num ?? 0 }
-			.sorted { $0.timestamp < $1.timestamp }
-
 		VStack {
 			if chartData.count > 0 {
 				GroupBox(label: Label("\(chartData.count) Total Detection Events", systemImage: "sensor")) {
@@ -38,8 +43,8 @@ struct DetectionSensorLog: View {
 									y: .value("y", 1)
 								)
 							}
-							.accessibilityLabel("Bar Series")
-							.accessibilityValue("X: \(point.timestamp), Y: \(1)")
+							.accessibilityLabel(String(localized: "Detection event at \(point.timestamp.formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for a detection-event bar on the detection sensor chart. %@ is the timestamp."))
+							.accessibilityValue(String(localized: "Detected", comment: "VoiceOver value spoken for a detection-event bar on the detection sensor chart."))
 							.interpolationMethod(.cardinal)
 							.foregroundStyle(
 								.linearGradient(
@@ -56,23 +61,20 @@ struct DetectionSensorLog: View {
 					})
 					.chartXAxis(.automatic)
 					.chartForegroundStyleScale([
-						"Detection events": .green
+						"Detection events".localized: .green
 					])
 					.chartLegend(position: .automatic, alignment: .bottom)
 				}
 				.frame(minHeight: 250)
 			}
-			let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-			let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
-			if UIDevice.current.userInterfaceIdiom == .pad || UIDevice.current.userInterfaceIdiom == .mac {
-				// Add a table for mac and ipad
+			if showsWideTable {
 				Table(detections) {
 					TableColumn("Detection event") { d in
 						Text(d.messagePayload ?? "Detected")
 					}
 
 					TableColumn("Timestamp") { d in
-						Text(d.timestamp.formattedDate(format: dateFormatString))
+						Text(d.timestamp.formatted(date: .numeric, time: .shortened))
 					}
 					.width(min: 180)
 				}
@@ -91,11 +93,11 @@ struct DetectionSensorLog: View {
 								.font(.caption)
 								.fontWeight(.bold)
 						}
-						ForEach(detections.filter( {$0.fromUser?.num ?? -1 == node.user?.num ?? 0})) { d in
+						ForEach(detections) { d in
 							GridRow {
 								Text(d.messagePayload ?? "Detected")
 									.font(.caption)
-								Text(d.timestamp.formattedDate(format: dateFormatString))
+								Text(d.timestamp.formatted(date: .numeric, time: .shortened))
 									.font(.caption)
 							}
 						}
@@ -104,6 +106,12 @@ struct DetectionSensorLog: View {
 					.padding(.trailing, 5)
 				}
 			}
+		}
+		.onAppear {
+			refreshDetections()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshDetections()
 		}
 		HStack {
 			Button {
@@ -120,15 +128,16 @@ struct DetectionSensorLog: View {
 		}
 		.navigationTitle("Detection Sensor Log")
 		.navigationBarTitleDisplayMode(.inline)
-		.navigationBarItems(trailing:
-			ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
 		.fileExporter(
 			isPresented: $isExporting,
 			document: CsvDocument(emptyCsv: exportString),
 			contentType: .commaSeparatedText,
-			defaultFilename: String("\(node.user?.longName ?? "Node") \("Detection Sensor Log".localized)"),
+			defaultFilename: CsvDocument.exportFilename("\(node.user?.longName ?? "Node") \("Detection Sensor Log".localized) \(Date.now.exportTimestamp)"),
 			onCompletion: { result in
 				switch result {
 				case .success:
@@ -138,19 +147,43 @@ struct DetectionSensorLog: View {
 					Logger.services.error("Detection Sensor log download failed: \(error.localizedDescription, privacy: .public).")
 				}
 			}
+			)
+	}
+
+	private func refreshDetections() {
+		guard let nodeNum = node.user?.num else {
+			detections = []
+			chartData = []
+			return
+		}
+		let portNum: Int32 = 10
+		let sevenDaysAgoTimestamp = Int32((Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast).timeIntervalSince1970)
+		var descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> {
+				$0.portNum == portNum && $0.messageTimestamp >= sevenDaysAgoTimestamp && $0.fromUser?.num == nodeNum
+			},
+			sortBy: [SortDescriptor(\MessageEntity.messageTimestamp, order: .reverse)]
 		)
+		descriptor.fetchLimit = 500
+		detections = (try? context.fetch(descriptor)) ?? []
+		let oneDayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date.distantPast
+		chartData = detections
+			.filter { $0.timestamp >= oneDayAgo }
+			.sorted { $0.timestamp < $1.timestamp }
 	}
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return DetectionSensorLog(node: node)
+	DetectionSensorLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

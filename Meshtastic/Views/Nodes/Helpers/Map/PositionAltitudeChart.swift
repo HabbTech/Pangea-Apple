@@ -8,6 +8,7 @@
 import SwiftUI
 import Charts
 import MapKit
+@preconcurrency import SwiftData
 
 struct PositionAltitude {
 	let time: Date
@@ -15,26 +16,13 @@ struct PositionAltitude {
 }
 
 struct PositionAltitudeChart: View {
+	private let visiblePositionLimit = 1_000
+
+	@Environment(\.modelContext) private var context
 	@Environment(\.dismiss) private var dismiss
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
 	@State private var lineWidth = 2.0
-
-	var data: [PositionAltitude] {
-		let fiveYearsAgo = Calendar.current.date(byAdding: .year, value: -5, to: Date())
-		guard let nodePositions = node.positions,
-			let positions = Array(nodePositions) as? [PositionEntity]
-		else {
-			return []
-		}
-
-		let filteredPositions = positions.filter({$0.time != nil && ($0.time ?? fiveYearsAgo!) > fiveYearsAgo!})
-		return filteredPositions.map {
-			PositionAltitude(
-				time: $0.time ?? Date(),
-				altitude: Measurement(value: Double($0.altitude), unit: .meters)
-			)
-		}
-	}
+	@State private var data: [PositionAltitude] = []
 
 	var body: some View {
 		GroupBox(label: Label("Altitude", systemImage: "mountain.2")) {
@@ -43,8 +31,8 @@ struct PositionAltitudeChart: View {
 					x: .value("Time", $0.time),
 					y: .value("Altitude", PlottableMeasurement(measurement: $0.altitude))
 				)
-				.accessibilityLabel($0.time.formatted(date: .abbreviated, time: .shortened))
-				.accessibilityValue("\($0.altitude)")
+				.accessibilityLabel(String(localized: "Altitude at \($0.time.formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for an altitude point on the position altitude chart. %@ is the timestamp."))
+				.accessibilityValue($0.altitude.converted(to: Locale.current.measurementSystem == .metric ? .meters : .feet).formatted(.measurement(width: .abbreviated, numberFormatStyle: .number.precision(.fractionLength(0)))))
 				.lineStyle(StrokeStyle(lineWidth: lineWidth))
 				.interpolationMethod(.linear)
 				.symbol(Circle().strokeBorder(lineWidth: lineWidth))
@@ -56,7 +44,7 @@ struct PositionAltitudeChart: View {
 					AxisValueLabel("""
 						\(value.as(PlottableMeasurement.self)!
 							.measurement
-							.converted(to: .meters),
+							.converted(to: Locale.current.measurementSystem == .metric ? .meters : .feet),
 								format: .measurement(
 									width: .wide,
 									numberFormatStyle: .number.precision(
@@ -68,7 +56,23 @@ struct PositionAltitudeChart: View {
 			}
 			.chartXAxis(.visible)
 		}
-		.background(Color(UIColor.secondarySystemBackground))
-		.opacity(/*@START_MENU_TOKEN@*/0.8/*@END_MENU_TOKEN@*/)
+			.background(Color(UIColor.secondarySystemBackground))
+			.opacity(/*@START_MENU_TOKEN@*/0.8/*@END_MENU_TOKEN@*/)
+			.onAppear {
+				loadChartData()
+			}
+	}
+
+	private func loadChartData() {
+		let fiveYearsAgo = Calendar.current.date(byAdding: .year, value: -5, to: Date()) ?? Date.distantPast
+		data = node.positionsSortedByTime(context: context, ascending: false, limit: visiblePositionLimit)
+			.reversed()
+			.compactMap { position in
+				guard let time = position.time, time > fiveYearsAgo else { return nil }
+				return PositionAltitude(
+					time: time,
+					altitude: Measurement(value: Double(position.altitude), unit: .meters)
+				)
+			}
 	}
 }

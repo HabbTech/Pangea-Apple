@@ -10,8 +10,6 @@ import OSLog
 
 func telemetryToCsvFile<S: Sequence>(telemetry: S, metricsType: Int) -> String where S.Element == TelemetryEntity {
 	var csvString: String = ""
-	let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-	let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
 	if metricsType == 0 {
 		// Create Device Metrics Header
 		csvString = "\("battery.level".localized), \("Voltage".localized), \("Channel Utilization".localized), \("airtime".localized), \("Uptime".localized), \("Timestamp".localized)"
@@ -27,7 +25,7 @@ func telemetryToCsvFile<S: Sequence>(telemetry: S, metricsType: Int) -> String w
 			csvString += ", "
 			csvString += dm.uptimeSeconds?.formatted(.number.grouping(.never)) ?? ""
 			csvString += ", "
-			csvString += dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
+			csvString += dm.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
 		}
 	} else if metricsType == 1 {
 		// Create Environment Telemetry Header
@@ -44,7 +42,7 @@ func telemetryToCsvFile<S: Sequence>(telemetry: S, metricsType: Int) -> String w
 			csvString += ", "
 			csvString += dm.gasResistance?.formatted(.number.grouping(.never)) ?? ""
 			csvString += ", "
-			csvString += dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
+			csvString += dm.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
 		}
 	} else if metricsType == 2 {
 		// Create Power Metrics Header
@@ -63,7 +61,53 @@ func telemetryToCsvFile<S: Sequence>(telemetry: S, metricsType: Int) -> String w
 			csvString += ", "
 			csvString += dm.powerCh3Current?.formatted(.number.grouping(.never)) ?? ""
 			csvString += ", "
-			csvString += dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
+			csvString += dm.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
+		}
+	} else if metricsType == 3 {
+		// Create Air Quality Metrics Header (particulate matter, µg/m³)
+		csvString = "PM1.0 Std, PM2.5 Std, PM10 Std, PM1.0 Env, PM2.5 Env, PM10 Env, \("Timestamp".localized)"
+		for dm in telemetry where dm.metricsType == 3 {
+			csvString += "\n"
+			csvString += dm.pm10Standard?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.pm25Standard?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.pm100Standard?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.pm10Environmental?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.pm25Environmental?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.pm100Environmental?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
+		}
+	} else if metricsType == 4 {
+		// Create Local Stats Header
+		csvString = "Noise Floor, Uptime, Relayed, Canceled, Dupes, Packets Tx, Packets Rx, Bad Rx, Nodes Online, Total Nodes, \("Timestamp".localized)"
+		for dm in telemetry where dm.metricsType == 4 {
+			csvString += "\n"
+			csvString += dm.noiseFloor?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.uptimeSeconds?.formatted(.number.grouping(.never)) ?? ""
+			csvString += ", "
+			csvString += dm.numTxRelay.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numTxRelayCanceled.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numRxDupe.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numPacketsTx.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numPacketsRx.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numPacketsRxBad.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numOnlineNodes.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.numTotalNodes.formatted(.number.grouping(.never))
+			csvString += ", "
+			csvString += dm.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
 		}
 	}
 	return csvString
@@ -71,23 +115,19 @@ func telemetryToCsvFile<S: Sequence>(telemetry: S, metricsType: Int) -> String w
 
 func detectionsToCsv(detections: [MessageEntity]) -> String {
 	var csvString: String = ""
-	let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-	let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
 	// Create Header
 	csvString = "Detection event, \("Timestamp".localized)"
 	for d in detections {
 		csvString += "\n"
 		csvString += d.messagePayload ?? "Detection"
 		csvString += ", "
-		csvString += d.timestamp.formattedDate(format: dateFormatString).localized
+		csvString += d.timestamp.formatted(date: .numeric, time: .shortened).replacing(",", with: "")
 	}
 	return csvString
 }
 
 func logToCsvFile(log: [OSLogEntryLog]) -> String {
 	var csvString: String = ""
-	let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-	let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
 	// Create PAX Header
 	csvString = "Process, Category, Level, Message, \("Timestamp".localized)"
 	for l in log {
@@ -100,15 +140,13 @@ func logToCsvFile(log: [OSLogEntryLog]) -> String {
 		csvString += ", "
 		csvString += String(l.composedMessage)
 		csvString += ", "
-		csvString += l.date.formattedDate(format: dateFormatString)
+		csvString += l.date.formatted(date: .numeric, time: .shortened).replacing(",", with: "")
 	}
 	return csvString
 }
 
 func paxToCsvFile(pax: [PaxCounterEntity]) -> String {
 	var csvString: String = ""
-	let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-	let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
 	// Create PAX Header
 	csvString = "BLE, WiFi, Total Pax, Uptime, \("Timestamp".localized)"
 	for p in pax {
@@ -121,15 +159,13 @@ func paxToCsvFile(pax: [PaxCounterEntity]) -> String {
 		csvString += ", "
 		csvString += String(p.uptime)
 		csvString += ", "
-		csvString += p.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
+		csvString += p.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
 	}
 	return csvString
 }
 
 func positionToCsvFile(positions: [PositionEntity]) -> String {
 	var csvString: String = ""
-	let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMMddjmma", options: 0, locale: Locale.current)
-	let dateFormatString = (localeDateFormat ?? "MM/dd/YY j:mma").replacingOccurrences(of: ",", with: "")
 	// Create Position Header
 	csvString = "SeqNo, Latitude, Longitude, Altitude, Sats, Speed, Heading, SNR, \("Timestamp".localized)"
 	for pos in positions {
@@ -150,7 +186,7 @@ func positionToCsvFile(positions: [PositionEntity]) -> String {
 		csvString += ", "
 		csvString += String(pos.snr)
 		csvString += ", "
-		csvString += pos.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized
+		csvString += pos.time?.formatted(date: .numeric, time: .shortened).replacing(",", with: "") ?? ""
 	}
 	return csvString
 }

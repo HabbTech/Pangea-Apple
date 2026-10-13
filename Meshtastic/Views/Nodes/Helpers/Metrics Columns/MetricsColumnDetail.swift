@@ -59,6 +59,13 @@ struct MetricsColumnDetail: View {
 							.onTapGesture {
 								seriesList.toggleVisibity(for: series)
 							}
+							.accessibilityElement(children: .combine)
+							.accessibilityLabel(series.name)
+							.accessibilityValue(series.visible ? String(localized: "Visible") : String(localized: "Hidden"))
+							.accessibilityAddTraits(.isButton)
+							.accessibilityAction {
+								seriesList.toggleVisibity(for: series)
+							}
 					}
 				case .table:
 					ForEach(columnList.columns) { column in
@@ -74,27 +81,41 @@ struct MetricsColumnDetail: View {
 								columnList.objectWillChange.send()
 								columnList.toggleVisibity(for: column)
 							}
+							.accessibilityElement(children: .combine)
+							.accessibilityLabel(column.name)
+							.accessibilityValue(column.visible ? String(localized: "Visible") : String(localized: "Hidden"))
+							.accessibilityAddTraits(.isButton)
+							.accessibilityAction {
+								columnList.objectWillChange.send()
+								columnList.toggleVisibity(for: column)
+							}
 					}
 				}
 			}
 			.listStyle(.insetGrouped)
 			.listSectionSpacing(12)
-#if targetEnvironment(macCatalyst)
-			Spacer()
+		}
+		#if targetEnvironment(macCatalyst)
+		.overlay(alignment: .topLeading) {
 			Button {
 				dismiss()
 			} label: {
-				Label("Close", systemImage: "xmark")
+				Image(systemName: "xmark.circle.fill")
+					.font(.system(size: 34))
+					.symbolRenderingMode(.palette)
+					.foregroundStyle(.white, Color(.systemGray3))
 			}
-			.buttonStyle(.bordered)
-			.buttonBorderShape(.capsule)
-			.controlSize(.large)
-			.padding(.bottom)
-#endif
+			.accessibilityLabel(String(localized: "Close", comment: "VoiceOver: dismiss this sheet"))
+			.buttonStyle(.plain)
+			.padding(.top, 12)
+			.padding(.leading, 14)
 		}
+		#endif
 		.presentationDetents([.medium, .large], selection: $currentDetent)
 		.presentationContentInteraction(.scrolls)
+		#if !targetEnvironment(macCatalyst)
 		.presentationDragIndicator(.visible)
+		#endif
 		.presentationBackgroundInteraction(.enabled(upThrough: .medium))
 		.interactiveDismissDisabled(false)
 	}

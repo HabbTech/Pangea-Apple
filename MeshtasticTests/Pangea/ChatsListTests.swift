@@ -4,41 +4,41 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import Testing
 @testable import Meshtastic
 
-/// The Chats list's order. Each chat's date is a Core Data fetch, so the dates are given here
+/// The Chats list's order. Each chat's date is a database fetch, so the dates are given here
 /// and counted: the list works each one out once, however many chats it sorts. Nothing here
 /// touches the app's own database: each test has an in-memory one.
 @Suite("Chats list")
 @MainActor
 struct ChatsListTests {
 
-	private let persistence = PersistenceController(inMemory: true)
-	private var context: NSManagedObjectContext { persistence.container.viewContext }
+	private let container = PangeaTestStore.make()
+	private var context: ModelContext { container.mainContext }
 
 	private func myInfo(groups: [(index: Int32, name: String)], extra: [ChannelEntity] = []) -> MyInfoEntity {
-		let info = MyInfoEntity(context: context)
+		let info = context.add(MyInfoEntity())
 		info.myNodeNum = 1
-		let everyone = ChannelEntity(context: context)
+		let everyone = context.add(ChannelEntity())
 		everyone.index = 0
 		everyone.role = 1
 		everyone.name = ""
 		var channels = [everyone]
 		for group in groups {
-			let channel = ChannelEntity(context: context)
+			let channel = context.add(ChannelEntity())
 			channel.index = group.index
 			channel.role = 2
 			channel.name = group.name
 			channels.append(channel)
 		}
-		info.channels = NSOrderedSet(array: channels + extra)
+		info.channels = channels + extra
 		return info
 	}
 
 	private func user(_ num: Int64) -> UserEntity {
-		let user = UserEntity(context: context)
+		let user = context.add(UserEntity())
 		user.num = num
 		user.lastMessage = Date()
 		return user
@@ -54,7 +54,7 @@ struct ChatsListTests {
 	}
 
 	@Test func everyoneFirstThenGroupsAndDMsNewestFirst() {
-		let disabled = ChannelEntity(context: context)
+		let disabled = context.add(ChannelEntity())
 		disabled.index = 5
 		disabled.role = 0
 		disabled.name = "Off"
@@ -98,7 +98,7 @@ struct ChatsListTests {
 				calls += 1
 				return dates[chat.id]!
 			}
-			var items: [ChatSummary] = (info.channels?.array as? [ChannelEntity] ?? []).map { .group($0) }
+			var items: [ChatSummary] = info.sortedChannels.map { .group($0) }
 			items += shuffled.dropFirst().map { .dm($0) }
 			var referenceCalls = 0
 			let expected = reference(items) { chat in
@@ -121,11 +121,11 @@ struct ChatsListTests {
 @MainActor
 struct ChatRowModelTests {
 
-	private let persistence = PersistenceController(inMemory: true)
-	private var context: NSManagedObjectContext { persistence.container.viewContext }
+	private let container = PangeaTestStore.make()
+	private var context: ModelContext { container.mainContext }
 
 	private func channel(_ index: Int32, _ name: String) -> ChannelEntity {
-		let channel = ChannelEntity(context: context)
+		let channel = context.add(ChannelEntity())
 		channel.index = index
 		channel.role = index == 0 ? 1 : 2
 		channel.name = name
@@ -133,7 +133,7 @@ struct ChatRowModelTests {
 	}
 
 	private func user(_ num: Int64, _ longName: String, short: String) -> UserEntity {
-		let user = UserEntity(context: context)
+		let user = context.add(UserEntity())
 		user.num = num
 		user.longName = longName
 		user.shortName = short
@@ -141,7 +141,7 @@ struct ChatRowModelTests {
 	}
 
 	private func message(_ text: String?, from: UserEntity?, at time: Int32) -> MessageEntity {
-		let message = MessageEntity(context: context)
+		let message = context.add(MessageEntity())
 		message.messagePayload = text
 		message.fromUser = from
 		message.messageTimestamp = time
@@ -249,5 +249,43 @@ private struct SplitMix: RandomNumberGenerator {
 		z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
 		z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
 		return z ^ (z >> 31)
+	}
+}
+
+/// Standard mode puts the status line under a sent message in plain words; Expert Mode keeps the
+/// mesh's own terms. Icon, colour and Try Again stay as the mesh status has them.
+@Suite("Delivery wording")
+@MainActor
+struct DeliveryWordingTests {
+
+	private func message(acked: Bool = false, real: Bool = false, error: RoutingError? = nil, sentAgo: TimeInterval = 10) -> MessageEntity {
+		let message = MessageEntity()
+		message.receivedACK = acked
+		message.realACK = real
+		message.ackError = Int32(error?.rawValue ?? 0)
+		message.messageTimestamp = Int32(Date().timeIntervalSince1970 - sentAgo)
+		return message
+	}
+
+	@Test func plainWordsOutsideExpertMode() {
+		let saved = UserDefaults.expertModeEnabled
+		UserDefaults.expertModeEnabled = false
+		defer { UserDefaults.expertModeEnabled = saved }
+		#expect(message().deliveryStatus(isDirectMessage: true).text == DeliveryStatus.waiting)
+		#expect(message(acked: true, real: true).deliveryStatus(isDirectMessage: true).text == String(localized: "Delivered"))
+		#expect(message(acked: true).deliveryStatus(isDirectMessage: true).text == DeliveryStatus.relayedOnly)
+		#expect(message(acked: true).deliveryStatus(isDirectMessage: false).text == String(localized: "Sent"))
+		#expect(message(error: .noRoute).deliveryStatus(isDirectMessage: true).text == DeliveryStatus.text(for: .noRoute, isDirect: true))
+		let stale = message(sentAgo: MessageEntity.sendAckTimeout + 60)
+		#expect(stale.deliveryStatus(isDirectMessage: true).text == DeliveryStatus.text(for: nil, isDirect: true))
+		#expect(stale.deliveryStatus(isDirectMessage: true).canRetry == stale.meshDeliveryStatus(isDirectMessage: true).canRetry)
+	}
+
+	@Test func meshWordsInExpertMode() {
+		let saved = UserDefaults.expertModeEnabled
+		UserDefaults.expertModeEnabled = true
+		defer { UserDefaults.expertModeEnabled = saved }
+		let sent = message(acked: true, real: true)
+		#expect(sent.deliveryStatus(isDirectMessage: true).text == sent.meshDeliveryStatus(isDirectMessage: true).text)
 	}
 }

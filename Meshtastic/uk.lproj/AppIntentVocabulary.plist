@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>IntentPhrases</key>
+	<array>
+		<dict>
+			<key>IntentExamples</key>
+			<array>
+				<string>Надіслати повідомлення в Pangea</string>
+				<string>Надіслати повідомлення Pangea Івану</string>
+			</array>
+			<key>IntentName</key>
+			<string>INSendMessageIntent</string>
+		</dict>
+		<dict>
+			<key>IntentExamples</key>
+			<array>
+				<string>Шукати повідомлення Pangea</string>
+				<string>Знайти повідомлення в Pangea</string>
+			</array>
+			<key>IntentName</key>
+			<string>INSearchForMessagesIntent</string>
+		</dict>
+		<dict>
+			<key>IntentExamples</key>
+			<array>
+				<string>Позначити повідомлення Pangea як прочитане</string>
+				<string>Позначити повідомлення Pangea як прочитані</string>
+			</array>
+			<key>IntentName</key>
+			<string>INSetMessageAttributeIntent</string>
+		</dict>
+	</array>
+</dict>
+</plist>

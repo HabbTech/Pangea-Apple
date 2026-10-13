@@ -40,16 +40,51 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 	
 	// MARK: - User Actions
 	
+	/// What the radio said about the update it was asked to start. A refusal arrives while
+	/// the app is still waiting for the device to show up in OTA mode, and it is a far better
+	/// error than the timeout that would otherwise be reported.
+	@Published private(set) var deviceRefusal: String?
+
+	/// The last thing the radio said about this update, recognized or not. A message we
+	/// cannot classify does not end the update, but if the update then fails anyway the
+	/// radio's own words are a better error than the timeout.
+	private var lastDeviceNotice: String?
+
 	func retry() {
 		self.transferProgress = 0
 		self.statusMessage = ""
+		self.deviceRefusal = nil
+		self.lastDeviceNotice = nil
 		self.otaStatus = .idle
+	}
+
+	func handleDeviceNotice(_ message: String) {
+		guard otaStatus != .completed, otaStatus != .error else { return }
+		lastDeviceNotice = message
+		switch OTARefusal.classify(message) {
+		case .refused(let explanation):
+			statusMessage = explanation
+			deviceRefusal = explanation
+			otaStatus = .error
+		case .progress(let text):
+			statusMessage = text
+		case nil:
+			// Not a sentence we know. Show it, but leave the update running: it may be
+			// unrelated, and firmware wording changes.
+			statusMessage = message
+		}
 	}
 	
 	func startOTA(binURL: URL, desiredPeripheral: UUID?) async {
-		// Prevent screen sleep during update
+		// Prevent screen sleep during update; guaranteed cleanup on any exit
 		UIApplication.shared.isIdleTimerDisabled = true
+		defer {
+			UIApplication.shared.isIdleTimerDisabled = false
+		}
 		
+		deviceRefusal = nil
+		lastDeviceNotice = nil
+
 		do {
 			// --- 1. Connection Phase ---
 			self.statusMessage = "Connecting..."
@@ -60,27 +95,23 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 			let peripheral = try await ble.scan(for: meshtasticOTAServiceId, timeout: 15.0)
 			
 			name = peripheral.name ?? "unknown"
+			// Every exit from here on leaves the device connected otherwise, including the
+			// failures: the device sits in update mode holding a link to an app that has
+			// given up on it.
+			defer { ble.disconnect(peripheral) }
 			
-			// Connect with timeout (10s)
-			try await withTimeout(seconds: 10) {
-				try await self.ble.connect(peripheral)
-			}
+			try await ble.connect(peripheral, timeout: 10)
 			
 			otaStatus = .connected
 			self.statusMessage = "Discovering Services..."
 			
-			// Discover Services with timeout (10s)
-			let services = try await withTimeout(seconds: 10) {
-				try await self.ble.discoverServices([meshtasticOTAServiceId], on: peripheral)
-			}
+			let services = try await ble.discoverServices([meshtasticOTAServiceId], on: peripheral, timeout: 10)
 			guard let service = services.first(where: { $0.uuid == meshtasticOTAServiceId }) else { throw BLEError.serviceMissing }
 			
-			// Discover Characteristics with timeout (10s)
-			let chars = try await withTimeout(seconds: 10) {
-				try await self.ble.discoverCharacteristics([statusCharacteristicId, otaCharacteristicId],
-														   in: service,
-														   on: peripheral)
-			}
+			let chars = try await ble.discoverCharacteristics([statusCharacteristicId, otaCharacteristicId],
+															 in: service,
+															 on: peripheral,
+															 timeout: 10)
 			
 			guard
 				let statusChar = chars.first(where: { $0.uuid == statusCharacteristicId }),
@@ -88,19 +119,18 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 			else { throw BLEError.characteristicMissing }
 			
 			// --- 2. Setup Notification Stream ---
-			// Timeout for setting notify (usually fast, but good to be safe)
-			try await withTimeout(seconds: 5) {
-				try await self.ble.setNotify(true, for: statusChar, on: peripheral)
-			}
+			try await ble.setNotify(true, for: statusChar, on: peripheral, timeout: 5)
 			
 			let stream = ble.notifications(for: statusChar)
 			var iterator = stream.makeAsyncIterator()
 			
 			// --- 3. Prepare Firmware & Command ---
-			let data = try Data(contentsOf: binURL)
-			let sha256Digest = SHA256.hash(data: data)
-			let fileHash = sha256Digest.map { String(format: "%02hhx", $0) }.joined()
-			let fileSize = data.count
+			let (data, fileHash, fileSize) = try await Task.detached(priority: .userInitiated) {
+				let fileData = try Data(contentsOf: binURL, options: .mappedIfSafe)
+				let digest = SHA256.hash(data: fileData)
+				let hashString = digest.map { String(format: "%02hhx", $0) }.joined()
+				return (fileData, hashString, fileData.count)
+			}.value
 			
 			Logger.services.info("Firmware Size: \(fileSize), Hash: \(fileHash)")
 			
@@ -156,6 +186,13 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 			let chunkSize = peripheral.maximumWriteValueLength(for: .withoutResponse)
 			
 			while offset < fileSize {
+				// Closing the sheet cancels the task that owns this transfer. Stop writing
+				// and drop the connection rather than flashing on into a screen that is gone.
+				if Task.isCancelled {
+					Logger.services.info("📡 [ESP32 BLE OTA] Transfer cancelled at \(offset) of \(fileSize) bytes")
+					throw CancellationError()
+				}
+
 				let endIndex = min(offset + chunkSize, fileSize)
 				let chunk = data.subdata(in: offset..<endIndex)
 				
@@ -178,9 +215,8 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 					throw BLEOTAFailure.unexpectedResponse("Encoding Error")
 				}
 				
-				let trimmed = respStr.trimmingCharacters(in: .whitespacesAndNewlines)
-				
-				if trimmed == "ACK" {
+				switch try ESP32OTAProtocol.chunkDecision(response: respStr, nextOffset: nextOffset, fileSize: fileSize) {
+				case .advance:
 					// Normal chunk processed successfully
 					offset = nextOffset
 					
@@ -189,50 +225,64 @@ final class ESP32BLEOTAViewModel: ObservableObject {
 						self.transferProgress = Double(offset) / Double(fileSize)
 					}
 					
-				} else if trimmed == "OK" {
+				case .complete:
 					// "OK" indicates completion (hash verified, partition set).
-					// This should only happen on the very last chunk.
-					if nextOffset >= fileSize {
-						offset = nextOffset
-						self.transferProgress = 1.0
-						self.otaStatus = .completed
-						self.statusMessage = "Success! Rebooting..."
-						Logger.services.info("OTA Success (OK received on last chunk)")
-						break // Exit loop
-					} else {
-						// OK received before we finished sending? Error.
-						throw BLEOTAFailure.unexpectedResponse("Premature OK received at offset \(nextOffset)")
-					}
-					
-				} else {
-					// Likely ERR or garbage
-					throw BLEOTAFailure.unexpectedResponse(trimmed)
+					offset = nextOffset
+					markUploadCompleted(logMessage: "OTA Success (OK received on last chunk)")
 				}
 			}
 			
+			if self.otaStatus != .completed, offset >= fileSize {
+				guard let terminalData = try await withTimeout(seconds: ESP32OTAProtocol.terminalResponseTimeout, operation: {
+					await iterator.next()
+				}) else {
+					throw BLEOTAFailure.disconnected
+				}
+
+				guard let terminalResponse = String(data: terminalData, encoding: .utf8) else {
+					throw BLEOTAFailure.unexpectedResponse("Encoding Error")
+				}
+
+				try ESP32OTAProtocol.validateTerminalResponse(terminalResponse)
+				markUploadCompleted(logMessage: "OTA Success (OK received after final ACK)")
+			}
+
 			// Double check completion state
 			if self.otaStatus != .completed {
 				throw BLEOTAFailure.unexpectedResponse("Stream ended without OK")
 			}
-			ble.disconnect(peripheral)
 		} catch {
 			self.otaStatus = .error
-			self.statusMessage = error.localizedDescription
-			Logger.services.error("OTA Failed: \(error.localizedDescription)")
+			// The radio's own reason beats "the device never advertised in OTA mode", which is
+			// only ever the symptom of it.
+			self.statusMessage = deviceRefusal ?? lastDeviceNotice ?? error.localizedDescription
+			Logger.services.error("OTA Failed: \(self.statusMessage, privacy: .public)")
 		}
 		
 		UIApplication.shared.isIdleTimerDisabled = false
 	}
 	
 	// MARK: - Helpers
+
+	private func markUploadCompleted(logMessage: String) {
+		self.transferProgress = 1.0
+		self.otaStatus = .completed
+		self.statusMessage = "Success! Rebooting..."
+		Logger.services.info("\(logMessage)")
+	}
 	
 	/// Executes an async operation with a strict timeout.
+	///
+	/// Only safe for operations that end when their task is cancelled — reading the
+	/// notification stream, for instance. A Core Bluetooth call waiting on a checked
+	/// continuation ignores cancellation, so racing it here would hang instead of
+	/// timing out; those calls carry their own deadlines in `AsyncCentral`.
 	/// - Parameters:
 	///   - seconds: The timeout duration.
 	///   - operation: The async closure to execute.
 	/// - Returns: The result of the operation.
 	/// - Throws: `BLEOTAFailure.timeout` if time expires, or rethrows errors from the operation.
-	private func withTimeout<T>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+	private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T) async throws -> T {
 		return try await withThrowingTaskGroup(of: T.self) { group in
 			// Task 1: The actual operation
 			group.addTask {

@@ -200,7 +200,7 @@ struct PhotoUpdateBanner: View {
 	@ObservedObject private var store = ProfileStore.shared
 	/// Only whether the radio can take a packet, not everything else AccessoryManager publishes.
 	@ObservedObject private var readiness = AccessoryManager.shared.readiness
-	@Environment(\.managedObjectContext) private var context
+	@Environment(\.modelContext) private var context
 	let nums: [Int64]
 	/// "Update" was tapped and none of the photos could be asked for.
 	@State private var couldntAsk: ProfileSync.PhotoAsk?

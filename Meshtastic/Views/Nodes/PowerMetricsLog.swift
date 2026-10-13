@@ -12,10 +12,15 @@ import OSLog
 
 struct PowerMetricsLog: View {
 
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@ObservedObject var node: NodeInfoEntity
-	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
+	@Bindable var node: NodeInfoEntity
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsWideTable: Bool {
+		horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom != .phone
+	}
 	@State private var sortOrder = [KeyPathComparator(\TelemetryEntity.time, order: .reverse)]
 	@State private var selection: TelemetryEntity.ID?
 	@State private var chartSelection: Date?
@@ -25,11 +30,15 @@ struct PowerMetricsLog: View {
 	@State var exportString = ""
 
 	@State private var channelSelection = 0
+	@State private var powerMetrics: [TelemetryEntity] = []
+	@State private var chartData: [TelemetryEntity] = []
+	@State private var totalReadings = 0
 
-	var powerMetrics: [TelemetryEntity] {
-		let telemetries = node.telemetries?.filtered(using: NSPredicate(format: "metricsType == 2"))
-		return (telemetries?.reversed() as? [TelemetryEntity]) ?? []
-	}
+	// User-editable per-channel labels (e.g. "Solar", "Battery", "Load"), persisted per node so a
+	// user can tell which line is which without memorizing their wiring. Empty entries fall back to
+	// the generic "Channel N". Per meshtastic/design#53 / Meshtastic-Apple#2046.
+	@State private var channelLabels: [String] = ["", "", ""]
+	@State private var isEditingLabels = false
 
 	var minMax: (min: Double, max: Double) {
 		let allValues = powerMetrics.flatMap { [
@@ -51,20 +60,15 @@ struct PowerMetricsLog: View {
 
 	var body: some View {
 		VStack {
-			if node.hasPowerMetrics {
-				let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())
-
-				let chartData = powerMetrics
-					.filter { $0.time != nil && $0.time! >= oneWeekAgo! }
-					.sorted { $0.time! < $1.time! }
+			if totalReadings > 0 {
 				if chartData.count > 0 {
-					GroupBox(label: Label("\(powerMetrics.count) Readings Total", systemImage: "chart.xyaxis.line")) {
+					GroupBox(label: Label("\(totalReadings) Readings Total", systemImage: "chart.xyaxis.line")) {
 
 						// allow switching between different channels
 						Picker("Select Channel", selection: $channelSelection) {
-							Text("Channel 1").tag(0)
-							Text("Channel 2").tag(1)
-							Text("Channel 3").tag(2)
+							Text(displayLabel(0)).tag(0)
+							Text(displayLabel(1)).tag(1)
+							Text(displayLabel(2)).tag(2)
 						}
 
 						Chart {
@@ -78,10 +82,10 @@ struct PowerMetricsLog: View {
 										x: .value("Time", point.time ?? Date()),
 										y: .value("Voltage", voltage)
 									)
-									.foregroundStyle(by: .value("Series", "Voltage"))
+									.foregroundStyle(by: .value("Series", "Voltage".localized))
 									.interpolationMethod(.linear)
-									.accessibilityLabel("Voltage")
-									.accessibilityValue("X: \(point.time ?? Date()), Y: \(voltage)")
+									.accessibilityLabel(String(localized: "Voltage at \((point.time ?? Date()).formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for a voltage point on the power metrics chart. %@ is the timestamp."))
+									.accessibilityValue(String(localized: "\(voltage.formatted()) volts", comment: "VoiceOver value spoken as a voltage reading. %@ is the number."))
 								}
 
 								if let current {
@@ -89,16 +93,17 @@ struct PowerMetricsLog: View {
 										x: .value("Time", point.time ?? Date()),
 										y: .value("Current", current)
 									)
-									.foregroundStyle(by: .value("Series", "Current"))
+									.foregroundStyle(by: .value("Series", "Current".localized))
 									.interpolationMethod(.linear)
-									.accessibilityLabel("Current")
-									.accessibilityValue("X: \(point.time ?? Date()), Y: \(current)")
+									.accessibilityLabel(String(localized: "Current at \((point.time ?? Date()).formatted(date: .abbreviated, time: .shortened))", comment: "VoiceOver label for a current point on the power metrics chart. %@ is the timestamp."))
+									.accessibilityValue(String(localized: "\(current.formatted()) milliamps", comment: "VoiceOver value spoken as a current reading in milliamps. %@ is the number."))
 								}
 							}
 
 							if let chartSelection {
 								RuleMark(x: .value("Second", chartSelection, unit: .second))
 									.foregroundStyle(.tertiary.opacity(0.5))
+									.accessibilityHidden(true)
 							}
 
 						}
@@ -109,24 +114,21 @@ struct PowerMetricsLog: View {
 						.chartXSelection(value: $chartSelection)
 						.chartYScale(domain: minMax.min...minMax.max)
 						.chartForegroundStyleScale([
-							"Voltage": .blue,
-							"Current": .green
+							"Voltage".localized: .blue,
+							"Current".localized: .green
 						])
 						.chartLegend(position: .automatic, alignment: .bottom)
 					}
 				}
-				let localeDateFormat = DateFormatter.dateFormat(fromTemplate: "yyMdjmma", options: 0, locale: Locale.current)
-				let dateFormatString = (localeDateFormat ?? "M/d/YY j:mma").replacingOccurrences(of: ",", with: "")
-
-				if idiom == .phone {
+				if !showsWideTable {
 					Table(powerMetrics, selection: $selection, sortOrder: $sortOrder) {
 						TableColumn("Timestamp") { m in
 							HStack {
-								Text(m.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
+								Text(m.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 								Spacer()
 								HStack {
 									VStack {
-										Text("Channel 1")
+										Text(displayLabel(0))
 										HStack {
 											Image(systemName: "powerplug.fill")
 												.font(.caption)
@@ -140,11 +142,12 @@ struct PowerMetricsLog: View {
 											m.powerCh1Current.map { Text("\(String(format: "%.2f", $0))mA") } ?? Text(Constants.nilValueIndicator)
 										}
 									}
+									.accessibilityElement(children: .combine)
 								}
 								Spacer()
 								HStack {
 									VStack {
-										Text("Channel 2")
+										Text(displayLabel(1))
 										HStack {
 											Image(systemName: "powerplug.fill")
 												.font(.caption)
@@ -158,11 +161,12 @@ struct PowerMetricsLog: View {
 											m.powerCh2Current.map { Text("\(String(format: "%.2f", $0))mA") } ?? Text(Constants.nilValueIndicator)
 										}
 									}
+									.accessibilityElement(children: .combine)
 								}
 								Spacer()
 								HStack {
 									VStack {
-										Text("Channel 3")
+										Text(displayLabel(2))
 										HStack {
 											Image(systemName: "powerplug.fill")
 												.font(.caption)
@@ -176,6 +180,7 @@ struct PowerMetricsLog: View {
 											m.powerCh3Current.map { Text("\(String(format: "%.2f", $0))mA") } ?? Text(Constants.nilValueIndicator)
 										}
 									}
+									.accessibilityElement(children: .combine)
 								}
 							}
 						}
@@ -213,7 +218,7 @@ struct PowerMetricsLog: View {
 						}
 						.width(min: 75)
 						TableColumn("Timestamp") { dm in
-							Text(dm.time?.formattedDate(format: dateFormatString) ?? "Unknown Age".localized)
+							Text(dm.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown Age".localized)
 						}
 						.width(min: 180)
 
@@ -233,7 +238,7 @@ struct PowerMetricsLog: View {
 					}
 					.buttonStyle(.bordered)
 					.buttonBorderShape(.capsule)
-					.controlSize(idiom == .phone ? .regular : .large)
+					.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 					.padding(.bottom)
 					.padding(.leading)
 					.confirmationDialog(
@@ -241,13 +246,17 @@ struct PowerMetricsLog: View {
 						isPresented: $isPresentingClearLogConfirm,
 						titleVisibility: .visible
 					) {
-						Button("Delete Power metrics?", role: .destructive) {
-							Task {
-								if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 2) {
-									Logger.data.notice("Cleared Power Metrics for \(node.num, privacy: .public)")
-								} else {
-									Logger.data.error("Clear Power Metrics Log Failed")
-								}
+							Button("Delete Power metrics?", role: .destructive) {
+								Task {
+									if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 2) {
+										Logger.data.notice("Cleared Power Metrics for \(node.num, privacy: .public)")
+										await MainActor.run {
+											refreshMetrics()
+											NotificationCenter.default.post(name: .nodeLogAvailabilityDidChange, object: node.num)
+										}
+									} else {
+										Logger.data.error("Clear Power Metrics Log Failed")
+									}
 							}
 						}
 					}
@@ -260,7 +269,7 @@ struct PowerMetricsLog: View {
 					}
 					.buttonStyle(.bordered)
 					.buttonBorderShape(.capsule)
-					.controlSize(idiom == .phone ? .regular : .large)
+					.controlSize(horizontalSizeClass == .regular ? .large : .regular)
 					.padding(.bottom)
 					.padding(.trailing)
 				}
@@ -274,17 +283,67 @@ struct PowerMetricsLog: View {
 				ContentUnavailableView("No Power Metrics", systemImage: "slash.circle")
 			}
 		}
+		.onAppear {
+			refreshMetrics()
+			channelLabels = loadChannelLabels()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshMetrics()
+		}
 		.navigationTitle("Power Metrics Log")
 		.navigationBarTitleDisplayMode(.inline)
-		.navigationBarItems(trailing:
-			ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ToolbarItem(placement: .topBarLeading) {
+				Button {
+					isEditingLabels = true
+				} label: {
+					Label("Label Channels", systemImage: "pencil")
+				}
+			}
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
+		.sheet(isPresented: $isEditingLabels) {
+			NavigationStack {
+				Form {
+					Section {
+						ForEach(0..<3, id: \.self) { index in
+							TextField("Channel \(index + 1)", text: $channelLabels[index])
+								.autocorrectionDisabled()
+						}
+					} header: {
+						Text("Power Channel Labels")
+					} footer: {
+						Text("Give each channel a name (e.g. Solar, Battery, Load). Leave blank to use the default \"Channel N\".")
+					}
+				}
+				.navigationTitle("Label Power Channels")
+				.navigationBarTitleDisplayMode(.inline)
+				.toolbar {
+					ToolbarItem(placement: .cancellationAction) {
+						Button {
+							channelLabels = loadChannelLabels()
+							isEditingLabels = false
+						} label: {
+							Image(systemName: "xmark")
+						}
+						.accessibilityLabel(String(localized: "Cancel", comment: "VoiceOver: dismiss the label power channels sheet"))
+					}
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Save") {
+							saveChannelLabels()
+							isEditingLabels = false
+						}
+					}
+				}
+			}
+		}
 		.fileExporter(
 			isPresented: $isExporting,
 			document: CsvDocument(emptyCsv: exportString),
 			contentType: .commaSeparatedText,
-			defaultFilename: String("\(node.user?.longName ?? "Node") \("Power Metrics Log".localized)"),
+			defaultFilename: CsvDocument.exportFilename("\(node.user?.longName ?? "Node") \("Power Metrics Log".localized) \(Date.now.exportTimestamp)"),
 			onCompletion: { result in
 				switch result {
 				case .success:
@@ -294,19 +353,54 @@ struct PowerMetricsLog: View {
 					Logger.services.error("Power metrics log download failed: \(error.localizedDescription, privacy: .public)")
 				}
 			}
-		)
+			)
+	}
+
+	private func refreshMetrics() {
+		totalReadings = node.telemetryCount(ofType: 2, context: context)
+		powerMetrics = node.safeTelemetries(ofType: 2)
+		let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
+		chartData = powerMetrics
+			.filter { ($0.time ?? Date.distantPast) >= oneWeekAgo }
+			.sorted { ($0.time ?? .distantPast) < ($1.time ?? .distantPast) }
+	}
+
+	// MARK: - Channel labels
+
+	/// Persisted on `node.powerChannelLabels` (SwiftData) rather than `UserDefaults` so labels are
+	/// deleted along with the node instead of accumulating indefinitely after it's forgotten.
+	private func loadChannelLabels() -> [String] {
+		let stored = node.powerChannelLabels
+		return (0..<3).map { index in index < stored.count ? stored[index] : "" }
+	}
+
+	private func saveChannelLabels() {
+		node.powerChannelLabels = channelLabels
+		do {
+			try context.save()
+		} catch let error as NSError {
+			Logger.data.error("\(error.localizedDescription, privacy: .public)")
+		}
+	}
+
+	/// The label shown for a power channel: the user's custom label, or the generic "Channel N" fallback.
+	private func displayLabel(_ index: Int) -> String {
+		let custom = index < channelLabels.count ? channelLabels[index].trimmingCharacters(in: .whitespaces) : ""
+		return custom.isEmpty ? String(format: "Channel %d".localized, index + 1) : custom
 	}
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return PowerMetricsLog(node: node)
+	PowerMetricsLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

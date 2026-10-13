@@ -1,14 +1,17 @@
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import SwiftUI
 
 struct ChannelMessageRow: View {
 	@EnvironmentObject var appState: AppState
+	@EnvironmentObject private var router: Router
+	@Environment(\.modelContext) private var context
 	
 	// Core Data object observed for changes (like Tapbacks being received)
-	@ObservedObject var message: MessageEntity
+	@Bindable var message: MessageEntity
 	
-	let allMessages: FetchedResults<MessageEntity> // The full list for reply lookup
+	let replyMessage: MessageEntity?
+	let tapbacks: [MessageEntity]
 	let previousMessage: MessageEntity?
 	let preferredPeripheralNum: Int
 	let channel: ChannelEntity
@@ -17,14 +20,39 @@ struct ChannelMessageRow: View {
 	@FocusState.Binding var messageFieldFocused: Bool
 	@Binding var messageToHighlight: Int64
 	let scrollView: ScrollViewProxy
-	let onInteractionComplete: () -> Void
+	let onTapback: (MessageEntity) -> Void
+	let onMessageRetried: () -> Void
 
 	private var isCurrentUser: Bool {
 		Int64(preferredPeripheralNum) == message.fromUser?.num
 	}
-	
+
+	/// A single, natural-language description of the message bubble so VoiceOver reads one element
+	/// (sender + text + timestamp + security state) instead of separate fragments. Delivery/read
+	/// status stays its own labeled element (MessageDeliveryStatusLabel) directly after.
+	///
+	/// The badge portion is built from `MessageEntity.activeStatusBadges`, the same source of truth
+	/// MessageText's per-badge overlays read from, so this combined label can't silently drop a
+	/// badge (encrypted, verified, store-and-forward, detection sensor, translated) that the bubble
+	/// itself is showing (issue #016 T003).
+	private var messageAccessibilityLabel: String {
+		let text = message.displayedPayload
+		let time = message.timestamp.formatted(date: .abbreviated, time: .shortened)
+		var parts: [String]
+		if isCurrentUser {
+			parts = [String(localized: "You sent: \(text)", comment: "VoiceOver: label for a message you sent. %@ is the message text")]
+		} else {
+			let sender = message.fromUser?.longName ?? "Unknown".localized
+			parts = [String(localized: "Message from \(sender): \(text)", comment: "VoiceOver: label for a received message. First value is the sender, second is the message text")]
+		}
+		parts.append(time)
+		parts.append(contentsOf: message.activeStatusBadges(destination: .channel(channel), isCurrentUser: isCurrentUser).map(\.label))
+		return parts.joined(separator: ", ")
+	}
+
 	init(message: MessageEntity,
-	     allMessages: FetchedResults<MessageEntity>,
+	     replyMessage: MessageEntity?,
+	     tapbacks: [MessageEntity],
 	     previousMessage: MessageEntity?,
 	     preferredPeripheralNum: Int,
 	     channel: ChannelEntity,
@@ -32,10 +60,12 @@ struct ChannelMessageRow: View {
 	     messageFieldFocused: FocusState<Bool>.Binding,
 	     messageToHighlight: Binding<Int64>,
 	     scrollView: ScrollViewProxy,
-	     onInteractionComplete: @escaping () -> Void) {
+	     onTapback: @escaping (MessageEntity) -> Void,
+	     onMessageRetried: @escaping () -> Void = {}) {
 		// Initialize ObservedObject with the concrete instance
-		self._message = ObservedObject(initialValue: message)
-		self.allMessages = allMessages
+		self.message = message
+		self.replyMessage = replyMessage
+		self.tapbacks = tapbacks
 		self.previousMessage = previousMessage
 		self.preferredPeripheralNum = preferredPeripheralNum
 		self.channel = channel
@@ -43,10 +73,25 @@ struct ChannelMessageRow: View {
 		self._messageFieldFocused = messageFieldFocused
 		self._messageToHighlight = messageToHighlight
 		self.scrollView = scrollView
-		self.onInteractionComplete = onInteractionComplete
+		self.onTapback = onTapback
+		self.onMessageRetried = onMessageRetried
 	}
 
 	var body: some View {
+		// A retained message row can re-evaluate its body after the underlying MessageEntity has been
+		// deleted/invalidated (messages are pruned underneath the list). Reading any persisted property
+		// of a deleted @Model — directly, via the `fromUser` relationship, or through the MessageEntity
+		// computed-property extensions — fatally traps in SwiftData (SIGTRAP). Bail to an empty row when
+		// the message is no longer live; the List drops it on its next rebuild. Mirrors the NodeListItem
+		// guard.
+		if message.modelContext != nil && !message.isDeleted {
+			rowContent
+		} else {
+			EmptyView()
+		}
+	}
+
+	@ViewBuilder private var rowContent: some View {
 		VStack(alignment: .leading, spacing: 0) {
 			
 			// Timestamp Header
@@ -60,33 +105,36 @@ struct ChannelMessageRow: View {
 			
 			// Reply Message Block
 			if message.replyID > 0 {
-				let messageReply = allMessages.first(where: { $0.messageId == message.replyID })
-				
 				HStack {
 					Spacer(minLength: isCurrentUser ? 50 : 0)
 					
 					Button {
-						if let messageNum = messageReply?.messageId {
+						if let messageNum = replyMessage?.messageId {
 							withAnimation(.easeInOut(duration: 0.5)) {
 								messageToHighlight = messageNum
 							}
 							scrollView.scrollTo(messageNum, anchor: .center)
 							Task {
 								DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-									withAnimation(.easeInOut(duration: 0.5)) {
-										messageToHighlight = -1
+									// Only clear if this jump's highlight is still the active one — a search
+									// (or later jump) may have moved the highlight elsewhere in the meantime.
+									if messageToHighlight == messageNum {
+										withAnimation(.easeInOut(duration: 0.5)) {
+											messageToHighlight = -1
+										}
 									}
 								}
 							}
 						}
 					} label: {
-						Text(messageReply?.displayedPayload ?? "EMPTY MESSAGE").foregroundColor(.accentColor).font(.caption2)
+						Text(replyMessage?.displayedPayload ?? "EMPTY MESSAGE").foregroundColor(.accentColor).font(.caption2)
 							.padding(10)
 							.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
 						Image(systemName: "arrowshape.turn.up.left.fill")
 							.symbolRenderingMode(.hierarchical).imageScale(.large)
 							.foregroundColor(.accentColor).padding(.trailing)
 					}
+					.accessibilityLabel(String(localized: "Replying to: \(replyMessage?.displayedPayload ?? "EMPTY MESSAGE")", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
 					if !isCurrentUser { Spacer(minLength: 50) }
 				}
 			}
@@ -95,10 +143,11 @@ struct ChannelMessageRow: View {
 				if isCurrentUser { Spacer(minLength: 50) }
 				// Node Detail Tap
 				if !isCurrentUser {
+					// Pangea: a tap opens their profile; a double tap opens the node, in Expert Mode.
 					PangeaAvatar(user: message.fromUser, size: 50)
 						.onTapGesture(count: 2) {
 							if UserDefaults.expertModeEnabled, let nodeNum = message.fromUser?.num {
-								appState.router.navigateToNodeDetail(nodeNum: Int64(nodeNum))
+								router.navigateToNodeDetail(nodeNum: Int64(nodeNum))
 							}
 						}
 						.onTapGesture {
@@ -108,7 +157,8 @@ struct ChannelMessageRow: View {
 				}
 				
 				VStack(alignment: isCurrentUser ? .trailing : .leading) {
-					let isDetectionSensorMessage = message.portNum == Int32(PortNum.detectionSensorApp.rawValue)
+					let deliveryStatus = isCurrentUser ? message.deliveryStatus(isDirectMessage: false) : nil
+					let isDetectionSensorMessage = message.isDetectionSensorMessage(destination: .channel(channel))
 					
 					// Sender Name Header
 					if !isCurrentUser && message.fromUser != nil {
@@ -120,6 +170,7 @@ struct ChannelMessageRow: View {
 							}
 						}
 							.font(.caption).foregroundColor(.gray).offset(y: 8)
+							.accessibilityHidden(true) // Folded into the message bubble's combined label
 					}
 					
 					// Message Bubble
@@ -131,27 +182,28 @@ struct ChannelMessageRow: View {
 						) {
 							self.replyMessageId = message.messageId
 							self.messageFieldFocused = true
+						} onTapback: {
+							onTapback(message)
 						}
+						.accessibilityElement(children: .combine)
+						.accessibilityLabel(messageAccessibilityLabel)
 						
-						if isCurrentUser && message.canRetry {
-							RetryButton(message: message, destination: .channel(channel))
+						if let deliveryStatus, deliveryStatus.canRetry {
+							RetryButton(
+								message: message,
+								destination: .channel(channel),
+								status: deliveryStatus,
+								onMessageSent: onMessageRetried
+							)
 						}
 					}
 					
-					// Tapback Responses - Pass the closure to trigger the parent redraw
-					TapbackResponses(message: message, onRead: onInteractionComplete)
+					TapbackResponses(tapbacks: tapbacks)
 					
 					// ACK Status / Error
 					HStack {
-						let ackErrorVal = RoutingError(rawValue: Int(message.ackError))
-						if isCurrentUser && message.receivedACK {
-							Text(DeliveryStatus.text(for: ackErrorVal, isDirect: false)).fixedSize(horizontal: false, vertical: true)
-								.foregroundStyle(ackErrorVal?.color ?? Color.red).font(.caption2)
-						} else if isCurrentUser && message.ackError == 0 {
-							Text(DeliveryStatus.waiting).font(.caption2).foregroundColor(.orange)
-						} else if isCurrentUser && !isDetectionSensorMessage {
-							Text(DeliveryStatus.text(for: ackErrorVal, isDirect: false)).fixedSize(horizontal: false, vertical: true)
-								.foregroundStyle(ackErrorVal?.color ?? Color.red).font(.caption2)
+						if let deliveryStatus, !isDetectionSensorMessage {
+							MessageDeliveryStatusLabel(status: deliveryStatus)
 						}
 					}
 				}
@@ -164,5 +216,11 @@ struct ChannelMessageRow: View {
 			
 		}
 		.id(message.messageId) // ID for scrolling/highlighting
+		.background(
+			RoundedRectangle(cornerRadius: 8)
+				.fill(Color.messageHighlight.opacity(messageToHighlight == message.messageId ? 1 : 0))
+				.padding(.horizontal, 4)
+		)
+		.animation(.easeInOut(duration: 0.3), value: messageToHighlight)
 	}
 }

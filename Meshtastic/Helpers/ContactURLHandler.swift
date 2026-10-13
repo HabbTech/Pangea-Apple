@@ -5,7 +5,7 @@
 //  Created by Benjamin Faershtein on 6/27/25.
 //
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 import TipKit
 import MeshtasticProtobufs
@@ -14,8 +14,26 @@ struct ContactURLHandler {
 
 	static var minimumContactVersion = "2.6.9"
 
+	/// The shared-contact link prefix — the contact counterpart to
+	/// `MeshtasticChannelURL.canonicalPrefix`.
+	static let canonicalPrefix = MeshContactURL.canonicalPrefix + "#"
+
+	/// True when this URL is a Meshtastic shared-contact link. Single source of
+	/// truth for every contact-link entry point (universal links, custom scheme,
+	/// QR scans, and NFC tags).
+	///
+	/// Validates the host, path, and fragment rather than substring-matching the
+	/// whole URL string, so a foreign link that merely embeds `meshtastic.org/v/#`
+	/// (in a query or path) is not mistaken for a contact import.
+	static func canHandle(_ url: URL) -> Bool {
+		MeshContactURL.canHandle(url)
+	}
+
+	/// Parses a contact link for the window that received it. The caller presents
+	/// the confirmation sheet. Returns nil when the radio is too old or the
+	/// link does not parse; those cases alert on their own.
 	@MainActor
-	static func handleContactUrl(url: URL, accessoryManager: AccessoryManager) {
+	static func makePendingContact(from url: URL, accessoryManager: AccessoryManager) -> PendingContact? {
 		let supportedVersion = accessoryManager.checkIsVersionSupported(forVersion: minimumContactVersion)
 
 		if !supportedVersion {
@@ -34,57 +52,36 @@ struct ContactURLHandler {
 				rootViewController.present(alertController, animated: true)
 			}
 			Logger.services.debug("User Alerted that a firmware upgrade is required to import contacts.")
-		} else {
-			let components = url.absoluteString.components(separatedBy: "#")
-			if let contactData = components.last {
-				let decodedString = contactData.base64urlToBase64()
-				if let decodedData = Data(base64Encoded: decodedString) {
-					do {
-						let contact = try MeshtasticProtobufs.SharedContact(serializedBytes: decodedData)
-						let alertController = UIAlertController(
-							title: "Add Contact",
-							message: "Would you like to add \(contact.user.longName) as a contact?",
-							preferredStyle: .alert
-						)
-						alertController.addAction(UIAlertAction(
-							title: "Yes",
-							style: .default,
-							handler: { _ in
-								Task {
-									do {
-										try await accessoryManager.addContactFromURL(base64UrlString: contactData)
-										Logger.services.debug("Contact added from URL successfully")
-									} catch {
-										Logger.services.debug("Contact added from URL failed with error \(error)")
-									}
-								}
-							}
-						))
-						alertController.addAction(UIAlertAction(
-							title: "No",
-							style: .cancel,
-							handler: nil
-						))
-						if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-						   let rootViewController = windowScene.windows.first?.rootViewController {
-							rootViewController.present(alertController, animated: true)
-						}
-						Logger.services.debug("Contact data extracted from URL: \(contactData, privacy: .public)")
-					} catch {
-						Logger.services.error("Failed to parse contact data: \(error.localizedDescription, privacy: .public)")
-						if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-						   let rootViewController = windowScene.windows.first?.rootViewController {
-							let errorAlert = UIAlertController(
-								title: "Error",
-								message: "Could not process contact information. Invalid format.",
-								preferredStyle: .alert
-							)
-							errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
-							rootViewController.present(errorAlert, animated: true)
-						}
-					}
-				}
-			}
+			return nil
 		}
+
+		do {
+			let parsed = try MeshContactURL.parse(url.absoluteString)
+			Logger.services.debug("Validated a shared Pangea contact URL.")
+			return PendingContact(
+				contact: parsed.contact,
+				base64UrlString: parsed.payload,
+				exchangeRequested: parsed.exchangeRequested
+			)
+		} catch {
+			Logger.services.error("Failed to parse contact data: \(error.localizedDescription, privacy: .public)")
+			presentInvalidContactAlert()
+			return nil
+		}
+	}
+
+	@MainActor
+	private static func presentInvalidContactAlert() {
+		guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+			  let rootViewController = windowScene.windows.first?.rootViewController else {
+			return
+		}
+		let errorAlert = UIAlertController(
+			title: "Error",
+			message: "Could not process contact information. Invalid format.",
+			preferredStyle: .alert
+		)
+		errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
+		rootViewController.present(errorAlert, animated: true)
 	}
 }

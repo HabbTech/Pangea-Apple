@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import CoreLocation
 import MapKit
 
@@ -30,12 +31,17 @@ private struct NodeMapContentEquatableWrapper<Content: View>: View, Equatable {
 }
 
 struct NodeMapSwiftUI: View {
-	@Environment(\.managedObjectContext) var context
+	private let visiblePositionLimit = 1_000
+
+	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	/// Parameters
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
 	@State var showUserLocation: Bool = false
-	@State var positions: [PositionEntity] = []
+	@State private var positions: [PositionEntity] = []
+	@State private var totalPositionCount = 0
+	@State private var mostRecentPosition: PositionEntity?
 	/// Map State User Defaults
 	@AppStorage("meshMapShowNodeHistory") private var showNodeHistory = false
 	@AppStorage("meshMapShowRouteLines") private var showRouteLines = false
@@ -58,17 +64,24 @@ struct NodeMapSwiftUI: View {
 
 	@State private var mapRegion = MKCoordinateRegion.init()
 
-	@FetchRequest(sortDescriptors: [NSSortDescriptor(key: "name", ascending: false)],
-				  predicate: NSPredicate(
-					format: "expire == nil || expire >= %@", Date() as NSDate
-				  ), animation: .none)
-	private var waypoints: FetchedResults<WaypointEntity>
-
 	var body: some View {
-		if node.hasPositions {
-			mapWithNavigation
-		} else {
-			ContentUnavailableView("No Positions", systemImage: "mappin.slash")
+		// isDeleted too: a deleted-but-unsaved node keeps its modelContext until the save
+		// completes, and reading its persisted properties in that window traps.
+		if node.modelContext != nil && !node.isDeleted {
+			Group {
+				if totalPositionCount > 0 {
+					mapWithNavigation
+				} else {
+					ContentUnavailableView("No Positions", systemImage: "mappin.slash")
+				}
+			}
+			.onChange(of: node) {
+				handleNodeChange()
+				refreshPositions()
+			}
+			.onAppear {
+				handleAppear()
+			}
 		}
 	}
 
@@ -78,13 +91,12 @@ struct NodeMapSwiftUI: View {
 				configuredMap
 			}
 		}
-		.navigationBarTitle(String((node.user?.shortName ?? "Unknown".localized) + (" \(node.positions?.count ?? 0) points")), displayMode: .inline)
-		.navigationBarItems(trailing:
-			ZStack {
-				ConnectedDevice(
-					deviceConnected: accessoryManager.isConnected,
-					name: accessoryManager.activeConnection?.device.shortName ?? "?")
-			})
+		.navigationBarTitle(String((node.user?.shortName ?? "Unknown".localized) + (" \(totalPositionCount) points")), displayMode: .inline)
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
 	}
 
 	private var configuredMap: some View {
@@ -102,17 +114,22 @@ struct NodeMapSwiftUI: View {
 				MapLegend(isMeshMap: false)
 					.presentationDetents([.medium, .large])
 					.presentationContentInteraction(.scrolls)
+					#if !targetEnvironment(macCatalyst)
 					.presentationDragIndicator(.visible)
+					#endif
 					.presentationBackgroundInteraction(.enabled(upThrough: .medium))
 			}
 			.onChange(of: selectedMapLayer) { _, newMapLayer in
 				updateMapStyle(for: newMapLayer)
 			}
-			.onChange(of: node) {
-				handleNodeChange()
+			.onChange(of: showNodeHistory) {
+				refreshPositions()
 			}
-			.onAppear {
-				handleAppear()
+			.onChange(of: showRouteLines) {
+				refreshPositions()
+			}
+			.onChange(of: showConvexHull) {
+				refreshPositions()
 			}
 			.safeAreaInset(edge: .bottom, alignment: .trailing) {
 				controlButtons
@@ -123,15 +140,15 @@ struct NodeMapSwiftUI: View {
 	}
 
 	private var mapContentSignature: NodeMapContentSignature {
-		let positionCount = node.positions?.count ?? 0
-		let lastPositionTime = (node.positions?.lastObject as? PositionEntity)?.time
+		let positionCount = positions.count
+		let lastPositionTime = positions.first?.time
 		return NodeMapContentSignature(nodeNum: node.num, positionCount: positionCount, lastPositionTime: lastPositionTime, showNodeHistory: showNodeHistory, showRouteLines: showRouteLines, showConvexHull: showConvexHull, favorite: node.favorite)
 	}
 
 	private var baseMap: some View {
 		NodeMapContentEquatableWrapper(signature: mapContentSignature) {
 			Map(position: $position, bounds: MapCameraBounds(minimumDistance: 0, maximumDistance: .infinity), scope: mapScope) {
-				NodeMapContent(node: node)
+				NodeMapContent(node: node, positions: positions)
 			}
 		}
 		.mapScope(mapScope)
@@ -156,7 +173,7 @@ struct NodeMapSwiftUI: View {
 		Group {
 			if scene != nil && isLookingAround {
 				LookAroundPreview(initialScene: scene)
-					.frame(height: UIDevice.current.userInterfaceIdiom == .phone ? 250 : 400)
+					.frame(height: horizontalSizeClass == .regular ? 400 : 250)
 					.clipShape(RoundedRectangle(cornerRadius: 12))
 					.padding(.horizontal, 20)
 			}
@@ -167,7 +184,7 @@ struct NodeMapSwiftUI: View {
 		Group {
 			if !isLookingAround && isShowingAltitude {
 				PositionAltitudeChart(node: node)
-					.frame(height: UIDevice.current.userInterfaceIdiom == .phone ? 250 : 400)
+					.frame(height: horizontalSizeClass == .regular ? 400 : 250)
 					.clipShape(RoundedRectangle(cornerRadius: 12))
 					.padding(.horizontal, 20)
 			}
@@ -194,6 +211,7 @@ struct NodeMapSwiftUI: View {
 			}) {
 				Image(systemName: isEditingSettings ? "info.circle.fill" : "info.circle")
 			}
+			.accessibilityLabel(isEditingSettings ? Text("Hide map settings") : Text("Show map settings"))
 			.glassButtonStyle()
 
 			if scene != nil {
@@ -205,10 +223,11 @@ struct NodeMapSwiftUI: View {
 				}) {
 					Image(systemName: isLookingAround ? "binoculars.fill" : "binoculars")
 				}
+				.accessibilityLabel(isLookingAround ? Text("Exit look around") : Text("Look around"))
 				.glassButtonStyle()
 			}
 
-			if node.positions?.count ?? 0 > 1 {
+			if totalPositionCount > 1 {
 				Button(action: {
 					if isLookingAround {
 						isLookingAround = false
@@ -217,6 +236,7 @@ struct NodeMapSwiftUI: View {
 				}) {
 					Image(systemName: isShowingAltitude ? "mountain.2.fill" : "mountain.2")
 				}
+				.accessibilityLabel(isShowingAltitude ? Text("Hide altitude chart") : Text("Show altitude chart"))
 				.glassButtonStyle()
 			}
 		}
@@ -238,18 +258,35 @@ struct NodeMapSwiftUI: View {
 		}
 	}
 
+	/// Returns a camera distance that ensures the precision circle is fully visible.
+	/// For precise positions (precisionBits == 32 or 0), returns the default distance.
+	/// For imprecise positions, scales the precision radius so the circle fits comfortably.
+	private func cameraDistanceForPrecision(_ position: PositionEntity?) -> Double {
+		guard let position,
+			  12...24 ~= position.precisionBits,
+			  let pp = PositionPrecision(rawValue: Int(position.precisionBits)) else {
+			return distance
+		}
+		// Camera distance needs to be roughly 4× the circle diameter to show it with padding
+		let needed = pp.precisionMeters * 10.0
+		return max(distance, needed)
+	}
+
 	private func handleNodeChange() {
+		refreshPositions()
 		isLookingAround = false
 		isShowingAltitude = false
-		let newMostRecent = node.positions?.lastObject as? PositionEntity
-		if node.positions?.count ?? 0 > 1 {
+		let newMostRecent = mostRecentPosition
+		if totalPositionCount > 1 {
 			position = .automatic
-		} else if let mrCoord = newMostRecent?.coordinate {
-			position = .camera(MapCamera(centerCoordinate: mrCoord, distance: distance, heading: 0, pitch: 0))
+
+		} else if let mrCoord = newMostRecent?.nodeCoordinate {
+			let cameraDistance = cameraDistanceForPrecision(newMostRecent)
+			position = .camera(MapCamera(centerCoordinate: mrCoord, distance: cameraDistance, heading: 0, pitch: 0))
 		}
-		if let newMostRecent {
+		if let newMostRecent, let coord = newMostRecent.nodeCoordinate {
 			Task {
-				scene = try? await fetchScene(for: newMostRecent.coordinate)
+				scene = try? await fetchScene(for: coord)
 			}
 		}
 	}
@@ -257,18 +294,30 @@ struct NodeMapSwiftUI: View {
 	private func handleAppear() {
 		UIApplication.shared.isIdleTimerDisabled = true
 		updateMapStyle(for: selectedMapLayer)
-		let mostRecent = node.positions?.lastObject as? PositionEntity
-		if node.positions?.count ?? 0 > 1 {
+		refreshPositions()
+		let mostRecent = mostRecentPosition
+		if totalPositionCount > 1 {
 			position = .automatic
-		} else if let mrCoord = mostRecent?.coordinate {
-			position = .camera(MapCamera(centerCoordinate: mrCoord, distance: distance, heading: 0, pitch: 0))
+
+		} else if let mrCoord = mostRecent?.nodeCoordinate {
+			let cameraDistance = cameraDistanceForPrecision(mostRecent)
+			position = .camera(MapCamera(centerCoordinate: mrCoord, distance: cameraDistance, heading: 0, pitch: 0))
 		}
-		if scene == nil, let mrCoord = mostRecent?.coordinate {
+		if scene == nil, let mrCoord = mostRecent?.nodeCoordinate {
 			Task {
 				scene = try? await fetchScene(for: mrCoord)
 			}
 		}
 	}
+
+	private func refreshPositions() {
+		totalPositionCount = node.positionCount(context: context)
+		let limit = (showNodeHistory || showRouteLines || showConvexHull) ? visiblePositionLimit : 1
+		let latestPositions = node.positionsSortedByTime(context: context, ascending: false, limit: limit)
+		mostRecentPosition = latestPositions.first
+		positions = limit == 1 ? latestPositions : Array(latestPositions.reversed())
+	}
+
 	/// Get the look around scene
 	private func fetchScene(for coordinate: CLLocationCoordinate2D) async throws -> MKLookAroundScene? {
 		let lookAroundScene = MKLookAroundSceneRequest(coordinate: coordinate)

@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import CoreImage.CIFilterBuiltins
 import OSLog
 
@@ -100,7 +100,7 @@ struct NewGroupSheet: View {
 		do {
 			let index = try await GroupChats.create(name: name, accessoryManager: accessoryManager)
 			if let num = accessoryManager.activeDeviceNum,
-			   let channel = (getNodeInfo(id: num, context: accessoryManager.context)?.myInfo?.channels?.array as? [ChannelEntity])?.first(where: { $0.index == index }) {
+			   let channel = getNodeInfo(id: num, context: accessoryManager.context)?.myInfo?.sortedChannels.first(where: { $0.index == index }) {
 				created = channel
 			} else {
 				onCreated(index)
@@ -138,10 +138,10 @@ struct GroupInviteContent: View {
 	@StateObject private var resolver = ContactResolver()
 	let channel: ChannelEntity
 
-	@FetchRequest(
-		sortDescriptors: [NSSortDescriptor(keyPath: \UserEntity.lastMessage, ascending: false)],
-		predicate: NSPredicate(format: "pkiEncrypted == YES AND lastMessage != nil")
-	) private var messaged: FetchedResults<UserEntity>
+	@Query(
+		filter: #Predicate<UserEntity> { $0.pkiEncrypted == true && $0.lastMessage != nil },
+		sort: \UserEntity.lastMessage, order: .reverse
+	) private var messaged: [UserEntity]
 
 	@State private var sent: Set<Int64> = []
 	@State private var sending: Set<Int64> = []

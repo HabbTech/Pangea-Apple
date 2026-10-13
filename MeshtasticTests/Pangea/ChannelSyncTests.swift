@@ -4,28 +4,22 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import Testing
 import MeshtasticProtobufs
 @testable import Meshtastic
 
-/// The radio's channel list as it's saved on each connect: cleared, then each channel the
-/// radio reports, on the packet handler's background context, while the screens read and
-/// leave groups on the view context. Each test has its own in-memory database.
+/// The radio's channel list as it's saved on each connect. The radio reports all 8 slots during
+/// the config download; they're staged and only replace the list once the download completes, so
+/// a link that drops part way leaves every group listed. Each test uses a radio number of its
+/// own in the shared test store.
 @Suite("Channel list across reconnects")
 @MainActor
 struct ChannelSyncTests {
 
-	private let persistence = PersistenceController(inMemory: true)
-	private let packets: MeshPackets
-	private let num: Int64 = 2322439327
+	private let packets = MeshPackets(modelContainer: sharedModelContainer)
+	private let num = Int64.random(in: 1_000_000_000...4_000_000_000)
 	private let key = Data(repeating: 7, count: 32)
-
-	init() {
-		packets = MeshPackets(container: persistence.container)
-	}
-
-	private var viewContext: NSManagedObjectContext { persistence.container.viewContext }
 
 	private func channel(_ index: Int32, _ name: String, role: Channel.Role? = nil) -> Channel {
 		var channel = Channel()
@@ -42,80 +36,72 @@ struct ChannelSyncTests {
 		_ = try #require(await packets.myInfoPacket(myInfo: info, peripheralId: "test"))
 	}
 
-	/// What `handleMyInfo`, `handleChannel` and the end of the config download do on a connect.
+	/// What a connect does: stage the download, take each channel the radio reports (every slot
+	/// it doesn't list comes as disabled), and commit at the end of the config download.
 	/// `complete: false` is a link that drops before the radio has sent everything.
 	private func connect(_ channels: [Channel], complete: Bool = true) async {
-		await packets.beginChannelDownload(fromNum: num)
+		#expect(await packets.beginChannelRefreshStage(for: num))
 		for channel in channels {
 			await packets.channelPacket(channel: channel, fromNum: num)
 		}
-		if complete {
-			await packets.finishChannelDownload(fromNum: num)
+		guard complete else {
+			// What closing the connection does with a stage that never finished.
+			await packets.discardChannelRefreshStage(for: num)
+			return
 		}
+		let reported = Set(channels.map { Int32($0.index) })
+		for index in Int32(0)...Int32(7) where !reported.contains(index) {
+			await packets.channelPacket(channel: channel(index, "", role: .disabled), fromNum: num)
+		}
+		await packets.commitChannelRefreshStage(for: num)
 	}
 
-	/// Read straight from the store, as a screen opened after the connect would.
-	private func saved() -> (listed: [Int32], rows: [(index: Int32, attached: Bool)]) {
-		let context = persistence.container.newBackgroundContext()
-		context.stalenessInterval = 0
-		return context.performAndWait {
-			let infoRequest = MyInfoEntity.fetchRequest()
-			infoRequest.predicate = NSPredicate(format: "myNodeNum == %lld", num)
-			let info = try? context.fetch(infoRequest).first
-			let listed = (info?.channels?.array as? [ChannelEntity] ?? []).map(\.index)
-			let rowRequest = ChannelEntity.fetchRequest()
-			rowRequest.sortDescriptors = [NSSortDescriptor(key: "index", ascending: true)]
-			let rows = ((try? context.fetch(rowRequest)) ?? []).map { ($0.index, $0.myInfoChannel?.myNodeNum == num) }
-			return (listed, rows)
-		}
+	/// Read on a fresh context, as a screen opened after the connect would.
+	private func saved() -> (listed: [Int32], names: [Int32: String]) {
+		let context = ModelContext(sharedModelContainer)
+		let radio = num
+		let info = try? context.fetch(FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == radio })).first
+		let channels = (info?.channels ?? []).sorted { $0.index < $1.index }
+		return (channels.map(\.index), Dictionary(channels.map { ($0.index, $0.name ?? "") }, uniquingKeysWith: { first, _ in first }))
+	}
+
+	private func rows(_ index: Int32) -> [ChannelEntity] {
+		let context = ModelContext(sharedModelContainer)
+		let radio = num
+		let info = try? context.fetch(FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == radio })).first
+		return (info?.channels ?? []).filter { $0.index == index }
 	}
 
 	@Test func everyChannelStaysOnTheRadioAcrossReconnects() async throws {
 		try await addMyInfo()
 		for _ in 1...6 {
 			await connect([channel(0, ""), channel(1, "HABB TEAM")])
-			let state = saved()
-			#expect(state.listed == [0, 1])
-			#expect(state.rows.count == 2)
-			#expect(state.rows.allSatisfy { $0.attached })
-		}
-	}
-
-	/// The context is reset every so often to free memory; that mustn't change the outcome.
-	@Test func reconnectsAfterTheBackgroundContextIsResetKeepEveryChannel() async throws {
-		try await addMyInfo()
-		for _ in 1...4 {
-			let context = await packets.backgroundContext
-			await context.perform { context.reset() }
-			await connect([channel(0, ""), channel(1, "HABB TEAM")])
 			#expect(saved().listed == [0, 1])
 		}
 	}
 
-	/// Rows an earlier version left off the list are taken back on the next connect, and
-	/// updated in place rather than copied.
-	@Test func channelsLeftOffTheListAreReattachedOnTheNextConnect() async throws {
+	/// The packet handler is replaced every so often to free memory; a download in progress
+	/// carries on with the new one.
+	@Test func replacingThePacketHandlerMidDownloadKeepsEveryChannel() async throws {
 		try await addMyInfo()
-		for (index, name) in [(Int32(0), ""), (Int32(1), "HABB TEAM")] {
-			let orphan = ChannelEntity(context: viewContext)
-			orphan.index = index
-			orphan.role = index == 0 ? 1 : 2
-			orphan.name = name
-		}
-		try viewContext.save()
-		#expect(saved().rows.map { $0.attached } == [false, false])
-
 		await connect([channel(0, ""), channel(1, "HABB TEAM")])
-		let state = saved()
-		#expect(state.listed == [0, 1])
-		#expect(state.rows.count == 2)
-		#expect(state.rows.allSatisfy { $0.attached })
+		#expect(await packets.beginChannelRefreshStage(for: num))
+		await packets.channelPacket(channel: channel(0, ""), fromNum: num)
+		let successor = MeshPackets(modelContainer: sharedModelContainer)
+		await successor.channelPacket(channel: channel(1, "HABB TEAM"), fromNum: num)
+		for index in Int32(2)...Int32(7) {
+			await successor.channelPacket(channel: channel(index, "", role: .disabled), fromNum: num)
+		}
+		await successor.commitChannelRefreshStage(for: num)
+		#expect(saved().listed == [0, 1])
 	}
 
 	@Test func theListIsInIndexOrderWhateverOrderTheRadioReports() async throws {
 		try await addMyInfo()
 		await connect([channel(2, "Hike"), channel(0, ""), channel(1, "HABB TEAM")])
 		#expect(saved().listed == [0, 1, 2])
+		let info = try #require(try ModelContext(sharedModelContainer).fetch(FetchDescriptor<MyInfoEntity>()).first { $0.myNodeNum == num })
+		#expect(info.sortedChannels.map(\.index) == [0, 1, 2])
 	}
 
 	@Test func aSlotTheRadioNoLongerReportsDropsOff() async throws {
@@ -125,31 +111,28 @@ struct ChannelSyncTests {
 		#expect(saved().listed == [0, 1])
 	}
 
-	/// Leaving deletes the group on the view context, which the background context doesn't
-	/// hear about. Joining a group into the same slot right after, and reconnecting, must
-	/// still list it.
-	@Test func aGroupLeftOnTheViewContextCanBeJoinedAgainAtOnce() async throws {
+	/// Leaving deletes the group on the main context. Joining a group into the same slot right
+	/// after, and reconnecting, must still list it, once.
+	@Test func aGroupLeftOnTheMainContextCanBeJoinedAgainAtOnce() async throws {
 		try await addMyInfo()
 		await connect([channel(0, ""), channel(1, "HABB TEAM"), channel(2, "Hike")])
 
-		let request = ChannelEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "index == 2")
-		for row in try viewContext.fetch(request) {
-			viewContext.delete(row)
+		let main = sharedModelContainer.mainContext
+		for row in rows(2) {
+			if let live = main.model(for: row.persistentModelID) as? ChannelEntity {
+				main.delete(live)
+			}
 		}
-		try viewContext.save()
+		try main.save()
 		#expect(saved().listed == [0, 1])
 
-		await packets.channelPacket(channel: channel(2, "Bike"), fromNum: num)
+		await packets.channelPacket(channel: channel(2, "Bike"), fromNum: num, stageIfRefreshing: false)
 		#expect(saved().listed == [0, 1, 2])
 
-		for row in try viewContext.fetch(request) {
-			viewContext.delete(row)
-		}
-		try viewContext.save()
 		await connect([channel(0, ""), channel(1, "HABB TEAM"), channel(2, "Ride")])
 		#expect(saved().listed == [0, 1, 2])
-		#expect(saved().rows.count == 3)
+		#expect(rows(2).count == 1)
+		#expect(saved().names[2] == "Ride")
 	}
 
 	/// A drop part way through the download leaves every group listed, and the next full
@@ -160,18 +143,20 @@ struct ChannelSyncTests {
 		await connect([channel(0, "")], complete: false)
 		#expect(saved().listed == [0, 1, 2])
 		// Nothing is cleared when the download starts either.
-		await packets.beginChannelDownload(fromNum: num)
+		#expect(await packets.beginChannelRefreshStage(for: num))
 		#expect(saved().listed == [0, 1, 2])
+		await packets.discardChannelRefreshStage(for: num)
 		await connect([channel(0, ""), channel(1, "HABB TEAM"), channel(2, "", role: .disabled)])
 		#expect(saved().listed == [0, 1])
-		#expect(saved().rows.count == 3)
 	}
 
-	/// Only the radio whose download it is settles its list, and only once.
-	@Test func finishingWithoutADownloadChangesNothing() async throws {
+	/// A download that didn't report every slot isn't trusted to replace the list.
+	@Test func anIncompleteDownloadChangesNothing() async throws {
 		try await addMyInfo()
 		await connect([channel(0, ""), channel(1, "HABB TEAM")])
-		await packets.finishChannelDownload(fromNum: num)
+		#expect(await packets.beginChannelRefreshStage(for: num))
+		await packets.channelPacket(channel: channel(0, ""), fromNum: num)
+		await packets.commitChannelRefreshStage(for: num)
 		#expect(saved().listed == [0, 1])
 	}
 
@@ -179,43 +164,38 @@ struct ChannelSyncTests {
 		try await addMyInfo()
 		await connect([channel(0, ""), channel(1, "HABB TEAM")])
 		await connect([channel(0, ""), channel(1, "Renamed")])
-		let request = ChannelEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "index == 1")
-		let context = persistence.container.newBackgroundContext()
-		let names = context.performAndWait { ((try? context.fetch(request)) ?? []).map(\.name) }
-		#expect(names == ["Renamed"])
+		#expect(rows(1).map(\.name) == ["Renamed"])
+	}
+
+	/// Reconnecting keeps each slot's row, so a screen holding a group (Leave, an invite, the
+	/// open chat) still has a live model after the radio reconnects.
+	@Test func aReconnectKeepsTheSameRowForEachSlot() async throws {
+		try await addMyInfo()
+		await connect([channel(0, ""), channel(1, "HABB TEAM"), channel(2, "Hike")])
+		let before = try #require(rows(1).first).persistentModelID
+		let held = try #require(sharedModelContainer.mainContext.model(for: before) as? ChannelEntity)
+		await connect([channel(0, ""), channel(1, "Renamed"), channel(2, "", role: .disabled)])
+		#expect(rows(1).map(\.persistentModelID) == [before])
+		#expect(!held.isDeleted && held.modelContext != nil)
+		#expect(saved().listed == [0, 1])
 	}
 
 	/// A slot reused by another group (as `GroupChats.join` writes it, with no module settings)
-	/// starts unmuted at full precision; the same group reported again keeps its own.
+	/// starts unmuted, with location sharing off.
 	@Test func aNewGroupInAReusedSlotDoesntKeepTheOldMute() async throws {
 		try await addMyInfo()
 		var old = channel(2, "Old")
 		old.settings.moduleSettings.isMuted = true
 		old.settings.moduleSettings.positionPrecision = 13
 		await connect([channel(0, ""), channel(1, "Keep"), old])
-		// Left on another phone: pruned at the end of the next download.
+		// Left on another phone: gone at the end of the next download.
 		await connect([channel(0, ""), channel(1, "Keep")])
 		var joined = channel(2, "New")
 		joined.settings.psk = Data(repeating: 9, count: 32)
-		await packets.channelPacket(channel: joined, fromNum: num)
-		// The same group again, without module settings, keeps what it had.
-		var muted = channel(1, "Keep")
-		muted.settings.moduleSettings.isMuted = true
-		muted.settings.moduleSettings.positionPrecision = 11
-		await packets.channelPacket(channel: muted, fromNum: num)
-		await packets.channelPacket(channel: channel(1, "Keep"), fromNum: num)
+		await packets.channelPacket(channel: joined, fromNum: num, stageIfRefreshing: false)
 
-		let context = persistence.container.newBackgroundContext()
-		let rows = context.performAndWait {
-			let request = ChannelEntity.fetchRequest()
-			request.sortDescriptors = [NSSortDescriptor(key: "index", ascending: true)]
-			return ((try? context.fetch(request)) ?? []).map { (index: $0.index, name: $0.name, mute: $0.mute, precision: $0.positionPrecision) }
-		}
-		let slot2 = try #require(rows.first { $0.index == 2 })
-		#expect(slot2.name == "New" && !slot2.mute && slot2.precision == 0)
-		let slot1 = try #require(rows.first { $0.index == 1 })
-		#expect(slot1.mute && slot1.precision == 11)
+		let slot2 = try #require(rows(2).first)
+		#expect(slot2.name == "New" && !slot2.mute && slot2.positionPrecision == 0)
 	}
 }
 
@@ -223,12 +203,9 @@ struct ChannelSyncTests {
 @MainActor
 struct GroupSlotTests {
 
-	private let persistence = PersistenceController(inMemory: true)
-	private var context: NSManagedObjectContext { persistence.container.viewContext }
-
 	private func channels(_ slots: [(index: Int32, role: Int32)]) -> [ChannelEntity] {
 		slots.map { slot in
-			let channel = ChannelEntity(context: context)
+			let channel = ChannelEntity()
 			channel.index = slot.index
 			channel.role = slot.role
 			return channel
@@ -297,6 +274,15 @@ struct PairingCodeAttemptTests {
 		// Counted per radio.
 		#expect(RadioAutoConfig.pairingCodeAttempts(for: 6, defaults: defaults) == 0)
 	}
+
+	/// A radio that starts reporting a new node number keeps its tries.
+	@Test func triesFollowARenumberedRadio() throws {
+		let defaults = try #require(UserDefaults(suiteName: "pairing-\(UUID().uuidString)"))
+		RadioAutoConfig.setPairingCodeAttempts(2, for: 5, defaults: defaults)
+		RadioAutoConfig.renumberPairingCodeAttempts(from: 5, to: 9, defaults: defaults)
+		#expect(RadioAutoConfig.pairingCodeAttempts(for: 9, defaults: defaults) == 2)
+		#expect(RadioAutoConfig.pairingCodeAttempts(for: 5, defaults: defaults) == 0)
+	}
 }
 
 @Suite("TAK read-only after the channel check")
@@ -324,12 +310,15 @@ struct TAKReadOnlyTests {
 	/// At launch there's no radio yet, so there's nothing to check and nothing changes.
 	@Test func launchingWithNoRadioLeavesReadOnlyAlone() throws {
 		let server = TAKServerManager.shared
-		try #require(AccessoryManager.shared.activeDeviceNum == nil)
+		// Other suites leave a device number on the shared manager; this test needs none.
+		let savedNum = AccessoryManager.shared.activeDeviceNum
+		AccessoryManager.shared.activeDeviceNum = nil
 		let savedUser = server.userReadOnlyMode
 		let savedForced = UserDefaults.standard.object(forKey: "takServerReadOnlyForced")
 		defer {
 			server.userReadOnlyMode = savedUser
 			UserDefaults.standard.set(savedForced, forKey: "takServerReadOnlyForced")
+			AccessoryManager.shared.activeDeviceNum = savedNum
 		}
 		server.userReadOnlyMode = false
 		let readOnlyBefore = server.readOnlyMode

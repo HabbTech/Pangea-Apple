@@ -15,7 +15,7 @@ extension String {
 			.replacingOccurrences(of: "-", with: "+")
 			.replacingOccurrences(of: "_", with: "/")
 		if base64.count % 4 != 0 {
-			base64.append(String(repeating: "==", count: 4 - base64.count % 4))
+			base64.append(String(repeating: "=", count: 4 - base64.count % 4))
 		}
 		return base64
 	}
@@ -58,13 +58,6 @@ extension String {
 		let image = UIGraphicsGetImageFromCurrentImageContext()
 		UIGraphicsEndImageContext()
 		return image
-	}
-
-	func camelCaseToWords() -> String {
-		return self
-			.replacingOccurrences(of: "([a-z])([A-Z](?=[A-Z])[a-z]*)", with: "$1 $2", options: .regularExpression)
-			.replacingOccurrences(of: "([A-Z])([A-Z][a-z])", with: "$1 $2", options: .regularExpression)
-			.replacingOccurrences(of: "([a-z])([A-Z][a-z])", with: "$1 $2", options: .regularExpression)
 	}
 
 	var length: Int {

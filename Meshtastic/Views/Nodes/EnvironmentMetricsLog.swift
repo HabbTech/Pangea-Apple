@@ -7,45 +7,41 @@
 import SwiftUI
 import Charts
 import OSLog
-import CoreData
+import SwiftData
 
 struct EnvironmentMetricsLog: View {
 
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
+
+	/// Table on iPhone shows only its first column, even in a regular size class.
+	private var showsColumnGrid: Bool {
+		horizontalSizeClass != .regular || UIDevice.current.userInterfaceIdiom == .phone
+	}
 	@State private var isPresentingClearLogConfirm: Bool = false
 	@State var isExporting = false
 	@State var exportString = ""
-	@ObservedObject var node: NodeInfoEntity
+	@Bindable var node: NodeInfoEntity
 
 	@StateObject var columnList = MetricsColumnList.environmentDefaultColumns
 	@StateObject var seriesList = MetricsSeriesList.environmentDefaultChartSeries
 
 	@State var isEditingColumnConfiguration = false
-	
-	@FetchRequest private var chartData: FetchedResults<TelemetryEntity>
-	
-	init(node: NodeInfoEntity) {
-		self.node = node
-		
-		// Build fetch request:
-		let request: NSFetchRequest<TelemetryEntity> = TelemetryEntity.fetchRequest()
-		let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
-		request.predicate = NSPredicate(format: "nodeTelemetry == %@ AND metricsType == 1 AND time >= %@", node, oneWeekAgo as NSDate)
-		request.sortDescriptors = [NSSortDescriptor(key: "time", ascending: false)]
-		request.fetchBatchSize = 100
-		_chartData = FetchRequest(fetchRequest: request)
-	}
-	
+	@State private var chartData: [TelemetryEntity] = []
+	/// Chart input only — the table and export use `chartData` in full.
+	@State private var chartPoints: [TelemetryEntity] = []
+	@State private var totalReadings = 0
+
 	var body: some View {
 		VStack {
-			if node.hasEnvironmentMetrics {
-				let chartRange = applyMargins(seriesList.chartRange(forData: chartData))
+			if totalReadings > 0 {
+				let chartRange = applyMargins(seriesList.chartRange(forData: chartPoints))
 				VStack {
 					if chartData.count > 0 {
-						GroupBox(label: Label("\(chartData.count) Readings Total", systemImage: "chart.xyaxis.line")) {
+						GroupBox(label: Label("\(totalReadings) Readings Total", systemImage: "chart.xyaxis.line")) {
 							Chart(seriesList.visible) { series in
-								ForEach(chartData, id: \.time) { dataPoint in
+								ForEach(chartPoints, id: \.time) { dataPoint in
 									series.body(dataPoint, inChartRange: chartRange)
 								}
 							}
@@ -62,16 +58,7 @@ struct EnvironmentMetricsLog: View {
 
 					// Dynamic table column using SwiftUI Table requires TableColumnForEach which requires the target
 					// to be bumped to 17.4 -- Until that happens, the existing non-configurable table is used.
-					if UIDevice.current.userInterfaceIdiom == .pad || UIDevice.current.userInterfaceIdiom == .mac {
-						// Add a table for mac and ipad
-						Table(chartData) {
-							TableColumnForEach(columnList.visible) { col in
-								TableColumn(col.name) { em in
-									col.body(em)
-								}
-							}
-						}
-					} else {
+					if showsColumnGrid {
 						ScrollView {
 							LazyVGrid(columns: columnList.gridItems, alignment: .leading, spacing: 1, pinnedViews: [.sectionHeaders]) {
 								GridRow {
@@ -93,12 +80,20 @@ struct EnvironmentMetricsLog: View {
 							.padding(.leading, 15)
 							.padding(.trailing, 5)
 						}
+					} else {
+						Table(chartData) {
+							TableColumnForEach(columnList.visible) { col in
+								TableColumn(col.name) { em in
+									col.body(em)
+								}
+							}
+						}
 					}
 				}
 				HStack {
-					let isPadOrCatalyst = UIDevice.current.userInterfaceIdiom == .pad || UIDevice.current.userInterfaceIdiom == .mac
-					let buttonSize: ControlSize =  isPadOrCatalyst ? .large : .small
-					let imageScale: Image.Scale = isPadOrCatalyst ? .medium : .small
+					let wide = horizontalSizeClass == .regular
+					let buttonSize: ControlSize = wide ? .large : .small
+					let imageScale: Image.Scale = wide ? .medium : .small
 					Button {
 						self.isEditingColumnConfiguration = true
 					} label: {
@@ -127,14 +122,20 @@ struct EnvironmentMetricsLog: View {
 						"Are you sure?",
 						isPresented: $isPresentingClearLogConfirm,
 						titleVisibility: .visible
-					) {
-						Button("Delete all environment metrics?", role: .destructive) {
-							Task {
-								if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 1) {
-									Logger.services.error("Clear Environment Metrics Log Failed")
+						) {
+							Button("Delete all environment metrics?", role: .destructive) {
+								Task {
+									if await MeshPackets.shared.clearTelemetry(destNum: node.num, metricsType: 1) {
+										Logger.services.info("Cleared Environment Metrics for \(node.num, privacy: .public)")
+										await MainActor.run {
+											refreshMetrics()
+											NotificationCenter.default.post(name: .nodeLogAvailabilityDidChange, object: node.num)
+										}
+									} else {
+										Logger.services.error("Clear Environment Metrics Log Failed")
+									}
 								}
 							}
-						}
 					}
 					Button {
 						exportString = telemetryToCsvFile(telemetry: chartData, metricsType: 1)
@@ -154,18 +155,25 @@ struct EnvironmentMetricsLog: View {
 				ContentUnavailableView("No Environment Metrics", systemImage: "slash.circle")
 			}
 		}
+		.onAppear {
+			refreshMetrics()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshMetrics()
+		}
 
 		.navigationTitle("Environment Metrics Log")
 		.navigationBarTitleDisplayMode(.inline)
-		.navigationBarItems(trailing:
-			ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
 		.fileExporter(
 			isPresented: $isExporting,
 			document: CsvDocument(emptyCsv: exportString),
 			contentType: .commaSeparatedText,
-			defaultFilename: String("\(node.user?.longName ?? "Node") Environment Metrics Log"),
+			defaultFilename: CsvDocument.exportFilename("\(node.user?.longName ?? "Node") Environment Metrics Log \(Date.now.exportTimestamp)"),
 			onCompletion: { result in
 				switch result {
 				case .success:
@@ -186,17 +194,31 @@ struct EnvironmentMetricsLog: View {
 		let upper = range.upperBound + margin
 		return lower...upper
 	}
+
+	private func refreshMetrics() {
+		totalReadings = node.telemetryCount(ofType: 1, context: context)
+		let oneWeekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date.distantPast
+		chartData = node.safeTelemetries(ofType: 1)
+			.filter { ($0.time ?? Date.distantPast) >= oneWeekAgo }
+			.sorted { ($0.time ?? .distantPast) > ($1.time ?? .distantPast) }
+		// chartData is sorted newest-first for the table; the chart wants the visible
+		// window oldest-first, decimated AFTER the week filter so the mark budget is
+		// spent entirely on points the chart will draw.
+		chartPoints = downsampledForChart(Array(chartData.reversed()))
+	}
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return EnvironmentMetricsLog(node: node)
+	EnvironmentMetricsLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

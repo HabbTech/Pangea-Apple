@@ -8,7 +8,7 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 
 @MainActor
 enum Mentions {
@@ -25,11 +25,10 @@ enum Mentions {
 	/// Everyone with a usable name, longest first so "@Sam Rivera" wins over "@Sam".
 	private static func people() -> [Person] {
 		if Date().timeIntervalSince(cacheDate) < cacheLifetime { return cache }
-		let context = PersistenceController.shared.container.viewContext
-		let request = UserEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "longName != nil AND longName != ''")
+		let context = PersistenceController.shared.context
+		let descriptor = FetchDescriptor<UserEntity>(predicate: #Predicate { $0.longName != nil && $0.longName != "" })
 		let myNum = Int64(UserDefaults.preferredPeripheralNum)
-		let users = (try? context.fetch(request)) ?? []
+		let users = (try? context.fetch(descriptor)) ?? []
 		var people: [Person] = []
 		for user in users where user.num != myNum {
 			if let long = user.longName, long.count >= 2 { people.append(Person(name: long, num: user.num)) }
@@ -187,11 +186,16 @@ enum Mentions {
 		}
 		var result = ordered.filter(matches)
 		if result.count < 5, !lower.isEmpty {
-			let request = UserEntity.fetchRequest()
-			request.predicate = NSPredicate(format: "longName CONTAINS[cd] %@ OR shortName BEGINSWITH[cd] %@", lower, lower)
-			request.fetchLimit = 10
-			let others = (try? PersistenceController.shared.container.viewContext.fetch(request)) ?? []
-			result += others.filter { $0.num != myNum && !seen.contains($0.num) }
+			// Case and accents ignored, as before; the short name has to start with what was typed.
+			let descriptor = FetchDescriptor<UserEntity>(predicate: #Predicate {
+				($0.longName?.localizedStandardContains(lower) ?? false) || ($0.shortName?.localizedStandardContains(lower) ?? false)
+			})
+			let others = ((try? PersistenceController.shared.context.fetch(descriptor)) ?? []).filter {
+				($0.longName?.localizedStandardContains(lower) ?? false)
+					|| ($0.shortName?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+						.hasPrefix(lower.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)) ?? false)
+			}
+			result += others.prefix(10).filter { $0.num != myNum && !seen.contains($0.num) }
 		}
 		return Array(result.prefix(5))
 	}

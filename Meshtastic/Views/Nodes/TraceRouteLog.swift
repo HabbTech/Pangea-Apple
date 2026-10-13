@@ -6,20 +6,22 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 import MapKit
 
 struct TraceRouteLog: View {
 	private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
 	@ObservedObject var locationsHandler = LocationsHandler.shared
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
+	@EnvironmentObject var router: Router
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@State private var isPresentingClearLogConfirm: Bool = false
 	@State var isExporting = false
 	@State var exportString = ""
-	@ObservedObject var node: NodeInfoEntity
-	@State private var selectedRoute: TraceRouteEntity?
+	@Bindable var node: NodeInfoEntity
+	@State private var traceRoutes: [TraceRouteEntity] = []
+	@State private var selectedRouteID: PersistentIdentifier?
 	// Map Configuration
 	@Namespace var mapScope
 	@State var mapStyle: MapStyle = MapStyle.standard(elevation: .realistic, emphasis: MapStyle.StandardEmphasis.muted, pointsOfInterest: .all, showsTraffic: true)
@@ -31,13 +33,18 @@ struct TraceRouteLog: View {
 	@State var angle: Angle = .zero
 	@State var animation: Animation?
 
+	private var selectedRoute: TraceRouteEntity? {
+		guard let selectedRouteID else { return nil }
+		return traceRoutes.first { $0.persistentModelID == selectedRouteID }
+	}
+
 	var body: some View {
 		HStack(alignment: .top) {
 			VStack {
 				VStack {
-					List(node.traceRoutes?.reversed() as? [TraceRouteEntity] ?? [], id: \.self, selection: $selectedRoute) { route in
+					List(traceRoutes, id: \.persistentModelID, selection: $selectedRouteID) { route in
 						Label {
-							let routeTime = route.time?.formatted() ?? "Unknown".localized
+							let routeTime = route.time?.formatted(date: .numeric, time: .shortened) ?? "Unknown".localized
 							if route.response && route.hopsTowards == route.hopsBack {
 								let hopString = String(localized: "\(route.hopsTowards) Hops")
 								Text("\(routeTime) - \(hopString)")
@@ -60,9 +67,13 @@ struct TraceRouteLog: View {
 						}
 						.swipeActions {
 							Button(role: .destructive) {
+								if selectedRouteID == route.persistentModelID {
+									selectedRouteID = nil
+								}
 								context.delete(route)
 								do {
 									try context.save()
+									refreshTraceRoutes()
 								} catch let error as NSError {
 									Logger.data.error("\(error.localizedDescription, privacy: .public)")
 								}
@@ -77,20 +88,48 @@ struct TraceRouteLog: View {
 				ScrollView {
 					if selectedRoute != nil {
 						if selectedRoute?.response ?? false && selectedRoute?.hopsTowards ?? 0 >= 0 {
+							let routeValue = selectedRoute?.routeText ?? "Unknown".localized
+							let routeBackValue = selectedRoute?.routeBackText ?? "Unknown".localized
 							Label {
-								Text("Route: \(selectedRoute?.routeText ?? "Unknown".localized)")
+								Text("Route: \(routeValue)")
+									.textSelection(.enabled)
 							} icon: {
 								Image(systemName: "signpost.right")
 									.symbolRenderingMode(.hierarchical)
 							}
 							.font(.title3)
+							.contextMenu {
+								Button {
+									UIPasteboard.general.string = String(localized: "Route: \(routeValue)")
+								} label: {
+									Label("Copy", systemImage: "doc.on.doc")
+								}
+							}
 							Label {
-								Text("Route Back: \(selectedRoute?.routeBackText ?? "Unknown".localized)")
+								Text("Route Back: \(routeBackValue)")
+									.textSelection(.enabled)
 							} icon: {
 								Image(systemName: "signpost.left")
 									.symbolRenderingMode(.hierarchical)
 							}
 							.font(.title3)
+							.contextMenu {
+								Button {
+									UIPasteboard.general.string = String(localized: "Route Back: \(routeBackValue)")
+								} label: {
+									Label("Copy", systemImage: "doc.on.doc")
+								}
+							}
+							if selectedRoute?.hasPositions ?? false, let routeID = selectedRoute?.id {
+								Button {
+									router.selectedTab = .map
+									router.mapState = .traceRoute(routeID)
+								} label: {
+									Label("Show on Map", systemImage: "map")
+								}
+								.buttonStyle(.bordered)
+								.padding(.top, 4)
+							}
 						} else if !(selectedRoute?.sent ?? true) {
 								Label {
 									VStack {
@@ -139,7 +178,7 @@ struct TraceRouteLog: View {
 								// Set the view rotation animation after the view appeared,
 								// to avoid animating initial rotation
 								DispatchQueue.main.async {
-									indexes = (selectedRoute?.hops?.array.count ?? 0) * 2
+									indexes = (selectedRoute?.hops.count ?? 0) * 2
 									animation = .easeInOut(duration: 1.0)
 									withAnimation(.easeInOut(duration: 2.0)) {
 										angle = (angle == .degrees(-90) ? .degrees(-90) : .degrees(-90))
@@ -165,7 +204,7 @@ struct TraceRouteLog: View {
 //								.annotationTitles(.automatic)
 //								// Direct Trace Route
 //								if selectedRoute?.response ?? false && selectedRoute?.hops?.count ?? 0 == 0 {
-//									if selectedRoute?.node?.positions?.count ?? 0 > 0, let mostRecent = selectedRoute?.node?.positions?.lastObject as? PositionEntity {
+//									if selectedRoute?.node?.positions?.count ?? 0 > 0, let mostRecent = selectedRoute?.node?.positions?.last {
 //										let traceRouteCoords: [CLLocationCoordinate2D] = [selectedRoute?.coordinate ?? LocationsHandler.DefaultLocation, mostRecent.coordinate]
 //										Annotation(selectedRoute?.node?.user?.shortName ?? "???", coordinate: mostRecent.nodeCoordinate ?? LocationHelper.DefaultLocation) {
 //											ZStack {
@@ -190,7 +229,7 @@ struct TraceRouteLog: View {
 //									/// Distance
 //									if selectedRoute?.node?.positions?.count ?? 0 > 0,
 //									   selectedRoute?.coordinate != nil,
-//									   let mostRecent = selectedRoute?.node?.positions?.lastObject as? PositionEntity {
+//									   let mostRecent = selectedRoute?.node?.positions?.last {
 //										let startPoint = CLLocation(latitude: selectedRoute?.coordinate?.latitude ?? LocationsHandler.DefaultLocation.latitude, longitude: selectedRoute?.coordinate?.longitude ?? LocationsHandler.DefaultLocation.longitude)
 //										if startPoint.distance(from: CLLocation(latitude: LocationsHandler.DefaultLocation.latitude, longitude: LocationsHandler.DefaultLocation.longitude)) > 0.0 {
 //											let metersAway = selectedRoute?.coordinate?.distance(from: CLLocationCoordinate2D(latitude: mostRecent.latitude ?? LocationsHandler.DefaultLocation.latitude, longitude: mostRecent.longitude ?? LocationsHandler.DefaultLocation.longitude))
@@ -216,15 +255,30 @@ struct TraceRouteLog: View {
 			}
 			.navigationTitle("Trace Route Log")
 		}
-		.navigationBarItems(trailing:
-								ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.onAppear {
+			refreshTraceRoutes()
+		}
+		.onChange(of: node.lastHeard) {
+			refreshTraceRoutes()
+		}
+		.toolbar {
+			ToolbarItem(placement: .topBarTrailing) {
+				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
+			}
+		}
 	}
+
+	private func refreshTraceRoutes() {
+		traceRoutes = node.safeTraceRoutes()
+		if let selectedRouteID, !traceRoutes.contains(where: { $0.persistentModelID == selectedRouteID }) {
+			self.selectedRouteID = nil
+		}
+	}
+
 	@ViewBuilder func contents(animation: Animation? = nil) -> some View {
 		ForEach(0..<indexes, id: \.self) { idx in
 			TraceRouteComponent(animation: animation) {
-				let hops = selectedRoute?.hops?.array as? [TraceRouteHopEntity] ?? [] // getTraceRouteHops(context: PersistenceController.preview.container.viewContext)//
+				let hops = selectedRoute?.hops ?? []
 				if idx % 2 == 0 {
 					let i = idx / 2
 					let snrColor = getSnrColor(snr: hops[i].snr, preset: modemPreset)
@@ -240,41 +294,48 @@ struct TraceRouteLog: View {
 				} else {
 					let i = (idx - 1) / 2
 					let snrColor = getSnrColor(snr: hops[i].snr, preset: modemPreset)
+					let signalTier = getLoRaSignalStrength(snr: hops[i].snr, rssi: 0, preset: modemPreset)
 					Image(systemName: "arrowshape.right.fill")
 						.resizable()
 						.frame(width: idiom == .phone ? 25 : 60, height: idiom == .phone ? 25 : 60)
 						.foregroundColor(snrColor.opacity(0.7))
+						.accessibilityLabel(
+							String(
+								localized: "Signal \(signalTier.description)",
+								comment: "VoiceOver: signal quality of this trace route hop"
+							)
+						)
 				}
 			}
 		}
 	}
 }
 
-func getTraceRouteHops(context: NSManagedObjectContext) -> [TraceRouteHopEntity] {
-	///	static let context = PersistenceController.preview.container.viewContext
+func getTraceRouteHops(context: ModelContext) -> [TraceRouteHopEntity] {
+	///	static let context = PersistenceController.preview.context
 	var array = [TraceRouteHopEntity]()
-	let trh1 = TraceRouteHopEntity(context: context)
+	let trh1 = TraceRouteHopEntity()
 	trh1.num = 366311664
 	trh1.snr = 12.5
-	let trh2 = TraceRouteHopEntity(context: context)
+	let trh2 = TraceRouteHopEntity()
 	trh2.num = 3662955168
 	trh2.snr = -115.00
-	let trh3 = TraceRouteHopEntity(context: context)
+	let trh3 = TraceRouteHopEntity()
 	trh3.num = 3663982804
 	trh3.snr = 17.5
-	let trh4 = TraceRouteHopEntity(context: context)
+	let trh4 = TraceRouteHopEntity()
 	trh4.num = 4202719792
 	trh4.snr = 7.0
-	let trh5 = TraceRouteHopEntity(context: context)
+	let trh5 = TraceRouteHopEntity()
 	trh5.num = 603700594
 	trh5.snr = 8.9
-	let trh6 = TraceRouteHopEntity(context: context)
+	let trh6 = TraceRouteHopEntity()
 	trh6.num = 836212501
 	trh6.snr = -24.0
-	let trh7 = TraceRouteHopEntity(context: context)
+	let trh7 = TraceRouteHopEntity()
 	trh7.num = 3663116644
 	trh7.snr = -6.0
-	let trh8 = TraceRouteHopEntity(context: context)
+	let trh8 = TraceRouteHopEntity()
 	trh8.num = 8362955168
 	trh8.snr = 7.5
 	array.append(trh1)
@@ -288,15 +349,17 @@ func getTraceRouteHops(context: NSManagedObjectContext) -> [TraceRouteHopEntity]
 	return array
 }
 
+// TODO: Fix preview for SwiftData
+/*
 #Preview {
-	let context = PersistenceController.preview.container.viewContext
-	let node = NodeInfoEntity(context: context)
+	let node = NodeInfoEntity()
 	node.num = 123456789
-	let user = UserEntity(context: context)
+	let user = UserEntity()
 	user.longName = "Test Node"
 	user.shortName = "TN"
 	node.user = user
-	return TraceRouteLog(node: node)
+	TraceRouteLog(node: node)
 		.environmentObject(AccessoryManager.shared)
-		.environment(\.managedObjectContext, context)
+		.modelContainer(PersistenceController.preview.container)
 }
+*/

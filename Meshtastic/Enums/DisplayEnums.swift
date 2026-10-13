@@ -17,9 +17,9 @@ enum ScreenUnits: Int, CaseIterable, Identifiable {
 	var description: String {
 		switch self {
 		case .metric:
-		   return "Metric"
+		   return String(localized: "Metric", comment: "ScreenUnits.description")
 		case .imperial:
-		   return "Imperial"
+		   return String(localized: "Imperial", comment: "ScreenUnits.description")
 		}
 	}
 	func protoEnumValue() -> Config.DisplayConfig.DisplayUnits {
@@ -49,23 +49,23 @@ enum ScreenOnIntervals: Int, CaseIterable, Identifiable {
 	var description: String {
 		switch self {
 		case .fifteenSeconds:
-			return "Fifteen Seconds".localized
+			return String(localized: "Fifteen Seconds", comment: "ScreenOnIntervals.description")
 		case .thirtySeconds:
-			return "Thirty Seconds".localized
+			return String(localized: "Thirty Seconds", comment: "ScreenOnIntervals.description")
 		case .oneMinute:
-			return "One Minute".localized
+			return String(localized: "One Minute", comment: "ScreenOnIntervals.description")
 		case .fiveMinutes:
-			return "Five Minutes".localized
+			return String(localized: "Five Minutes", comment: "ScreenOnIntervals.description")
 		case .tenMinutes:
-			return "Ten Minutes".localized
+			return String(localized: "Ten Minutes", comment: "ScreenOnIntervals.description")
 		case .fifteenMinutes:
-			return "Fifteen Minutes".localized
+			return String(localized: "Fifteen Minutes", comment: "ScreenOnIntervals.description")
 		case .thirtyMinutes:
-			return "Thirty Minutes".localized
+			return String(localized: "Thirty Minutes", comment: "ScreenOnIntervals.description")
 		case .oneHour:
-			return "One Hour".localized
+			return String(localized: "One Hour", comment: "ScreenOnIntervals.description")
 		case .max:
-			return "Always On".localized
+			return String(localized: "Always On", comment: "ScreenOnIntervals.description")
 		}
 	}
 }
@@ -85,19 +85,19 @@ enum ScreenCarouselIntervals: Int, CaseIterable, Identifiable {
 	var description: String {
 		switch self {
 		case .off:
-			return "off".localized.capitalized
+			return String(localized: "Off", comment: "ScreenCarouselIntervals.description")
 		case .fifteenSeconds:
-			return "Fifteen Seconds".localized
+			return String(localized: "Fifteen Seconds", comment: "ScreenCarouselIntervals.description")
 		case .thirtySeconds:
-			return "Thirty Seconds".localized
+			return String(localized: "Thirty Seconds", comment: "ScreenCarouselIntervals.description")
 		case .oneMinute:
-			return "One Minute".localized
+			return String(localized: "One Minute", comment: "ScreenCarouselIntervals.description")
 		case .fiveMinutes:
-			return "Five Minutes".localized
+			return String(localized: "Five Minutes", comment: "ScreenCarouselIntervals.description")
 		case .tenMinutes:
-			return "Ten Minutes".localized
+			return String(localized: "Ten Minutes", comment: "ScreenCarouselIntervals.description")
 		case .fifteenMinutes:
-			return "Fifteen Minutes".localized
+			return String(localized: "Fifteen Minutes", comment: "ScreenCarouselIntervals.description")
 		}
 	}
 }
@@ -169,6 +169,62 @@ enum DisplayModes: Int, CaseIterable, Identifiable {
 			return Config.DisplayConfig.DisplayMode.inverted
 		case .color:
 			return Config.DisplayConfig.DisplayMode.color
+		}
+	}
+}
+
+// Default of 0 is degrees0 (no rotation)
+enum CompassOrientations: Int, CaseIterable, Identifiable {
+
+	case degrees0 = 0
+	case degrees90 = 1
+	case degrees180 = 2
+	case degrees270 = 3
+	case degrees0Inverted = 4
+	case degrees90Inverted = 5
+	case degrees180Inverted = 6
+	case degrees270Inverted = 7
+
+	var id: Int { self.rawValue }
+	var description: String {
+		switch self {
+		case .degrees0:
+			return "0°".localized
+		case .degrees90:
+			return "90°".localized
+		case .degrees180:
+			return "180°".localized
+		case .degrees270:
+			return "270°".localized
+		case .degrees0Inverted:
+			return "0° Inverted".localized
+		case .degrees90Inverted:
+			return "90° Inverted".localized
+		case .degrees180Inverted:
+			return "180° Inverted".localized
+		case .degrees270Inverted:
+			return "270° Inverted".localized
+		}
+	}
+	func protoEnumValue() -> Config.DisplayConfig.CompassOrientation {
+
+		switch self {
+		case .degrees0:
+			return Config.DisplayConfig.CompassOrientation.degrees0
+		case .degrees90:
+			return Config.DisplayConfig.CompassOrientation.degrees90
+		case .degrees180:
+			return Config.DisplayConfig.CompassOrientation.degrees180
+		case .degrees270:
+			return Config.DisplayConfig.CompassOrientation.degrees270
+		case .degrees0Inverted:
+			return Config.DisplayConfig.CompassOrientation.degrees0Inverted
+		case .degrees90Inverted:
+			return Config.DisplayConfig.CompassOrientation.degrees90Inverted
+		case .degrees180Inverted:
+			return Config.DisplayConfig.CompassOrientation.degrees180Inverted
+		case .degrees270Inverted:
+			return Config.DisplayConfig.CompassOrientation.degrees270Inverted
 		}
 	}
 }

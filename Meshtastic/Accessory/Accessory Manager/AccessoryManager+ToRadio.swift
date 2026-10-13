@@ -8,6 +8,22 @@
 import Foundation
 import MeshtasticProtobufs
 import OSLog
+@preconcurrency import SwiftData
+
+extension LocalStatsRequestTransport {
+	static func configure(
+		_ packet: inout MeshPacket,
+		transport: LocalStatsRequestTransport,
+		destinationPublicKey: Data?
+	) -> Bool {
+		guard transport == .remoteAdmin else { return true }
+		guard remoteAdminAvailable(for: destinationPublicKey), let destinationPublicKey else { return false }
+
+		packet.pkiEncrypted = true
+		packet.publicKey = destinationPublicKey
+		return true
+	}
+}
 
 extension AccessoryManager {
 
@@ -107,6 +123,76 @@ extension AccessoryManager {
 		return Int64(meshPacket.id)
 	}
 
+	// MARK: - Edit transactions
+
+	/// Opens a firmware edit transaction (`begin_edit_settings`).
+	///
+	/// While a transaction is open the firmware sets `hasOpenEditTransaction` and defers every config
+	/// save, reboot, and Bluetooth teardown until the matching commit (AdminModule.cpp:468). Without the
+	/// bracket, each `set_config` / `set_module_config` is treated as a standalone write that saves to
+	/// flash, schedules a reboot, and disables Bluetooth, which drops the link partway through a
+	/// multi-item profile restore.
+	///
+	/// Callers MUST guarantee a matching `commitEditSettings`, including on the error path: the firmware
+	/// exposes no abort or rollback message, so an abandoned transaction leaves the radio deferring every
+	/// subsequent write from any client.
+	@discardableResult
+	public func beginEditSettings(fromUser: UserEntity, toUser: UserEntity, channel: Int32 = 0) async throws -> Int64 {
+		var adminPacket = AdminMessage()
+		adminPacket.beginEditSettings = true
+		return try await sendEditTransactionMessage(
+			adminPacket, fromUser: fromUser, toUser: toUser, channel: channel,
+			description: "🔧 Sent Begin Edit Settings Admin Message to: \(toUser.longName ?? "Unknown".localized)"
+		)
+	}
+
+	/// Closes a firmware edit transaction (`commit_edit_settings`).
+	///
+	/// The firmware clears `hasOpenEditTransaction`, performs one save across every segment, and reboots
+	/// (AdminModule.cpp:473-479). It also disables Bluetooth as the first step of the commit, so the
+	/// trailing ack routinely never arrives over BLE. Callers should treat a throw here as success when
+	/// the link has already dropped, and as a real failure only while still connected.
+	@discardableResult
+	public func commitEditSettings(fromUser: UserEntity, toUser: UserEntity, channel: Int32 = 0) async throws -> Int64 {
+		var adminPacket = AdminMessage()
+		adminPacket.commitEditSettings = true
+		return try await sendEditTransactionMessage(
+			adminPacket, fromUser: fromUser, toUser: toUser, channel: channel,
+			description: "🔧 Sent Commit Edit Settings Admin Message to: \(toUser.longName ?? "Unknown".localized)"
+		)
+	}
+
+	/// Shared envelope for the two transaction-control admin messages. Mirrors the packet shape the
+	/// `save*Config` calls use, including the session passkey when targeting a remote node.
+	private func sendEditTransactionMessage(
+		_ adminPacket: AdminMessage,
+		fromUser: UserEntity,
+		toUser: UserEntity,
+		channel: Int32,
+		description: String
+	) async throws -> Int64 {
+		var adminPacket = adminPacket
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from = UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority = MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+		meshPacket.channel = UInt32(channel)
+		var dataMessage = DataMessage()
+		guard let serializedData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("Unable to serialize edit-transaction admin packet")
+		}
+		dataMessage.payload = serializedData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: description)
+		return Int64(meshPacket.id)
+	}
+
 	// Send an admin message to a radio, save a message to core data for logging
 	private func sendAdminMessageToRadio(meshPacket: MeshPacket, adminDescription: String?) async throws {
 
@@ -116,62 +202,88 @@ extension AccessoryManager {
 
 		try await send(toRadio)
 		if let adminDescription {
-			Logger.mesh.debug("\(adminDescription, privacy: .public)")
+			Logger.admin.debug("\(adminDescription, privacy: .public)")
 		}
 	}
 
-	public func addContactFromURL(base64UrlString: String) async throws {
+	/// - Parameter acceptsKeyReplacement: Only true when the add-contact sheet showed that this
+	///   contact's key differs from the one the node holds and the person confirmed replacing it.
+	///   The radio applies the new key either way, so without this the app would keep the old one
+	///   and show a key mismatch for a change the person asked for.
+	public func addContactFromURL(base64UrlString: String, acceptsKeyReplacement: Bool = false) async throws {
 		guard let deviceNum = self.activeConnection?.device.num else {
 			Logger.services.error("Error while sending CannedMessageModule request.  No active device.")
 			throw AccessoryError.ioFailed("No active device")
 		}
 
 		let decodedString = base64UrlString.base64urlToBase64()
-		if let decodedData = Data(base64Encoded: decodedString) {
-			do {
-				let contact: SharedContact = try SharedContact(serializedBytes: decodedData)
-				var adminPacket = AdminMessage()
-				adminPacket.addContact = contact
-				var meshPacket: MeshPacket = MeshPacket()
-				meshPacket.to = UInt32(deviceNum)
-				meshPacket.from	= UInt32(deviceNum)
-				meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
-				meshPacket.priority =  MeshPacket.Priority.reliable
-				meshPacket.wantAck = true
-				meshPacket.channel = 0
-				var dataMessage = DataMessage()
-				guard let adminData: Data = try? adminPacket.serializedData() else {
-					throw AccessoryError.ioFailed("addContactFromURL: Unable to serialize admin packet")
-				}
-				dataMessage.payload = adminData
-				dataMessage.portnum = PortNum.adminApp
-				meshPacket.decoded = dataMessage
-				var toRadio: ToRadio!
-				toRadio = ToRadio()
-				toRadio.packet = meshPacket
+		guard let decodedData = Data(base64Encoded: decodedString) else {
+			// Without this the method returned normally on undecodable input, so
+			// callers treated a failed import as a success.
+			Logger.data.error("Contact payload is not valid base64url data.")
+			throw AccessoryError.appError("Unable to decode contact data from QR code.")
+		}
 
-				let logString = String.localizedStringWithFormat("Added contact %@ to device".localized, contact.user.longName)
-				try await send(toRadio, debugDescription: logString)
+		let contact: SharedContact
+		do {
+			contact = try SharedContact(serializedBytes: decodedData)
+		} catch {
+			Logger.data.error("Failed to decode contact data: \(error.localizedDescription, privacy: .public)")
+			throw AccessoryError.appError("Unable to decode contact data from QR code.")
+		}
 
-				// Create a NodeInfo (User) packet for the newly added contact
-				var dataNodeMessage = DataMessage()
-				if let nodeInfoData = try? contact.user.serializedData() {
-					dataNodeMessage.payload = nodeInfoData
-					dataNodeMessage.portnum = PortNum.nodeinfoApp
-					var nodeMeshPacket = MeshPacket()
-					nodeMeshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
-					nodeMeshPacket.to = UInt32.max
-					nodeMeshPacket.from = UInt32(contact.nodeNum)
-					nodeMeshPacket.decoded = dataNodeMessage
+		// Checked out here rather than alongside the radio work below, so a keyless contact is not
+		// reported to the caller as malformed QR data.
+		guard contact.carriesPublicKey else {
+			Logger.services.error("addContactFromURL: refusing a contact for \(contact.nodeNum, privacy: .public) with no public key; applying it would erase the key the radio holds")
+			throw AccessoryError.appError("This contact does not include a public key, so it cannot be added.")
+		}
 
-					// Update local database with the new node info
-					// FUTURE: after https://github.com/meshtastic/firmware/pull/8495 is merged, `favorite: true` becomes `favorite: (connectedDeviceRole != DeviceRoles.clientBase)`
-					await MeshPackets.shared.upsertNodeInfoPacket(packet: nodeMeshPacket, favorite: true)
-				}
-			} catch {
-				Logger.data.error("Failed to decode contact data: \(error.localizedDescription, privacy: .public)")
-				throw AccessoryError.appError("Unable to decode contact data from QR code.")
+		do {
+			var adminPacket = AdminMessage()
+			adminPacket.addContact = contact
+			var meshPacket: MeshPacket = MeshPacket()
+			meshPacket.to = UInt32(deviceNum)
+			meshPacket.from	= UInt32(deviceNum)
+			meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+			meshPacket.priority =  MeshPacket.Priority.reliable
+			meshPacket.wantAck = true
+			meshPacket.channel = 0
+			var dataMessage = DataMessage()
+			guard let adminData: Data = try? adminPacket.serializedData() else {
+				throw AccessoryError.ioFailed("addContactFromURL: Unable to serialize admin packet")
 			}
+			dataMessage.payload = adminData
+			dataMessage.portnum = PortNum.adminApp
+			meshPacket.decoded = dataMessage
+			var toRadio: ToRadio!
+			toRadio = ToRadio()
+			toRadio.packet = meshPacket
+
+			let logString = String.localizedStringWithFormat("Added contact %@ to device".localized, contact.user.longName)
+			try await send(toRadio, debugDescription: logString)
+
+			// Create a NodeInfo (User) packet for the newly added contact
+			var dataNodeMessage = DataMessage()
+			if let nodeInfoData = try? contact.user.serializedData() {
+				dataNodeMessage.payload = nodeInfoData
+				dataNodeMessage.portnum = PortNum.nodeinfoApp
+				var nodeMeshPacket = MeshPacket()
+				nodeMeshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+				nodeMeshPacket.to = UInt32.max
+				nodeMeshPacket.from = UInt32(contact.nodeNum)
+				nodeMeshPacket.decoded = dataNodeMessage
+
+				// Update local database with the new node info
+				// Do not auto-favorite when using CLIENT_BASE role to avoid creating routing issues
+				let shouldFavorite = connectedDeviceRole != .clientBase
+				await MeshPackets.shared.upsertNodeInfoPacket(packet: nodeMeshPacket, favorite: shouldFavorite, overTheMesh: false,
+				                                             acceptsKeyReplacement: acceptsKeyReplacement)
+			}
+		} catch {
+			// The contact decoded fine and carries a key; this is the radio send failing.
+			Logger.data.error("Failed to add contact: \(error.localizedDescription, privacy: .public)")
+			throw AccessoryError.appError("Unable to add this contact.")
 		}
 	}
 	
@@ -280,8 +392,7 @@ extension AccessoryManager {
 			return
 		}
 
-			let messageUsers = UserEntity.fetchRequest()
-			messageUsers.predicate = NSPredicate(format: "num IN %@", [fromUserNum, Int64(toUserNum)])
+			let messageUsers = FetchDescriptor<UserEntity>(predicate: #Predicate { $0.num == fromUserNum || $0.num == toUserNum })
 
 			do {
 				let fetchedUsers = try context.fetch(messageUsers)
@@ -290,7 +401,8 @@ extension AccessoryManager {
 					Logger.data.error("🚫 Message Users Not Found, Fail")
 					throw AccessoryError.ioFailed("🚫 Message Users Not Found, Fail")
 				} else if fetchedUsers.count >= 1 {
-					let newMessage = MessageEntity(context: context)
+					let newMessage = MessageEntity()
+					context.insert(newMessage)
 					newMessage.messageId = Int64(UInt32.random(in: UInt32(UInt8.max)..<UInt32.max))
 					newMessage.messageTimestamp =  Int32(Date().timeIntervalSince1970)
 					newMessage.receivedACK = false
@@ -334,13 +446,42 @@ extension AccessoryManager {
 								var contact = SharedContact()
 								contact.manuallyVerified = false
 								contact.nodeNum = UInt32(truncatingIfNeeded: user.num)
-								user.userNode?.favorite = user.userNode?.deviceConfig?.role ?? 0 != DeviceRoles.clientBase.rawValue
 								contact.user = user.toProto()
 								do {
-									let contactString = try contact.serializedData().base64EncodedString()
-									try? await am.addContactFromURL(base64UrlString: contactString)
+									// toProto() emits an empty key when we hold none, and the radio would
+									// take that as the node's key. Skip the contact rather than erase it.
+									if contact.carriesPublicKey {
+										let contactString = try contact.serializedData().base64EncodedString()
+										do {
+											try await am.addContactFromURL(base64UrlString: contactString)
+										} catch {
+											// Best effort. The message still goes out, and the radio may
+											// already hold the key, so a failure here is not fatal — but it
+											// should not vanish either.
+											Logger.services.warning("Could not refresh the contact for \(user.num, privacy: .public) before a direct message: \(error.localizedDescription, privacy: .public)")
+										}
+									} else {
+										Logger.services.info("Skipping the pre-message contact for \(user.num, privacy: .public); no public key on file")
+									}
+									// Pin the node we are messaging so it does not age out of the radio's
+									// node db mid conversation. It has to go to the radio as an admin
+									// message: setting the local flag alone is overwritten by the next
+									// NodeInfo, so the star would appear and then quietly revert.
+									if let node = user.userNode,
+									   let connectedNodeNum = am.activeDeviceNum,
+									   AutoFavoriteRule.shouldFavorite(
+										destinationRole: node.deviceConfig?.role,
+										connectedRole: am.connectedDeviceRole,
+										isAlreadyFavorite: node.favorite
+									   ) {
+										do {
+											try await am.setFavoriteNode(node: node, connectedNodeNum: Int64(connectedNodeNum))
+											node.favorite = true
+										} catch {
+											Logger.services.error("Could not favorite \(user.num, privacy: .public) while sending a direct message: \(error.localizedDescription, privacy: .public)")
+										}
+									}
 									try context.save()
-									user.objectWillChange.send()
 								} catch {
 									Logger.services.error("Error inserting new contact and resending encrypted send failed message: \(error)")
 								}
@@ -369,37 +510,49 @@ extension AccessoryManager {
 					var toRadio: ToRadio!
 					toRadio = ToRadio()
 					toRadio.packet = meshPacket
-					Task {
-						let logString = String.localizedStringWithFormat("Sent message %@ from %@ to %@".localized, String(newMessage.messageId), fromUserNum.toHex(), toUserNum.toHex())
-						do {
-							try await send(toRadio, debugDescription: logString)
-						} catch {
-							// Pangea: the radio never got it, so no routing reply will come. Show it
-							// as failed rather than sending forever. A link that dropped while the
-							// write waited for its reply may still have delivered it, so that stays
-							// as sending rather than inviting a duplicate retry.
-							Logger.services.error("💥 Sending message \(newMessage.messageId, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-							if AccessoryError.neverSent(error) {
-								newMessage.ackError = Int32(RoutingError.noInterface.rawValue)
-								try? context.save()
-							} else {
-								// If no reply ever comes, it's shown as not delivered then, with Try Again.
-								DeliveryStatus.checkForStaleSends(fromNum: fromUserNum, context: context)
-							}
-						}
-					}
 					do {
+						// Save BEFORE the transmit task can start: the mesh echoes this packet
+						// back within seconds, and the ingest actor's duplicate guard fetches
+						// the store — it cannot see this context's unsaved row. A transmit that
+						// beats the save re-inserts the echo under the same messageId, and the
+						// message list briefly renders duplicate ForEach ids, which corrupts
+						// the List's collection-view diff (the 2.7.19 SIGABRT batch-update crash).
 						try context.save()
 						Logger.data.info("💾 Saved a new sent message from \(self.activeDeviceNum?.toHex() ?? "0", privacy: .public) to \(toUserNum.toHex(), privacy: .public)")
 						Task { @MainActor in ProfileSync.didSendMessage(toUserNum: toUserNum, channel: channel) }
+						// Each open conversation keeps its own fetched snapshot. The
+						// window that sent already reloads; the others only hear
+						// about a save through this notification.
+						NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
+						Task {
+							let logString = String.localizedStringWithFormat("Sent message %@ from %@ to %@".localized, String(newMessage.messageId), fromUserNum.toHex(), toUserNum.toHex())
+							do {
+								try await send(toRadio, debugDescription: logString)
+								Logger.mesh.info("💬 \(logString, privacy: .public)")
+							} catch {
+								// Pangea: the radio never got it, so no routing reply will come. Show it
+								// as failed rather than sending forever. A link that dropped while the
+								// write waited for its reply may still have delivered it, so that stays
+								// as sending rather than inviting a duplicate retry.
+								Logger.services.error("💥 Sending message \(newMessage.messageId, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+								if AccessoryError.neverSent(error) {
+									newMessage.ackError = Int32(RoutingError.noInterface.rawValue)
+									try? context.save()
+									NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
+								} else {
+									// If no reply ever comes, it's shown as not delivered then, with Try Again.
+									DeliveryStatus.checkForStaleSends(fromNum: fromUserNum, accessoryManager: self)
+								}
+							}
+						}
 						// Donate outgoing message to SiriKit for CarPlay
+						// (CarPlay is iPhone-only, so skip on Mac Catalyst).
 						if !isEmoji {
-							#if os(iOS)
+							#if os(iOS) && !targetEnvironment(macCatalyst)
 							CarPlayIntentDonation.donateOutgoingMessage(content: message, toUserNum: toUserNum, channel: channel)
 							#endif
 						}
 					} catch {
-						context.rollback()
 						let nsError = error as NSError
 						Logger.data.error("Unresolved Core Data error in Send Message Function your database is corrupted running a node db reset should clean up the data. Error: \(nsError, privacy: .public)")
 						throw error
@@ -407,8 +560,107 @@ extension AccessoryManager {
 				}
 			} catch {
 				Logger.data.error("💥 Send message failure \(self.activeDeviceNum?.toHex() ?? "0", privacy: .public) to \(toUserNum.toHex(), privacy: .public)")
+				// A failed save means nothing was stored and nothing will transmit —
+				// the caller must see the failure (keep the draft, show the error),
+				// not a silent success.
+				throw error
 			}
 
+	}
+
+	/// Sends a message that already exists again, keeping its row.
+	///
+	/// Retry used to delete the message and call `sendMessage`, which builds a new entity with a
+	/// new id and a new timestamp. The row vanished from the conversation and a different one
+	/// appeared at the bottom a moment later, and if the send threw — no active device, users not
+	/// found — the original was already gone and nothing replaced it, so the text was lost.
+	///
+	/// Reusing the entity keeps the message where it is, keeps replies pointing at it, and means
+	/// a failed retry leaves the message exactly as it was. The delivery state is reset first so
+	/// the row shows "Sending…" again: `messageTimestamp` has to move with it, because the status
+	/// is derived from how long ago the message was sent.
+	public func resendMessage(_ message: MessageEntity) async throws {
+		guard let fromUserNum = self.activeConnection?.device.num else {
+			Logger.services.error("Error while resending a message. No active device.")
+			throw AccessoryError.ioFailed("No active device")
+		}
+		// Not a silent return the way the first send treats an empty draft: there is no draft
+		// here, just a stored message with nothing in it. Returning would tell the caller the
+		// resend succeeded, and the channel path would report the message as sent.
+		guard let payload = message.messagePayload, !payload.isEmpty else {
+			Logger.mesh.error("🚫 Cannot resend \(message.messageId, privacy: .public); it has no payload")
+			throw AccessoryError.ioFailed("Cannot resend a message with no payload")
+		}
+
+		let toUserNum = message.toUser?.num ?? 0
+		let messageId = message.messageId
+
+		// Kept so the row can go back to failed if the transmit never leaves: otherwise the
+		// message sits in "Sending…" with no retry action until the ack timeout turns it into
+		// "Not delivered", which is five minutes of looking like it is still on its way.
+		let previousAckError = message.ackError
+		let previousTimestamp = message.messageTimestamp
+
+		// The row goes back to "Sending…" and stays in place. Saved before the transmit for the
+		// same reason the first send is: the mesh echoes the packet back within seconds and the
+		// ingest actor's duplicate guard reads the store, so a transmit that beats the save can
+		// re-insert the echo under this same id.
+		message.markResending()
+		do {
+			try context.save()
+		} catch {
+			Logger.data.error("💥 Could not reset \(messageId, privacy: .public) before resending: \(error.localizedDescription, privacy: .public)")
+			throw error
+		}
+
+		var messageQuotesReplaced = payload.replacingOccurrences(of: "’", with: "'")
+		messageQuotesReplaced = messageQuotesReplaced.replacingOccurrences(of: "”", with: "\"")
+		guard let payloadData = messageQuotesReplaced.data(using: .utf8) else {
+			throw AccessoryError.ioFailed("Could not encode the message payload")
+		}
+
+		var dataMessage = DataMessage()
+		dataMessage.payload = payloadData
+		dataMessage.portnum = PortNum.textMessageApp
+		dataMessage.emoji = message.isEmoji ? 1 : 0
+		if message.replyID > 0 {
+			dataMessage.replyID = UInt32(message.replyID)
+		}
+
+		var meshPacket = MeshPacket()
+		// The same id as the first attempt, which is what keeps this one message rather than two.
+		meshPacket.id = UInt32(messageId)
+		meshPacket.from = UInt32(fromUserNum)
+		if toUserNum > 0 {
+			meshPacket.to = UInt32(toUserNum)
+			let hopsAway = message.toUser?.userNode?.hopsAway ?? 0
+			if hopsAway > Int32(truncatingIfNeeded: message.fromUser?.userNode?.loRaConfig?.hopLimit ?? 0) {
+				meshPacket.hopLimit = UInt32(truncatingIfNeeded: hopsAway)
+			}
+			if message.toUser?.pkiEncrypted ?? false {
+				meshPacket.pkiEncrypted = true
+				meshPacket.publicKey = message.toUser?.publicKey ?? Data()
+			}
+		} else {
+			meshPacket.to = Constants.maximumNodeNum
+		}
+		meshPacket.channel = UInt32(message.channel)
+		meshPacket.decoded = dataMessage
+		meshPacket.wantAck = true
+
+		var toRadio = ToRadio()
+		toRadio.packet = meshPacket
+		let logString = String.localizedStringWithFormat(
+			"Resent message %@ from %@ to %@".localized, String(messageId), fromUserNum.toHex(), toUserNum.toHex())
+		do {
+			try await send(toRadio, debugDescription: logString)
+		} catch {
+			message.markResendFailed(ackError: previousAckError, timestamp: previousTimestamp)
+			try? context.save()
+			Logger.mesh.error("💥 Could not resend \(messageId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+			throw error
+		}
+		Logger.mesh.info("💬 \(logString, privacy: .public)")
 	}
 
 	public func setFavoriteNode(node: NodeInfoEntity, connectedNodeNum: Int64) async throws {
@@ -457,122 +709,300 @@ extension AccessoryManager {
 		try await send(toRadio, debugDescription: logString)
 	}
 
+	/// Builds one channel write. Role comes from the slot: index 0 is the primary, the rest are
+	/// secondaries.
+	private func makeChannel(_ settings: ChannelSettings, at index: Int32) -> Channel {
+		var chan = Channel()
+		chan.role = (index == 0) ? .primary : .secondary
+		chan.settings = settings
+		chan.index = index
+		// Ensure moduleSettings is always explicitly set so the device stores a defined
+		// position_precision value. QR codes typically omit moduleSettings which causes the
+		// firmware to default to 32 (full precision), leaking exact GPS coordinates.
+		if !settings.hasModuleSettings {
+			chan.settings.moduleSettings.positionPrecision = 0
+			chan.settings.moduleSettings.isMuted = false
+		}
+		return chan
+	}
+
 	public func saveChannelSet(base64UrlString: String, addChannels: Bool = false, okToMQTT: Bool = false) async throws {
+		let channelLink = try MeshtasticChannelURL.parse(base64UrlString, defaultAddChannels: addChannels)
+		try await saveChannelSet(
+			channelSet: channelLink.channelSet,
+			addChannels: channelLink.addChannels,
+			okToMQTT: okToMQTT
+		)
+	}
+
+	public func saveChannelSet(channelSet incomingChannelSet: ChannelSet, addChannels: Bool = false, okToMQTT: Bool = false) async throws {
 		guard let deviceNum = self.activeConnection?.device.num else {
 			Logger.services.error("Error while sending saveChannelSet request.  No active device.")
 			throw AccessoryError.ioFailed("No active device")
 		}
-		// Before we get started delete the existing channels from the myNodeInfo
-		if !addChannels {
-			await tryClearExistingChannels()
+
+		guard !incomingChannelSet.settings.isEmpty else {
+			throw AccessoryError.appError("No channels found in QR code")
 		}
 
-		let decodedString = base64UrlString.base64urlToBase64()
-		if let decodedData = Data(base64Encoded: decodedString) {
-			let channelSet: ChannelSet = try ChannelSet(serializedBytes: decodedData)
+		guard incomingChannelSet.settings.count <= 8 else {
+			throw AccessoryError.appError("A Pangea radio supports up to 8 channels")
+		}
 
-			var myInfo: MyInfoEntity!
-			// Pangea: the slot each channel in the set is written to. Replacing writes 0, 1, 2…;
-			// adding takes free secondary slots by the same rule as a new group, because the
-			// list can have gaps where a group was left and the next index by count may hold one.
-			let slots: [Int32]
+		if !addChannels && !incomingChannelSet.hasLoraConfig {
+			throw AccessoryError.appError("Replace requires LoRa configuration in the QR code")
+		}
 
-			if addChannels {
-				let fetchMyInfoRequest = MyInfoEntity.fetchRequest()
-				fetchMyInfoRequest.predicate = NSPredicate(format: "myNodeNum == %lld", Int64(deviceNum))
+		var channelSet = incomingChannelSet
+		let incomingChannelNames = channelSet.settings.map(\.name)
+		guard Set(incomingChannelNames).count == incomingChannelNames.count else {
+			throw AccessoryError.appError("Channel names must be unique")
+		}
+		let targetChannelIndexes: [Int32]
 
-				let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
-				if fetchedMyInfo.count != 1 {
-					throw AccessoryError.appError("MyInfo not found")
-				}
-				
-				myInfo = fetchedMyInfo[0]
-				slots = try GroupChats.freeSlots(in: myInfo.channels?.array as? [ChannelEntity] ?? [], count: channelSet.settings.count)
-			} else {
-				// The radio has 8 channels, 0 to 7.
-				guard channelSet.settings.count <= 8 else {
-					throw AccessoryError.appError("Index out of range \(channelSet.settings.count - 1)")
-				}
-				slots = channelSet.settings.indices.map { Int32($0) }
+		if addChannels {
+			let fetchMyInfoRequest = FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == deviceNum })
+
+			let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
+			guard fetchedMyInfo.count == 1, let fetched = fetchedMyInfo.first else {
+				throw AccessoryError.appError("MyInfo not found")
 			}
 
-			for (cs, i) in zip(channelSet.settings, slots) {
+			// Appended channels are always secondaries. An unoccupied index 0 here means
+			// the local cache is empty or partial — never a license to hand an imported
+			// channel the primary slot (the role assignment below keys on index 0).
+			// Pangea: free slots by the same rule as a new group chat. A list without the
+			// primary is still loading, and a slot that looks free in it may hold a group,
+			// so that refuses (channelsNotLoaded) rather than overwriting one.
+			targetChannelIndexes = try GroupChats.freeSlots(
+				in: canonicalValidUniqueChannels(from: fetched.channels),
+				count: channelSet.settings.count
+			)
 
-				if addChannels {
-					guard let mutableChannels = myInfo.channels?.mutableCopy() as? NSMutableOrderedSet else {
-						throw AccessoryError.appError("No channels or channel")
-					}
-					
-					// Bail out if there are no channels or if the same channel name already exists
-					if mutableChannels.first(where: { ($0 as AnyObject).name == cs.name }) is ChannelEntity {
-						throw AccessoryError.appError("Channel already exists")
-					}
+			for cs in channelSet.settings {
+				if fetched.channels.contains(where: { $0.name == cs.name }) {
+					throw AccessoryError.appError("Channel already exists")
 				}
-
-				var chan = Channel()
-				chan.role = (i == 0) ? .primary : .secondary
-				chan.settings = cs
-				chan.index = i
-
-				var adminPacket = AdminMessage()
-				adminPacket.setChannel = chan
-
-				var meshPacket = MeshPacket()
-				meshPacket.to = UInt32(deviceNum)
-				meshPacket.from = UInt32(deviceNum)
-				meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
-				meshPacket.priority = MeshPacket.Priority.reliable
-				meshPacket.wantAck = true
-				meshPacket.channel = 0
-
-				guard let adminData = try? adminPacket.serializedData() else {
-					throw AccessoryError.ioFailed("saveChannelSet: Unable to serialize Admin packet")
-				}
-
-				var dataMessage = DataMessage()
-				dataMessage.payload = adminData
-				dataMessage.portnum = PortNum.adminApp
-				meshPacket.decoded = dataMessage
-
-				var toRadio = ToRadio()
-				toRadio.packet = meshPacket
-
-				let logString = String.localizedStringWithFormat("Sent a Channel for: %@ Channel Index %d".localized, String(deviceNum), chan.index)
-				try await send(toRadio, debugDescription: logString)
-				await MeshPackets.shared.channelPacket(channel: chan, fromNum: self.activeDeviceNum ?? 0)
 			}
-			if !addChannels {
-				// Save the LoRa Config and the device will reboot
-				var adminPacket = AdminMessage()
-				adminPacket.setConfig.lora = channelSet.loraConfig
-				adminPacket.setConfig.lora.configOkToMqtt = okToMQTT // Preserve users okToMQTT choice
-				var meshPacket: MeshPacket = MeshPacket()
-				meshPacket.to = UInt32(deviceNum)
-				meshPacket.from	= UInt32(deviceNum)
-				meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
-				meshPacket.priority =  MeshPacket.Priority.reliable
-				meshPacket.wantAck = true
-				meshPacket.channel = 0
-				var dataMessage = DataMessage()
-				guard let adminData: Data = try? adminPacket.serializedData() else {
-					throw AccessoryError.ioFailed("sendReboot: Unable to serialize Admin packet")
-				}
-				dataMessage.payload = adminData
-				dataMessage.portnum = PortNum.adminApp
-				meshPacket.decoded = dataMessage
-				var toRadio: ToRadio!
-				toRadio = ToRadio()
-				toRadio.packet = meshPacket
-				
-				let logString = String.localizedStringWithFormat("Sent a LoRa.Config for: %@".localized, String(deviceNum))
-				try await send(toRadio, debugDescription: logString)
+		} else {
+			let currentLoRaConfig = currentLoRaConfig(for: deviceNum)
+			channelSet.loraConfig.configOkToMqtt = currentLoRaConfig?.configOkToMqtt ?? okToMQTT
+			if let txPower = currentLoRaConfig?.txPower {
+				channelSet.loraConfig.txPower = txPower
 			}
-			Logger.transport.debug("[AccessoryManager] sending wantConfig for saveChannelSet")
+			targetChannelIndexes = channelSet.settings.indices.map { Int32($0) }
+		}
+
+		// A replace has to say something about every slot, not just the ones it fills. The radio
+		// keeps a fixed array of 8 and a role per slot, so writing only 0..n-1 leaves whatever
+		// was in the rest still enabled — replace an 8 channel set with a 2 channel one and the
+		// old channels 2-7 keep running. Disabling the tail is what makes the import
+		// authoritative; the radio drops those slots on the reboot the LoRa config below
+		// triggers.
+		let plannedChannels: [Channel] = {
+			var planned = zip(channelSet.settings, targetChannelIndexes).map { cs, targetIndex in
+				makeChannel(cs, at: targetIndex)
+			}
+			guard !addChannels else { return planned }
+			let filled = Set(targetChannelIndexes)
+			for index in Int32(0)..<maxChannelSlots where !filled.contains(index) {
+				var disabled = Channel()
+				disabled.index = index
+				disabled.role = .disabled
+				planned.append(disabled)
+			}
+			return planned
+		}()
+
+		var deliveredChannels: [Channel] = []
+		for chan in plannedChannels {
+			// Stop sending channels if the calling Task was cancelled. The channels already
+			// sent are fine inside a transaction (commit will persist them); skipping the rest
+			// lets the import engine exit promptly. The local-state upserts below are safe to
+			// skip: they mirror to Core Data and are rebuilt on the next connect/drain.
+			try Task.checkCancellation()
+
+			var adminPacket = AdminMessage()
+			adminPacket.setChannel = chan
+
+			var meshPacket = MeshPacket()
+			meshPacket.to = UInt32(deviceNum)
+			meshPacket.from = UInt32(deviceNum)
+			meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+			meshPacket.priority = MeshPacket.Priority.reliable
+			meshPacket.wantAck = true
+			meshPacket.channel = 0
+
+			guard let adminData = try? adminPacket.serializedData() else {
+				throw AccessoryError.ioFailed("saveChannelSet: Unable to serialize Admin packet")
+			}
+
+			var dataMessage = DataMessage()
+			dataMessage.payload = adminData
+			dataMessage.portnum = PortNum.adminApp
+			meshPacket.decoded = dataMessage
+
+			var toRadio = ToRadio()
+			toRadio.packet = meshPacket
+
+			let logString = String.localizedStringWithFormat("Sent a Channel for: %@ Channel Index %d".localized, String(deviceNum), chan.index)
+			try await send(toRadio, debugDescription: logString)
+			deliveredChannels.append(chan)
+		}
+
+		// Replacing channels also replaces the LoRa config (the replace-mode guard
+		// above guarantees one is present), and sending it reboots the device.
+		let didSendLoRaConfig = !addChannels
+		if didSendLoRaConfig {
+			// Save the LoRa Config and the device will reboot if required.
+			var adminPacket = AdminMessage()
+			adminPacket.setConfig.lora = channelSet.loraConfig
+			var meshPacket = MeshPacket()
+			meshPacket.to = UInt32(deviceNum)
+			meshPacket.from	= UInt32(deviceNum)
+			meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+			meshPacket.priority =  MeshPacket.Priority.reliable
+			meshPacket.wantAck = true
+			meshPacket.channel = 0
+			var dataMessage = DataMessage()
+			guard let adminData: Data = try? adminPacket.serializedData() else {
+				throw AccessoryError.ioFailed("saveChannelSet: Unable to serialize LoRa config")
+			}
+			dataMessage.payload = adminData
+			dataMessage.portnum = PortNum.adminApp
+			meshPacket.decoded = dataMessage
+			var toRadio = ToRadio()
+			toRadio.packet = meshPacket
+
+			let logString = String.localizedStringWithFormat("Sent a LoRa.Config for: %@".localized, String(deviceNum))
+			try await send(toRadio, debugDescription: logString)
+		}
+
+		// Mirror delivered channels locally only after channel and LoRa writes succeed, so a
+		// failed replace cannot wipe local state. No wholesale clear first: every slot was
+		// written above, and applyLocalChannelMutation deletes the row for a disabled one, so
+		// the local set follows the radio slot by slot.
+		//
+		// Duplicate rows for one slot are the exception. Older app versions could leave them,
+		// and the mutation below only ever sees the canonical one, so a sibling would survive
+		// a replace that is meant to be authoritative — including on a slot just disabled.
+		// The wholesale clear this replaced took them with it. Drop them here, after the
+		// writes succeeded, so a failed replace still leaves local state alone.
+		if !addChannels {
+			removeDuplicateChannelRows(for: deviceNum)
+		}
+		for chan in deliveredChannels {
+			do {
+				try applyLocalChannelMutation(chan, fromNum: deviceNum)
+			} catch {
+				// The radio already accepted this channel; the wantConfig re-sync below is
+				// the recovery path for local state. Failing the import here would report
+				// an error for a change the device applied.
+				Logger.data.error("💥 Failed to mirror channel \(chan.index, privacy: .public) locally: \(error.localizedDescription, privacy: .public)")
+			}
+		}
+
+		// Re-sync after the change. On firmware before 2.8 a LoRa config write reboots the device and
+		// the connection drops, so the follow-up wantConfig is expected to fail — treat that as
+		// success since the channels/config were already delivered. 2.8 applies LoRa changes live
+		// (firmware #9962), so the connection survives and a wantConfig failure there is a real
+		// failure worth surfacing rather than shrugging off as a reboot.
+		if didSendLoRaConfig && !appliesLoRaConfigWithoutReboot {
+			do {
+				Logger.transport.debug("[AccessoryManager] sending wantConfig after channel set (device may reboot)")
+				try await sendWantConfig()
+			} catch {
+				Logger.transport.warning("[AccessoryManager] wantConfig after channel set did not complete; device is likely rebooting: \(error.localizedDescription, privacy: .public)")
+			}
+		} else {
+			Logger.transport.debug("[AccessoryManager] sending wantConfig for saveChannelSet (no reboot expected)")
 			try await sendWantConfig()
 		}
 	}
 
-	public func saveChannel(channel: Channel, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+	/// Mirrors a user-initiated channel write on the main context. Automatic refresh replacement
+	/// uses this same executor, so a QR/UI mutation cannot land between its baseline check and save.
+	/// Leaves one row per channel index, keeping the same row `canonicalValidUniqueChannels`
+	/// would pick so nothing visible changes.
+	private func removeDuplicateChannelRows(for deviceNum: Int64) {
+		let descriptor = FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == deviceNum })
+		guard let myInfo = try? context.fetch(descriptor).first else { return }
+		let keep = Set(canonicalValidUniqueChannels(from: myInfo.channels).map { ObjectIdentifier($0) })
+		var removed = false
+		for row in myInfo.channels where !keep.contains(ObjectIdentifier(row)) {
+			context.delete(row)
+			removed = true
+		}
+		guard removed else { return }
+		do {
+			try context.save()
+		} catch {
+			Logger.data.error("💥 Could not remove duplicate channel rows: \(error.localizedDescription, privacy: .public)")
+		}
+	}
+
+	func applyLocalChannelMutation(_ channel: Channel, fromNum: Int64) throws {
+		guard channel.isInitialized && (channel.hasSettings || channel.role == .disabled) else { return }
+		let descriptor = FetchDescriptor<MyInfoEntity>(predicate: #Predicate { $0.myNodeNum == fromNum })
+		let fetchedMyInfo = try context.fetch(descriptor)
+		guard fetchedMyInfo.count == 1, let myInfo = fetchedMyInfo.first else {
+			if channel.role.rawValue > 0 {
+				Logger.data.error("💥Trying to save a local channel mutation to a MyInfo that does not exist: \(fromNum.toHex(), privacy: .public)")
+			}
+			return
+		}
+
+		let channelIndex = Int32(truncatingIfNeeded: channel.index)
+		let existing = canonicalValidUniqueChannels(from: myInfo.channels).first { $0.index == channelIndex }
+		if channel.role == .disabled {
+			if let existing {
+				context.delete(existing)
+				try context.save()
+			}
+			return
+		}
+
+		let entity: ChannelEntity
+		if let existing {
+			entity = existing
+		} else {
+			entity = ChannelEntity()
+			context.insert(entity)
+			myInfo.channels.append(entity)
+		}
+		entity.id = channelIndex
+		entity.index = channelIndex
+		entity.uplinkEnabled = channel.settings.uplinkEnabled
+		entity.downlinkEnabled = channel.settings.downlinkEnabled
+		entity.name = channel.settings.name
+		entity.role = Int32(channel.role.rawValue)
+		entity.psk = channel.settings.psk
+		if channel.settings.hasModuleSettings {
+			entity.positionPrecision = Int32(truncatingIfNeeded: channel.settings.moduleSettings.positionPrecision)
+			entity.mute = channel.settings.moduleSettings.isMuted
+		} else {
+			entity.positionPrecision = 0
+			entity.mute = false
+		}
+		try context.save()
+	}
+
+	private func currentLoRaConfig(for deviceNum: Int64) -> Config.LoRaConfig? {
+		let request = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == deviceNum })
+		do {
+			return try context.fetch(request).first?.loRaConfig?.toProto()
+		} catch {
+			Logger.data.error("Failed to fetch current LoRa config while saving channel set: \(error.localizedDescription, privacy: .public)")
+			return nil
+		}
+	}
+
+	public func saveChannel(
+		channel: Channel,
+		fromUser: UserEntity,
+		toUser: UserEntity,
+		refreshShareSnapshot: Bool = false
+	) async throws -> Int64 {
 		var adminPacket = AdminMessage()
 		adminPacket.setChannel = channel
 		var meshPacket: MeshPacket = MeshPacket()
@@ -591,7 +1021,201 @@ extension AccessoryManager {
 
 		let messageDescription = "🛟 Saved Channel \(channel.index) for \(toUser.longName ?? "Unknown".localized)"
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+		if refreshShareSnapshot,
+		   let activeDeviceNum,
+		   fromUser.num == activeDeviceNum,
+		   toUser.num == activeDeviceNum {
+			MeshShareSnapshotBuilder.refresh(nodeNum: activeDeviceNum, context: context)
+		}
 		return Int64(meshPacket.id)
+	}
+
+	/// Join a mesh advertised by a beacon: set the primary channel to the offered channel (name +
+	/// PSK), then apply the offered region/preset. The channel change lands first (no reboot); the
+	/// LoRa config change reboots the radio onto the advertised mesh. `region`/`preset` fall back to
+	/// the radio's current values when the beacon didn't advertise them. `channelNum` is forced to 0
+	/// so the firmware derives the frequency from the new channel name + preset + region.
+	@MainActor
+	public func joinBeaconMesh(channelName: String, channelPSK: Data, region: RegionCodes?, preset: ModemPresets?) async throws {
+		guard let deviceNum = self.activeConnection?.device.num else {
+			throw AccessoryError.ioFailed("No active device")
+		}
+		guard let node = getNodeInfo(id: Int64(deviceNum), context: context), let user = node.user else {
+			throw AccessoryError.appError("Connected node not found")
+		}
+
+		// Snapshot the current primary channel so a partial failure (channel write succeeds but the
+		// LoRa apply fails) can be rolled back — otherwise the radio is stranded on a new channel with
+		// the old preset/region on an undecodable frequency (research D3 / contract C4).
+		let primarySnapshot = beaconPrimaryChannelSnapshot(for: node)
+
+		// D5: an offered channel with an empty PSK is an "open channel" — use the well-known default
+		// public key rather than sending an empty (no-encryption) key.
+		let effectivePSK = channelPSK.isEmpty ? Data([1]) : channelPSK
+
+		// 1. Set the primary channel to the beacon's offered channel (no reboot).
+		var channel = Channel()
+		channel.index = 0
+		channel.role = .primary
+		channel.settings.name = channelName
+		channel.settings.psk = effectivePSK
+		// Default to no position sharing on a foreign/beacon-advertised mesh (privacy). Otherwise the
+		// firmware defaults moduleSettings to full precision (32), leaking exact GPS coordinates —
+		// mirrors addBeaconChannel's handling for the same "join someone else's mesh" scenario.
+		channel.settings.moduleSettings.positionPrecision = 0
+		_ = try await saveChannel(channel: channel, fromUser: user, toUser: user)
+
+		// 2. Apply region/preset (reboots). Carry the full existing LoRa config so unrelated fields
+		//    (bandwidth, coding rate, overrides, MQTT flags…) aren't wiped.
+		var lora = Config.LoRaConfig()
+		if let existing = node.loRaConfig, !existing.isDeleted {
+			lora.usePreset = existing.usePreset
+			lora.hopLimit = UInt32(existing.hopLimit)
+			lora.txEnabled = existing.txEnabled
+			lora.txPower = existing.txPower
+			lora.bandwidth = UInt32(existing.bandwidth)
+			lora.codingRate = UInt32(existing.codingRate)
+			lora.spreadFactor = UInt32(existing.spreadFactor)
+			lora.frequencyOffset = existing.frequencyOffset
+			lora.overrideFrequency = existing.overrideFrequency
+			lora.overrideDutyCycle = existing.overrideDutyCycle
+			lora.paFanDisabled = existing.paFanDisabled
+			lora.sx126XRxBoostedGain = existing.sx126xRxBoostedGain
+			lora.ignoreMqtt = existing.ignoreMqtt
+			lora.configOkToMqtt = existing.okToMqtt
+			lora.region = Config.LoRaConfig.RegionCode(rawValue: Int(existing.regionCode)) ?? .unset
+			lora.modemPreset = ModemPresets(rawValue: Int(existing.modemPreset))?.protoEnumValue() ?? .longFast
+		}
+		if let region { lora.region = region.protoEnumValue() }
+		if let preset { lora.modemPreset = preset.protoEnumValue() }
+		lora.usePreset = true
+		// Derive the frequency from the new channel + preset + region rather than a stale slot.
+		lora.channelNum = 0
+		do {
+			_ = try await saveLoRaConfig(config: lora, fromUser: user, toUser: user)
+			refreshNodeDatabaseAfterLoRaChange()
+		} catch {
+			// Roll the primary channel back so we don't strand the radio between meshes. The channel
+			// write doesn't reboot, so this restore is safe.
+			Logger.admin.error("🔀 [Beacon] LoRa apply failed after channel write; rolling back primary channel: \(error.localizedDescription, privacy: .public)")
+			if let primarySnapshot {
+				do {
+					_ = try await saveChannel(channel: primarySnapshot, fromUser: user, toUser: user)
+					Logger.admin.info("🔀 [Beacon] Rolled back primary channel after failed switch")
+				} catch {
+					Logger.admin.error("🔀 [Beacon] Primary channel rollback also failed: \(error.localizedDescription, privacy: .public)")
+				}
+			}
+			throw error
+		}
+		Logger.mesh.info("🔀 [Beacon] Switched to advertised channel '\(channelName, privacy: .private)' and applied preset/region")
+	}
+
+	/// Reconstruct a `Channel` proto for the connected node's current primary channel (index 0),
+	/// used to roll back a failed Switch. Returns `nil` when there's no stored primary to restore.
+	@MainActor
+	private func beaconPrimaryChannelSnapshot(for node: NodeInfoEntity) -> Channel? {
+		guard let primary = node.myInfo?.channels.first(where: { $0.index == 0 || $0.role == 1 }) else {
+			return nil
+		}
+		var channel = Channel()
+		channel.index = 0
+		channel.role = .primary
+		channel.settings.name = primary.name ?? ""
+		channel.settings.psk = primary.psk ?? Data()
+		channel.settings.uplinkEnabled = primary.uplinkEnabled
+		channel.settings.downlinkEnabled = primary.downlinkEnabled
+		channel.settings.moduleSettings.positionPrecision = UInt32(primary.positionPrecision)
+		return channel
+	}
+
+	/// A secondary channel slot a beacon channel could replace (research D2).
+	public struct BeaconSecondaryChannel: Identifiable, Sendable {
+		public let index: Int32
+		public let name: String
+		public var id: Int32 { index }
+	}
+
+	/// The connected node's secondary channels (index 1–7) that a beacon channel could replace when
+	/// no free slot is available (research D2). Never returns the primary (index 0); falls back to
+	/// "Channel N" for an unnamed slot.
+	@MainActor
+	public func beaconReplaceableSecondaryChannels() -> [BeaconSecondaryChannel] {
+		guard let deviceNum = self.activeConnection?.device.num,
+			  let node = getNodeInfo(id: Int64(deviceNum), context: context) else {
+			return []
+		}
+		return (node.myInfo?.channels ?? [])
+			.filter { $0.index >= 1 && $0.index <= 7 }
+			.sorted { $0.index < $1.index }
+			.map { channel in
+				let name = channel.name?.isEmpty == false ? channel.name! : "Channel \(channel.index)"
+				return BeaconSecondaryChannel(index: channel.index, name: name)
+			}
+	}
+
+	/// Whether at least one secondary slot (1–7) is free on the connected node.
+	@MainActor
+	public func beaconHasFreeSecondarySlot() -> Bool {
+		guard let deviceNum = self.activeConnection?.device.num,
+			  let node = getNodeInfo(id: Int64(deviceNum), context: context) else {
+			return false
+		}
+		let usedIndexes = Set(node.myInfo?.channels.map { $0.index } ?? [])
+		return (Int32(1)...Int32(7)).contains { !usedIndexes.contains($0) }
+	}
+
+	/// Add a beacon's advertised channel to a secondary slot without touching the primary channel or
+	/// LoRa config — so **no reboot** (contract C3 / FR-016, research D2). Used by the Add channel
+	/// action, which is only offered when the offered mesh already runs on the radio's current
+	/// preset/region/frequency slot.
+	///
+	/// When `replacingIndex` is nil, picks the lowest free secondary index (1–7); when all secondary
+	/// slots are taken, throws so the UI can offer the replace-a-secondary picker (D2). When
+	/// `replacingIndex` is provided, writes into that (secondary) slot, overwriting the channel there —
+	/// never the primary (index 0).
+	@MainActor
+	public func addBeaconChannel(channelName: String, channelPSK: Data, replacingIndex: Int32? = nil) async throws {
+		guard let deviceNum = self.activeConnection?.device.num else {
+			throw AccessoryError.ioFailed("No active device")
+		}
+		guard let node = getNodeInfo(id: Int64(deviceNum), context: context), let user = node.user else {
+			throw AccessoryError.appError("Connected node not found")
+		}
+
+		let targetIndex: Int32
+		if let replacingIndex {
+			// Protect the primary channel — only secondary slots may be replaced (D2).
+			guard (Int32(1)...Int32(7)).contains(replacingIndex) else {
+				throw AccessoryError.appError("Cannot replace the primary channel")
+			}
+			targetIndex = replacingIndex
+		} else {
+			let usedIndexes = Set(node.myInfo?.channels.map { $0.index } ?? [])
+			// Secondary slots are 1...7 (0 is reserved for the primary channel).
+			guard let freeIndex = (Int32(1)...Int32(7)).first(where: { !usedIndexes.contains($0) }) else {
+				throw AccessoryError.appError("No free channel slot — remove a secondary channel first")
+			}
+			targetIndex = freeIndex
+		}
+
+		// D5: an offered channel with an empty PSK is an "open channel" — use the default public key.
+		let effectivePSK = channelPSK.isEmpty ? Data([1]) : channelPSK
+
+		var channel = Channel()
+		channel.index = targetIndex
+		channel.role = .secondary
+		channel.settings.name = channelName
+		channel.settings.psk = effectivePSK
+		// Default to no position sharing on an added foreign channel.
+		channel.settings.moduleSettings.positionPrecision = 0
+
+		_ = try await saveChannel(channel: channel, fromUser: user, toUser: user)
+
+		// Mirror the added channel into local state so it appears immediately (no reboot / re-sync).
+		try applyLocalChannelMutation(channel, fromNum: deviceNum)
+
+		Logger.mesh.info("➕ [Beacon] Added advertised channel '\(channelName, privacy: .private)' to secondary slot \(targetIndex, privacy: .public) — no reboot")
 	}
 
 	public func sendWaypoint(waypoint: Waypoint) async throws {
@@ -639,9 +1263,25 @@ extension AccessoryManager {
 				wayPointEntity.expire = nil
 			}
 			if waypoint.lockedTo > 0 {
-				wayPointEntity.locked = Int64(waypoint.lockedTo)
+				wayPointEntity.locked = true
 			} else {
-				wayPointEntity.locked = 0
+				wayPointEntity.locked = false
+			}
+			// Persist the author's geofence here: the mesh ingest applies geometry only and
+			// never touches the notify flags (design#114 — those are receiver-local), so the
+			// sending device is the one place its own preferences are recorded. When
+			// re-sending someone else's waypoint the outgoing flags are forced false
+			// (see WaypointEntity.outgoingNotifyFlags), so only mirror them back into the
+			// entity for the author — otherwise this device's local opt-in would be wiped.
+			wayPointEntity.applyGeofenceGeometry(from: waypoint)
+			if WaypointEntity.isAuthoredLocally(
+				waypointId: wayPointEntity.id,
+				createdBy: wayPointEntity.createdBy,
+				activeDeviceNum: Int64(deviceNum)
+			) {
+				wayPointEntity.notifyOnEnter = waypoint.notifyOnEnter
+				wayPointEntity.notifyOnExit = waypoint.notifyOnExit
+				wayPointEntity.notifyFavoritesOnly = waypoint.notifyFavoritesOnly
 			}
 			if wayPointEntity.created == nil {
 				wayPointEntity.created = Date()
@@ -652,7 +1292,6 @@ extension AccessoryManager {
 				try context.save()
 				Logger.data.info("💾 Updated Waypoint from Waypoint App Packet From: \(fromNodeNum.toHex(), privacy: .public)")
 			} catch {
-				context.rollback()
 				let nsError = error as NSError
 				Logger.data.error("Error Saving NodeInfoEntity from WAYPOINT_APP \(nsError, privacy: .public)")
 			}
@@ -687,14 +1326,11 @@ extension AccessoryManager {
 		let logString = String.localizedStringWithFormat("Sent a TraceRoute Packet from: %@ to: %@".localized, String(fromNodeNum), String(destNum))
 		try await send(toRadio, debugDescription: logString)
 
-			let traceRoute = TraceRouteEntity(context: context)
-			let nodes = NodeInfoEntity.fetchRequest()
+			let traceRoute = TraceRouteEntity()
+			context.insert(traceRoute)
+			traceRoute.sent = true
 			// TODO: Not sure what's going on here. We always have a fromNodeNum
-			// if let connectedNum = fromNodeNum {
-			nodes.predicate = NSPredicate(format: "num IN %@", [destNum, fromNodeNum])
-			// } else {
-			//	nodes.predicate = NSPredicate(format: "num == %@", destNum)
-			// }
+			let nodes = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate { $0.num == destNum || $0.num == fromNodeNum })
 			do {
 				let fetchedNodes = try context.fetch(nodes)
 				let receivingNode = fetchedNodes.first(where: { $0.num == destNum })
@@ -705,7 +1341,6 @@ extension AccessoryManager {
 					try context.save()
 					Logger.data.info("💾 Saved TraceRoute sent to node: \(String(receivingNode?.user?.longName ?? "Unknown".localized), privacy: .public)")
 				} catch {
-					context.rollback()
 					let nsError = error as NSError
 					Logger.data.error("Error Updating Core Data BluetoothConfigEntity: \(nsError, privacy: .public)")
 				}
@@ -719,7 +1354,7 @@ extension AccessoryManager {
 
 	}
 
-	public func requestStoreAndForwardClientHistory(fromUser: UserEntity, toUser: UserEntity) async throws {
+	public func requestStoreAndForwardClientHistory(fromUser: UserEntity, toUser: UserEntity, channel: Int32) async throws {
 
 		/// send a request for ClientHistory with a time period matching the heartbeat
 		var sfPacket = StoreAndForward()
@@ -732,6 +1367,7 @@ extension AccessoryManager {
 		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
 		meshPacket.priority =  MeshPacket.Priority.reliable
 		meshPacket.wantAck = true
+		meshPacket.channel = UInt32(channel)
 		var dataMessage = DataMessage()
 		guard let sfData: Data = try? sfPacket.serializedData() else {
 			throw AccessoryError.ioFailed("requestStoreAndForwardClientHistory: Unable to serialize data packet")
@@ -819,13 +1455,14 @@ extension AccessoryManager {
 		try await send(toRadio, debugDescription: logString)
 
 			do {
-				context.delete(node.user!)
+				if let user = node.user {
+					context.delete(user)
+				}
 				context.delete(node)
 				try context.save()
 			} catch {
-				context.rollback()
 				let nsError = error as NSError
-				Logger.data.error("🚫 Error deleting node from core data: \(nsError, privacy: .public)")
+				Logger.data.error("🚫 Error deleting node: \(nsError, privacy: .public)")
 			}
 
 	}
@@ -1031,6 +1668,36 @@ extension AccessoryManager {
 		return Int64(meshPacket.id)
 	}
 
+	public func saveMeshBeaconModuleConfig(config: ModuleConfig.MeshBeaconConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+
+		var adminPacket = AdminMessage()
+		adminPacket.setModuleConfig.meshBeacon = config
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("saveMeshBeaconModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛟 Saved Mesh Beacon Module Config for \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+
+		await MeshPackets.shared.upsertMeshBeaconModuleConfigPacket(config: config, nodeNum: toUser.num)
+
+		return Int64(meshPacket.id)
+	}
+
 	public func requestDetectionSensorModuleConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
 
 		var adminPacket = AdminMessage()
@@ -1081,6 +1748,36 @@ extension AccessoryManager {
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 
 		await MeshPackets.shared.upsertExternalNotificationModuleConfigPacket(config: config, nodeNum: toUser.num)
+
+		return Int64(meshPacket.id)
+	}
+
+	public func saveNeighborInfoModuleConfig(config: ModuleConfig.NeighborInfoConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+
+		var adminPacket = AdminMessage()
+		adminPacket.setModuleConfig.neighborInfo = config
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("saveNeighborInfoModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛟 Saved Neighbor Info Module Config for \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+
+		await MeshPackets.shared.upsertNeighborInfoModuleConfigPacket(config: config, nodeNum: toUser.num)
 
 		return Int64(meshPacket.id)
 	}
@@ -1206,6 +1903,61 @@ extension AccessoryManager {
 		return Int64(meshPacket.id)
 	}
 
+	public func requestAudioModuleConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
+
+		var adminPacket = AdminMessage()
+		adminPacket.getModuleConfigRequest = AdminMessage.ModuleConfigType.audioConfig
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("requestAudioModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		dataMessage.wantResponse = true
+
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛎️ Requested Audio Module Config using an admin key for node: \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+	}
+
+	public func saveAudioModuleConfig(config: ModuleConfig.AudioConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+
+		var adminPacket = AdminMessage()
+		adminPacket.setModuleConfig.audio = config
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("saveAudioModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛟 Saved Audio Module Config for \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+
+		await MeshPackets.shared.upsertAudioModuleConfigPacket(config: config, nodeNum: toUser.num)
+
+		return Int64(meshPacket.id)
+	}
+
 	public func saveSerialModuleConfig(config: ModuleConfig.SerialConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
 
 		var adminPacket = AdminMessage()
@@ -1258,6 +2010,30 @@ extension AccessoryManager {
 		meshPacket.decoded = dataMessage
 
 		let messageDescription = "🛎️ Requested External Notificaiton Module Config using an admin key for node: \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+	}
+
+	public func requestNeighborInfoModuleConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
+		var adminPacket = AdminMessage()
+		adminPacket.getModuleConfigRequest = AdminMessage.ModuleConfigType.neighborinfoConfig
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("requestNeighborInfoModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		dataMessage.wantResponse = true
+
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛎️ Requested Neighbor Info Module Config using an admin key for node: \(toUser.longName ?? "Unknown".localized)"
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
 
@@ -1385,6 +2161,61 @@ extension AccessoryManager {
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
 
+	public func saveStatusMessageModuleConfig(config: ModuleConfig.StatusMessageConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+
+		var adminPacket = AdminMessage()
+		adminPacket.setModuleConfig.statusmessage = config
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("saveStatusMessageModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛟 Saved Status Message Module Config for \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+
+		await MeshPackets.shared.upsertStatusMessageModuleConfigPacket(config: config, nodeNum: toUser.num)
+
+		return Int64(meshPacket.id)
+	}
+
+	public func requestStatusMessageModuleConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
+
+		var adminPacket = AdminMessage()
+		adminPacket.getModuleConfigRequest = AdminMessage.ModuleConfigType.statusmessageConfig
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from	= UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority =  MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("requestStatusMessageModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		dataMessage.wantResponse = true
+
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛎️ Requested Status Message Module Config using an admin key for node: \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+	}
+
 	public func saveStoreForwardModuleConfig(config: ModuleConfig.StoreForwardConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
 
 		var adminPacket = AdminMessage()
@@ -1497,6 +2328,9 @@ extension AccessoryManager {
 		} else {
 			throw AccessoryError.ioFailed("sendRebootOta: Unable to serialize admin packet")
 		}
+		// Log the packet id so a routing ack can be matched back to this request — the
+		// difference between the radio refusing the reboot and never hearing it.
+		Logger.services.info("📡 [ESP32 OTA] Reboot admin packet \(meshPacket.id) to \(meshPacket.to) from \(meshPacket.from)")
 		let messageDescription = "🚀 Sent Reboot OTA Admin Message to: \(toUser.longName ?? "Unknown".localized) from: \(fromUser.longName ?? "Unknown".localized)"
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
@@ -1605,6 +2439,36 @@ extension AccessoryManager {
 		}
 		let messageDescription = "🚀 Sent Set Fixed Postion Admin Message to: \(fromUser.longName ?? "Unknown".localized) from: \(fromUser.longName ?? "Unknown".localized)"
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+	}
+
+	/// Sets an explicit fixed position from supplied coordinates (e.g. restored from an imported device
+	/// profile), rather than the phone's current GPS fix. The companion `setFixedPosition(fromUser:channel:)`
+	/// pulls coordinates from `getPositionFromPhoneGPS` and can't set arbitrary coordinates; this overload
+	/// fills that gap. The position config's `fixedPosition` flag (sent separately) is what tells the
+	/// firmware to actually use these coordinates.
+	public func setFixedPosition(_ position: Position, fromUser: UserEntity, toUser: UserEntity, channel: Int32 = 0) async throws -> Int64 {
+		var adminPacket = AdminMessage()
+		adminPacket.setFixedPosition = position
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from = UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority = MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+		meshPacket.channel = UInt32(channel)
+		var dataMessage = DataMessage()
+		guard let serializedData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("setFixedPosition: Unable to serialize admin packet")
+		}
+		dataMessage.payload = serializedData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+		let messageDescription = "🚀 Sent Set Fixed Position (imported) Admin Message to: \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+		return Int64(meshPacket.id)
 	}
 
 	public func removeFixedPosition(fromUser: UserEntity, channel: Int32) async throws {
@@ -1880,9 +2744,10 @@ extension AccessoryManager {
 		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
 
-	public func sendNodeDBReset(fromUser: UserEntity, toUser: UserEntity) async throws {
+	public func sendNodeDBReset(fromUser: UserEntity, toUser: UserEntity, preserveFavorites: Bool = true) async throws {
 		var adminPacket = AdminMessage()
-		adminPacket.nodedbReset = true
+		// nodedbReset = true means preserve favorites; false means wipe all nodes.
+		adminPacket.nodedbReset = preserveFavorites
 		if fromUser != toUser {
 			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
 		}
@@ -2021,6 +2886,61 @@ extension AccessoryManager {
 		await MeshPackets.shared.upsertTAKModuleConfigPacket(config: config, nodeNum: toUser.num)
 
 		return Int64(meshPacket.id)
+	}
+
+	public func saveTrafficManagementModuleConfig(config: ModuleConfig.TrafficManagementConfig, fromUser: UserEntity, toUser: UserEntity) async throws -> Int64 {
+
+		var adminPacket = AdminMessage()
+		adminPacket.setModuleConfig.trafficManagement = config
+		if fromUser != toUser {
+			adminPacket.sessionPasskey = toUser.userNode?.sessionPasskey ?? Data()
+		}
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from = UInt32(fromUser.num)
+		meshPacket.priority = MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("saveTrafficManagementModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛟 Saved Traffic Management Module Config for \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
+
+		await MeshPackets.shared.upsertTrafficManagementModuleConfigPacket(config: config, nodeNum: toUser.num)
+
+		return Int64(meshPacket.id)
+	}
+
+	public func requestTrafficManagementModuleConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
+
+		var adminPacket = AdminMessage()
+		adminPacket.getModuleConfigRequest = AdminMessage.ModuleConfigType.trafficmanagementConfig
+		var meshPacket: MeshPacket = MeshPacket()
+		meshPacket.to = UInt32(toUser.num)
+		meshPacket.from = UInt32(fromUser.num)
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.priority = MeshPacket.Priority.reliable
+		meshPacket.wantAck = true
+
+		var dataMessage = DataMessage()
+		guard let adminData: Data = try? adminPacket.serializedData() else {
+			throw AccessoryError.ioFailed("requestTrafficManagementModuleConfig: Unable to serialize admin packet")
+		}
+		dataMessage.payload = adminData
+		dataMessage.portnum = PortNum.adminApp
+		dataMessage.wantResponse = true
+
+		meshPacket.decoded = dataMessage
+
+		let messageDescription = "🛎️ Requested Traffic Management Module Config using an admin key for node: \(toUser.longName ?? "Unknown".localized)"
+		try await sendAdminMessageToRadio(meshPacket: meshPacket, adminDescription: messageDescription)
 	}
 
 	public func requestDisplayConfig(fromUser: UserEntity, toUser: UserEntity) async throws {
@@ -2237,5 +3157,53 @@ extension AccessoryManager {
 		try await send(toRadio, debugDescription: logString)
 
 		return Int64(meshPacket.id)
+	}
+
+	func sendLocalStatsRequest(
+		destNum: Int64,
+		wantResponse: Bool,
+		transport: LocalStatsRequestTransport = .sharedChannel,
+		destinationPublicKey: Data? = nil
+	) async throws {
+		guard let fromNodeNum = self.activeConnection?.device.num else {
+			Logger.services.error("Error while sending local stats request.  No active device.")
+			throw AccessoryError.ioFailed("No active device")
+		}
+
+		var telemetryPacket = Telemetry()
+		telemetryPacket.localStats = LocalStats()
+
+		var meshPacket = MeshPacket()
+		meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
+		meshPacket.to = UInt32(destNum)
+		meshPacket.from = UInt32(fromNodeNum)
+		meshPacket.wantAck = true
+		meshPacket.decoded.wantResponse = wantResponse
+		guard LocalStatsRequestTransport.configure(
+			&meshPacket,
+			transport: transport,
+			destinationPublicKey: destinationPublicKey
+		) else {
+			throw AccessoryError.ioFailed("sendLocalStatsRequest: Remote admin requires the destination public key")
+		}
+
+		var dataMessage = DataMessage()
+		if let serializedData: Data = try? telemetryPacket.serializedData() {
+			dataMessage.payload = serializedData
+			dataMessage.portnum = PortNum.telemetryApp
+			dataMessage.wantResponse = wantResponse
+			meshPacket.decoded = dataMessage
+		} else {
+			throw AccessoryError.ioFailed("sendLocalStatsRequest: Unable to serialize telemetry packet")
+		}
+
+		var toRadio: ToRadio!
+		toRadio = ToRadio()
+		toRadio.packet = meshPacket
+
+		let logString = String.localizedStringWithFormat("📊 Sent Local Stats Request from: %@ to: %@".localized, String(fromNodeNum), String(destNum))
+		try await send(toRadio, debugDescription: logString)
+
+		Logger.mesh.info("📊 \(logString, privacy: .public)")
 	}
 }

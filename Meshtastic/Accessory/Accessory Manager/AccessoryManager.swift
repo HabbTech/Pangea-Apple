@@ -5,6 +5,7 @@
 
 import Foundation
 import SwiftUI
+import SwiftData
 import MeshtasticProtobufs
 import CoreBluetooth
 import OSLog
@@ -23,7 +24,16 @@ enum AccessoryError: Error, LocalizedError {
 	case eventStreamCancelled
 	case coreBluetoothError(CBError)
 	case coreBluetoothATTError(CBATTError)
+	/// The radio has thrown away the pairing this device still holds — a factory erase, a
+	/// reflash, or its Bluetooth settings being cleared. Nothing the app does fixes it; the
+	/// stale pairing has to be removed in Settings first.
+	case bondLost
 	
+	/// Said the same way whichever code the failure arrives under. iOS reports a stale
+	/// pairing as CBError 14, as CBError.encryptionTimedOut, or as a CBATTError about
+	/// authentication or encryption, and the advice is the same for all of them.
+	static let bondLostAdvice = "The radio has deleted its stored pairing information, but your device has not. To resolve this, you must forget the radio under Settings > Bluetooth to clear the old, now invalid, pairing information.".localized
+
 	var errorDescription: String? {
 		switch self {
 		case .discoveryFailed(let message):
@@ -52,11 +62,13 @@ enum AccessoryError: Error, LocalizedError {
 			case .peripheralDisconnected: // 7
 				return "The Bluetooth connection to the radio was disconnected, it will automatically reconnect to the preferred radio when it is powered back on or finishes rebooting.".localized
 			case .peerRemovedPairingInformation: // 14
-				return "The radio has deleted its stored pairing information, but your device has not. To resolve this, you must forget the radio under Settings > Bluetooth to clear the old, now invalid, pairing information.".localized
+				return Self.bondLostAdvice
 			default:
 				// Fallback for other CBError codes
 				return "A Bluetooth error occurred: \(cbError.localizedDescription)"
 			}
+		case .bondLost:
+			return Self.bondLostAdvice
 		case .coreBluetoothATTError(let attError):
 			// Map specific CBATTError values to a more user-friendly message
 			switch attError.code {
@@ -69,6 +81,19 @@ enum AccessoryError: Error, LocalizedError {
 				return "A Bluetooth Attribute Protocol error occurred: \(attError.localizedDescription)"
 			}
 		}
+	}
+}
+
+extension AccessoryError {
+	/// What to report when subscribing to notifications fails.
+	///
+	/// A radio that erased its pairing and a mistyped PIN arrive under the same Core
+	/// Bluetooth codes and need opposite advice — clear the pairing in Settings, or try the
+	/// PIN again. Having paired with this radio before is what separates them, so it has to
+	/// be decided here, while that is still known: tearing the connection down forgets it.
+	static func forNotifyFailure(_ error: Error, hadBond: Bool) -> Error {
+		guard hadBond, BLEConnection.isPairingFailure(error) else { return error }
+		return AccessoryError.bondLost
 	}
 }
 
@@ -104,6 +129,14 @@ enum AccessoryManagerState: Equatable {
 	}
 }
 
+private struct AutomaticConfigRefresh {
+	let owner: AutomaticChannelRefreshOwner
+	let sessionID: UUID
+	let channelRefreshBaselineByNode: [Int64: [ChannelRefreshSnapshot]]
+	var nodeNum: Int64?
+	var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+}
+
 @MainActor
 class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// Singleton Access.  Conditionally compiled
@@ -116,15 +149,77 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// Constants
 	let NONCE_ONLY_CONFIG = 69420
 	let NONCE_ONLY_DB = 69421
-	let minimumVersion = "2.5.18"
+	let minimumVersion = "2.5.14"
 	let securityVersion = "2.6.0"
 
 	// Global Objects
 	// Chicken/Egg problem.  Set in the App object immediately after
 	// AppState and AccessoryManager are created
 	var appState: AppState!
-	let context = PersistenceController.shared.container.viewContext
+	lazy var context = PersistenceController.shared.context
+
+	/// Alert history for firmware `ClientNotification`s, keyed by notice identity, used to
+	/// back off repeats (see `shouldSurfaceFirmwareNotice`). In memory on purpose: after a
+	/// relaunch a standing notice alerts once more, which is the useful behaviour.
+	var firmwareNoticeHistory: [String: (count: Int, lastShown: Date)] = [:]
+	/// Delay before the Nth repeat of the same notice may alert again.
+	static let firmwareNoticeBackoff: [TimeInterval] = [0, 300, 1_800, 7_200, 43_200]
+	/// A notice unseen for this long is forgotten, so it alerts immediately if it returns.
+	static let firmwareNoticeForgetAfter: TimeInterval = 86_400
 	let mqttManager = MqttClientProxyManager.shared
+
+	// MARK: - Database reset
+
+	/// Call after a full data clear (clear app data / device reset / node switch). Reopens the
+	/// SwiftData container fresh and repoints the MeshPackets actor and this manager's cached
+	/// `context` at it, so no long-lived context keeps stale objects that would trap
+	/// ("destroyed by ModelContext.reset") when a reconnect reuses freed SQLite rowids.
+	func repointToFreshContainer() {
+		PersistenceController.shared.recreateContainer()
+		rebindToCurrentContainer()
+	}
+
+	/// The repoint minus the container recreation: rebuilds the MeshPackets actor and this
+	/// manager's cached context on whatever container PersistenceController currently holds.
+	/// Used when the caller already recreated the container (the store-destroy escalation) —
+	/// every recreation mints a potential stale observer bridge, so never recreate twice.
+	func rebindToCurrentContainer() {
+		MeshPackets.recreateShared()
+		context = PersistenceController.shared.context
+		// Re-deliver the new container to the SwiftUI environment immediately: the scene body
+		// re-evaluates on this bump and .modelContainer(...) reads the recreated container, so
+		// @Query subscriptions re-bind in place instead of staying attached to the old store
+		// (whose notifications they would otherwise process — the switch-nodes SIGTRAP).
+		// Deliberately NOT databaseResetID: no identity change, no teardown.
+		appState?.containerStamp = UUID()
+	}
+
+	/// `repointToFreshContainer()` plus a UI refresh: bumps `databaseResetID` so @Query-backed
+	/// views rebind to the recreated container. Use at clear sites with no follow-up reconnect;
+	/// the node-switch flow repoints first and refreshes the UI itself after its restore.
+	///
+	/// Pops every tab to its root and yields *before* recreating the container. Detail views such
+	/// as `ChannelMessageList` bind a `@Bindable ChannelEntity` directly; if one is still mounted
+	/// when the container is torn down, reading that now-invalid object traps with "This model
+	/// instance was destroyed by calling ModelContext.reset". Popping + yielding lets SwiftUI
+	/// unmount those views first. Mirrors the node-switch flow in `backupCurrentAndRestoreDatabase`
+	/// (Views/Connect/Connect.swift).
+	func resetDatabaseAfterClear() async {
+		// `appState` is wired up at launch and is required for the safety guarantee
+		// here. Bail loudly rather than recreating the container without first popping the
+		// detail views: a half-done reset (container torn down, views still mounted) would
+		// reintroduce the exact ModelContext.reset crash this method exists to prevent. The data was
+		// already cleared by the preceding `clearDatabase`, so skipping the container swap is the
+		// safe degradation.
+		guard let appState else {
+			Logger.data.error("💾 [Database] resetDatabaseAfterClear skipped: appState is nil — cannot pop views before recreating the container")
+			return
+		}
+		appState.sceneRouters.popAllStacks()
+		await Task.yield()
+		repointToFreshContainer()
+		appState.databaseResetID = UUID()
+	}
 
 	// Published Stuff
 	@Published var mqttProxyConnected: Bool = false
@@ -138,9 +233,62 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	}
 	@Published var allowDisconnect = false
 	@Published var lastConnectionError: Error?
+	/// True while the connected radio's firmware is below `minimumVersion`. ContentView
+	/// presents the firmware update gate over the whole app while this is set.
+	@Published var firmwareUpdateRequired = false
 	@Published var isConnected: Bool = false
+	/// When the radio last finished sending its configuration.
+	///
+	/// Used to tell a fresh readback from a stale cache. Post-import verification is meaningless
+	/// against entities that still hold pre-import values: every item would look dropped. See
+	/// `DeviceProfileVerifier`.
+	@Published var lastConfigRefresh: Date?
+	/// Pangea: when this connection's node database download finished; nil until then. A sweep
+	/// for unanswered sends waits `DeliveryStatus.replyGrace` after it (see `checkForStaleSends`).
+	var databaseDownloadedAt: Date?
+	/// When the radio's node database was last saved after a connect. Views that read values the
+	/// dump brings in (the unheard-on-current-LoRa notice) refresh on this, because the connect
+	/// reaches `.subscribed` before that save lands.
+	@Published var nodeDatabaseSavedAt: Date?
+	/// Bumped on each node database request and on disconnect, so a save finishing late for an
+	/// earlier request doesn't report the new one as saved.
+	private var nodeDatabaseSaveGeneration = 0
+	/// Node numbers in the node database download in progress. When it completes, nodes the radio
+	/// left out are marked unknown for heard-on-current-LoRa: the radio no longer has them.
+	var nodeDatabaseDumpNums: Set<Int64> = []
+	var nodeDatabaseDumpInProgress = false
+	/// The LoRa change the node database download in progress was asked for, or nil when it was
+	/// asked for by something else (the connect).
+	private var nodeDatabaseRequestLoRaChange: Int?
+	/// True from an app-initiated LoRa change until the node database asked for after the latest
+	/// one is saved. Until then the radio's heard-on-current-LoRa answers are for older settings,
+	/// so the unheard notice stays hidden rather than offering to remove nodes from them.
+	@Published private(set) var awaitingNodeDatabaseAfterLoRaChange = false
+	private var loraChangeTracker = LoRaChangeNodeDatabaseTracker() {
+		didSet { awaitingNodeDatabaseAfterLoRaChange = loraChangeTracker.isAwaiting }
+	}
 	@Published var isConnecting: Bool = false
 	@Published var isInBackground: Bool = false
+	@Published var firmwareEdition: FirmwareEditions = .vanilla
+	/// Mirrors the BLE transport's `TransportStatus`, most notably `.error(BLETransport.
+	/// poweredOffStatusMessage)` when CoreBluetooth reports `.poweredOff`. Nothing read
+	/// `BLETransport.status` before this (#2175): with the system "Bluetooth is turned off"
+	/// alert intentionally suppressed (#2162), the Connect tab needs its own signal to tell a
+	/// BLE user why no devices are appearing in Available Radios. Kept as the raw status (not
+	/// just a Bool) so other transport error states could drive similar UI later without
+	/// another round of plumbing. See `isBluetoothPoweredOff` below and `observeBLETransportStatus()`.
+	@Published var bleTransportStatus: TransportStatus = .uninitialized
+
+	/// MESHTASTIC_LOCKDOWN-hardened firmware state machine. See
+	/// Meshtastic/Helpers/LockdownCoordinator.swift and
+	/// specs/007-lockdown-mode/. Set by MeshtasticApp at startup.
+	var lockdownCoordinator: LockdownCoordinator?
+
+	/// Region → legal-preset lookup advertised by the connected radio during the
+	/// want_config handshake (FromRadio.region_presets, 2.8+). Empty when the
+	/// firmware predates the feature or hasn't sent it yet — callers must treat an
+	/// absent region (or an empty map) as "no constraint". Reset on disconnect.
+	@Published var loRaRegionPresets: [Config.LoRaConfig.RegionCode: RegionPresetInfo] = [:]
 
 	var activeConnection: (device: Device, connection: any Connection)? {
 		// Only whether there is one counts; it's re-assigned on every device change.
@@ -150,13 +298,32 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	/// and my own node in the database (see `refreshRadioReady`).
 	let readiness: RadioReadinessTracker
 
+	/// Reference to the active discovery scan engine, if any
+	var discoveryScanEngine: DiscoveryScanEngine?
+
+	/// Shared discovery scan engine that persists across navigation
+	let discoveryEngine = DiscoveryScanEngine()
+
 	let transports: [any Transport]
 
 	// Config
 	public var wantRangeTestPackets = false
 	var wantStoreAndForwardPackets = false
 	var shouldAutomaticallyConnectToPreferredPeripheralAfterError = true
+	/// Set when a lost bond ends a connect. Auto-reconnect stays off for the rest of the app
+	/// session — reconnecting can never fix a lost bond, and any later transient error would
+	/// otherwise re-arm it and restart the loop. Manual connects are always allowed; only a
+	/// fresh app launch clears this.
+	var autoReconnectSuspendedForSession = false
 	var userRequestedConnectionCancellation = false
+
+	/// True while a device switch (backup → clear → restore → connect) is in flight.
+	/// Suppresses the discovery restart in `closeConnection()` and auto-connect on
+	/// discovery events: the disconnect at the start of a switch must not let discovery
+	/// fire a concurrent connect whose node dump would interleave with the database
+	/// clear/restore (one source of nodes bleeding between radios). Set/cleared by
+	/// `switchToDevice` (Views/Connect/Connect.swift).
+	var isSwitchingDevices = false
 
 	// Conncetion process
 	var connectionSteps: SequentialSteps?
@@ -164,19 +331,62 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// Public due to file separation
 	var otaInProgress: Bool = false
 	var discoveryTask: Task<Void, Never>?
+	/// Consumes `BLETransport.statusUpdates()` for the lifetime of this manager; see
+	/// `observeBLETransportStatus()`.
+	var bleStatusTask: Task<Void, Never>?
 	var connectionEventTask: Task <Void, Error>?
 	var locationTask: Task<Void, Error>?
+	/// The detached device image/link pass spawned by connect Step 3b. Held so a disconnect can
+	/// cancel it — otherwise, on a captive portal, its ~78 image HEADs hang ~60s each (no request
+	/// timeout) past teardown, wasting network and pinning the hardware-list spinner.
+	var deviceRefreshTask: Task<Void, Never>?
 	var connectionStepper: SequentialSteps?
 	/// Pangea: teardowns still running. activeConnection goes nil as soon as one starts,
 	/// so this is what tells callers the link is fully closed and discovery restarted.
 	var closingConnections = 0
 	
-	// Flash subjects
-	@Published var packetsSent: Int = 0
-	@Published var packetsReceived: Int = 0
+	// Flash counters — NOT @Published to avoid triggering re-renders of all observing views.
+	// RXTXIndicatorWidget observes these via onChange polling.
+	var packetsSent: Int = 0
+	var packetsReceived: Int = 0
+
+	/// Rolling estimate of inbound mesh-packet rate. Drives `isHighMeshTraffic`, which the map reads
+	/// to pause the trace-route 3D flyover when live traffic would make the flythrough janky. Fed one
+	/// `recordInboundPacket()` per inbound mesh packet in `processFromRadio`; the monitor self-starts
+	/// its decay timer on the first packet and is cleared via `reset()` on disconnect.
+	let meshTrafficMonitor = MeshTrafficMonitor.shared
+
+	/// Mirrors `meshTrafficMonitor.isHighTraffic` onto this ObservableObject so views already
+	/// observing AccessoryManager (e.g. the map) react to it without having to observe the nested
+	/// monitor. True while sustained inbound mesh traffic is high enough to pause the map flyover.
+	@Published private(set) var isHighMeshTraffic = false
+	private var meshTrafficCancellable: AnyCancellable?
+
+	/// Packet count at the last periodic MeshPackets recycle (see `didReceive`). The ingest
+	/// actor's ModelContext registers every entity it inserts or faults and never lets go, so a
+	/// long high-traffic session accumulates them without bound (a sustained TCP stress replay
+	/// reached millions of live model objects / multi-GB RSS). Recreating the actor releases
+	/// them; connect-time recreation alone doesn't help a session that stays connected.
+	var packetsAtLastIngestRecycle: Int = 0
+	/// How many packets between recycles. Each processed packet leaves a handful of registered
+	/// objects behind, so this bounds the ingest context's working set to a few hundred MB at
+	/// worst. Under a saturating TCP replay this fires every couple of minutes; on a busy real
+	/// mesh every ~10 minutes; on a quiet mesh it may never fire — which is fine, since
+	/// accumulation is proportional to packets processed. Recycling costs one context teardown
+	/// plus cold caches on the next few fetches.
+	static let ingestRecycleInterval = 5_000
+
+	// Debug counter: MQTT client-proxy downlink packets dropped before forwarding
+	// to the device because they carried no payload (see MqttForwardFilter). NOT
+	// @Published — read only for debug logging, so it needn't drive view updates.
+	// Mutated on the main actor: CocoaMQTT delivers delegate callbacks on its
+	// default main delegateQueue, so onMqttMessageReceived runs on MainActor.
+	var mqttProxyDroppedNoPayload: Int = 0
 	
 	// Continuations
-	var wantConfigContinuation: CheckedContinuation<Void, Error>?
+	private var activeAutomaticConfigRefresh: AutomaticConfigRefresh?
+	private var automaticConfigRefreshTask: Task<Void, Never>?
+	private var nextAutomaticConfigRefreshGeneration: UInt64 = 0
 	var firstDatabaseNodeInfoContinuation: CheckedContinuation<Void, Error>?
 	var wantDatabaseGate: AsyncGate = AsyncGate()
 
@@ -185,11 +395,17 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	
 	var heartbeatTimer: ResettableTimer?
 	var heartbeatResponseTimer: ResettableTimer?
+	/// How long a TCP/serial connection may sit idle (no data or log packets) before we send a
+	/// keep-alive heartbeat. The timer is resettable, so an active link never sends one — heartbeats
+	/// only fire after this much silence. BLE does not use this at all (Core Bluetooth manages the
+	/// link); see `Transport.requiresPeriodicHeartbeat`.
+	static let heartbeatInterval: TimeInterval = 15.0
+	private var isClosingConnection = false
 
 	init(transports: [any Transport] = [BLETransport(), TCPTransport()], readiness: RadioReadinessTracker? = nil) {
 		self.transports = transports
 		self.state = .uninitialized
-		self.readiness = readiness ?? RadioReadinessTracker(context: PersistenceController.shared.container.viewContext)
+		self.readiness = readiness ?? RadioReadinessTracker()
 		self.mqttManager.delegate = self
 		// Pangea: profile packets wait while the radio can't take them and go once it can,
 		// whether or not any screen is up to notice.
@@ -201,26 +417,60 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			}
 		}
 
-		// Listen for system memory warnings to proactively release Core Data object data
-		NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
-			guard let self else { return }
-			self.context.refreshAllObjects()
-			Logger.data.warning("⚠️ [AccessoryManager] Memory warning — refreshed viewContext (\(self.context.registeredObjects.count) registered objects)")
-			Task {
-				let bgContext = await MeshPackets.shared.backgroundContext
-				await bgContext.perform {
-					bgContext.refreshAllObjects()
-					Logger.data.warning("⚠️ [MeshPackets] Memory warning — refreshed backgroundContext (\(bgContext.registeredObjects.count) registered objects)")
-				}
+		// Listen for system memory warnings to proactively save pending changes
+		if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+			NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+				guard let self else { return }
+				try? self.context.save()
+				Logger.data.warning("⚠️ [AccessoryManager] Memory warning — saved context")
 			}
 		}
+
+		observeBLETransportStatus()
+
+		// Mirror the traffic gate onto our own @Published so map views that already observe this
+		// manager pick up flyover pause/resume. Both objects live on the main actor, so the value
+		// only ever crosses on the main run loop.
+		meshTrafficCancellable = meshTrafficMonitor.$isHighTraffic
+			.removeDuplicates()
+			.sink { [weak self] isHigh in
+				self?.isHighMeshTraffic = isHigh
+			}
 	}
 
 	func transportForType(_ type: TransportType) -> Transport? {
 		return transports.first(where: {$0.type == type })
 	}
+
+	/// True once the BLE transport's status has settled on "Bluetooth is powered off"
+	/// (#2161/#2163). The Connect tab's Available Radios section uses this to show an inline
+	/// message prompting the user to enable Bluetooth in Settings — the system power alert is
+	/// intentionally suppressed (#2162), so this is the only in-app signal for a BLE user whose
+	/// device isn't showing up (#2175).
+	var isBluetoothPoweredOff: Bool {
+		if case .error(BLETransport.poweredOffStatusMessage) = bleTransportStatus {
+			return true
+		}
+		return false
+	}
+
+	/// Subscribes to the BLE transport's status stream for the lifetime of this manager and
+	/// mirrors every change onto `bleTransportStatus`. Safe to call more than once (e.g. from a
+	/// future re-init path) — cancels any prior subscription first.
+	private func observeBLETransportStatus() {
+		guard let bleTransport = transportForType(.ble) as? BLETransport else { return }
+		bleStatusTask?.cancel()
+		bleStatusTask = Task { @MainActor in
+			for await status in await bleTransport.statusUpdates() {
+				self.bleTransportStatus = status
+			}
+		}
+	}
 	
 	func connectToPreferredDevice(device: Device? = nil) {
+		// A firmware update owns the radio: reconnecting mid-update fights the
+		// updater for the device while it is rebooting into its bootloader.
+		if otaInProgress { return }
 		if !self.isConnected && !self.isConnecting,
 		   let preferredDevice = device ?? self.devices.first(where: { $0.id.uuidString == UserDefaults.preferredPeripheralId }) {
 			Task {
@@ -230,41 +480,165 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	}
 
 	func sendWantConfig() async throws {
-		if let inProgressWantConfigContinuation = wantConfigContinuation {
-			Logger.transport.info("[Accessory] Existing continuation for wantConfig(Config). Cancelling.")
-			inProgressWantConfigContinuation.resume(throwing: CancellationError())
-			wantConfigContinuation = nil
+		if let activeAutomaticConfigRefresh {
+			return try await waitForAutomaticConfigRefresh(activeAutomaticConfigRefresh.owner)
 		}
 		guard let connection = activeConnection?.connection else {
 			Logger.transport.error("Unable to send wantConfig (config): No device connected")
 			return
 		}
 
-		_ = await MeshPackets.shared.clearStaleNodes(nodeExpireDays: Int(UserDefaults.purgeStaleNodeDays))
-		
-		try await withTaskCancellationHandler {
+		// Note: stale-node pruning used to run here, serializing a full fetch+delete+save on the
+		// ingestion actor ahead of the config handshake and node-DB dump (one cause of slow/hung
+		// connects). It now runs after the connection completes — see connect() Step 8 — where it
+		// also prunes against post-dump lastHeard values instead of pre-dump ones.
+		nextAutomaticConfigRefreshGeneration &+= 1
+		let owner = AutomaticChannelRefreshOwner(
+			sessionID: activeConnection?.device.id ?? UUID(),
+			generation: nextAutomaticConfigRefreshGeneration
+		)
+		let channelRefreshBaselineByNode = MeshPackets.captureChannelRefreshBaselines(in: context)
+		activeAutomaticConfigRefresh = AutomaticConfigRefresh(
+			owner: owner,
+			sessionID: owner.sessionID,
+			channelRefreshBaselineByNode: channelRefreshBaselineByNode,
+			nodeNum: activeConnection?.device.num ?? activeDeviceNum
+		)
+		automaticConfigRefreshTask = Task { @MainActor [weak self] in
+			await self?.runAutomaticConfigRefresh(owner: owner, connection: connection)
+		}
+		try await waitForAutomaticConfigRefresh(owner)
+	}
+
+	private func runAutomaticConfigRefresh(owner: AutomaticChannelRefreshOwner, connection: Connection) async {
+		guard !Task.isCancelled, activeAutomaticConfigRefresh?.owner == owner else { return }
+		do {
+			try Task.checkCancellation()
 			var toRadio: ToRadio = ToRadio()
 			toRadio.wantConfigID = UInt32(NONCE_ONLY_CONFIG)
-			try await self.send(toRadio)
+			try await send(toRadio)
+			try Task.checkCancellation()
 			try await connection.startDrainPendingPackets()
-			try await withCheckedThrowingContinuation { cont in
-				self.wantConfigContinuation = cont
+			try Task.checkCancellation()
+		} catch {
+			await finishAutomaticConfigRefresh(owner: owner, error: error)
+		}
+	}
+
+	private func waitForAutomaticConfigRefresh(_ owner: AutomaticChannelRefreshOwner) async throws {
+		let waiterID = UUID()
+		try await withTaskCancellationHandler {
+			try await withCheckedThrowingContinuation { continuation in
+				registerAutomaticConfigRefreshWaiter(continuation, id: waiterID, owner: owner)
 			}
-			self.wantConfigContinuation = nil
-			Logger.transport.info("✅ [Accessory] NONCE_ONLY_CONFIG Done")
 		} onCancel: {
 			Task { @MainActor in
-				wantConfigContinuation?.resume(throwing: CancellationError())
-				wantConfigContinuation = nil
+				self.cancelAutomaticConfigRefreshWaiter(id: waiterID, owner: owner)
 			}
 		}
 	}
 
-	func sendWantDatabase() async throws {
+	private func registerAutomaticConfigRefreshWaiter(
+		_ continuation: CheckedContinuation<Void, Error>,
+		id: UUID,
+		owner: AutomaticChannelRefreshOwner
+	) {
+		guard !Task.isCancelled,
+			  var refresh = activeAutomaticConfigRefresh,
+			  refresh.owner == owner else {
+			continuation.resume(throwing: CancellationError())
+			return
+		}
+		refresh.waiters[id] = continuation
+		activeAutomaticConfigRefresh = refresh
+	}
+
+	private func cancelAutomaticConfigRefreshWaiter(id: UUID, owner: AutomaticChannelRefreshOwner) {
+		guard var refresh = activeAutomaticConfigRefresh,
+			  refresh.owner == owner,
+			  let continuation = refresh.waiters.removeValue(forKey: id) else { return }
+		activeAutomaticConfigRefresh = refresh
+		continuation.resume(throwing: CancellationError())
+	}
+
+	private func finishAutomaticConfigRefresh(owner: AutomaticChannelRefreshOwner, error: Error?) async {
+		guard let refresh = activeAutomaticConfigRefresh, refresh.owner == owner else { return }
+		activeAutomaticConfigRefresh = nil
+		automaticConfigRefreshTask = nil
+		if let error {
+			if let nodeNum = refresh.nodeNum {
+				await MeshPackets.shared.discardChannelRefreshStage(for: nodeNum, owner: owner)
+			}
+			for continuation in refresh.waiters.values {
+				continuation.resume(throwing: error)
+			}
+		} else {
+			for continuation in refresh.waiters.values {
+				continuation.resume()
+			}
+		}
+	}
+
+	func beginAutomaticChannelRefreshStageIfNeeded(for nodeNum: Int64) async {
+		guard var refresh = activeAutomaticConfigRefresh,
+			  refresh.sessionID == activeConnection?.device.id else { return }
+		refresh.nodeNum = nodeNum
+		activeAutomaticConfigRefresh = refresh
+		let owner = refresh.owner
+		let didBegin = await MeshPackets.shared.beginChannelRefreshStage(
+			for: nodeNum,
+			owner: owner,
+			baseline: refresh.channelRefreshBaselineByNode[nodeNum] ?? []
+		)
+		guard didBegin, activeAutomaticConfigRefresh?.owner == owner else {
+			if didBegin {
+				await MeshPackets.shared.discardChannelRefreshStage(for: nodeNum, owner: owner)
+			}
+			return
+		}
+	}
+
+	/// Asks the connected radio for its node database again after its LoRa settings changed.
+	///
+	/// Firmware 2.8 applies a LoRa change without rebooting, so there is no reconnect and no fresh
+	/// node database, and the radio's NodeInfo.heard_on_current_lora answers for the new settings
+	/// never reach the app. The database completion saves the dump and publishes
+	/// `nodeDatabaseSavedAt`, which is what the unheard notice and node rows refresh on.
+	func refreshNodeDatabaseAfterLoRaChange() {
+		guard reportsHeardOnCurrentLora, isConnected else { return }
+		let generation = loraChangeTracker.changed()
+		Task { @MainActor in
+			// Let the radio finish reprogramming the modem before asking.
+			try? await Task.sleep(for: .seconds(2))
+			// One download at a time: the completion doesn't say which request it answers.
+			while self.nodeDatabaseDumpInProgress, self.isConnected {
+				try? await Task.sleep(for: .milliseconds(250))
+			}
+			guard self.isConnected else {
+				self.loraChangeTracker.reset()
+				return
+			}
+			// A newer change is waiting its turn and will ask instead.
+			guard self.loraChangeTracker.request(generation) else { return }
+			do {
+				try await self.sendWantDatabase(forLoRaChange: generation)
+			} catch {
+				Logger.transport.error("[LoRa] Could not refresh the node database after a settings change: \(error.localizedDescription, privacy: .public)")
+				self.loraChangeTracker.finished(generation)
+			}
+		}
+	}
+
+	func sendWantDatabase(forLoRaChange loraChange: Int? = nil) async throws {
+		nodeDatabaseRequestLoRaChange = loraChange
+		nodeDatabaseSaveGeneration += 1
+		nodeDatabaseSavedAt = nil
+		nodeDatabaseDumpNums = []
+		nodeDatabaseDumpInProgress = true
 		if let firstDatabaseNodeInfoContinuation = firstDatabaseNodeInfoContinuation {
 			Logger.transport.info("[Accessory] Existing continuation for firstDatabaseNodeInfo. Cancelling.")
-			firstDatabaseNodeInfoContinuation.resume(throwing: CancellationError())
 			self.firstDatabaseNodeInfoContinuation = nil
+			firstDatabaseNodeInfoContinuation.resume(throwing: CancellationError())
 		}
 		
 		guard let connection = activeConnection?.connection else {
@@ -284,8 +658,10 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			Logger.transport.info("✅ [Accessory] NONCE_ONLY_DB first NodeInfo received.")
 		} onCancel: {
 			Task { @MainActor in
-				firstDatabaseNodeInfoContinuation?.resume(throwing: CancellationError())
-				firstDatabaseNodeInfoContinuation = nil
+				if let continuation = firstDatabaseNodeInfoContinuation {
+					firstDatabaseNodeInfoContinuation = nil
+					continuation.resume(throwing: CancellationError())
+				}
 			}
 		}
 	}
@@ -298,41 +674,81 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// If you are calling this in response to an error, then you should have
 	// exposed the error to the UI or handled the error prior to calling this.
 	func closeConnection() async throws {
+		guard !isClosingConnection else {
+			Logger.transport.debug("[AccessoryManager] closeConnection ignored while teardown is already in progress")
+			return
+		}
+		isClosingConnection = true
+		defer { isClosingConnection = false }
+
+		nodeDatabaseSaveGeneration += 1
+		nodeDatabaseSavedAt = nil
+
 		Logger.transport.debug("[AccessoryManager] received disconnect request")
 		closingConnections += 1
 		defer { closingConnections -= 1 }
+
+		let closingNodeNum = activeConnection?.device.num ?? activeDeviceNum
 
 		if let activeConnection {
 			updateDevice(deviceId: activeConnection.device.id, key: \.connectionState, value: .disconnected)
 			self.activeConnection = nil
 		}
 		self.activeDeviceNum = nil
-		
+		self.firmwareUpdateRequired = false
+		// A dropped connection never finishes its download; the reconnect brings a fresh one.
+		loraChangeTracker.reset()
+		nodeDatabaseDumpInProgress = false
+		nodeDatabaseRequestLoRaChange = nil
+		if let refresh = activeAutomaticConfigRefresh {
+			automaticConfigRefreshTask?.cancel()
+			await finishAutomaticConfigRefresh(owner: refresh.owner, error: CancellationError())
+		} else if let closingNodeNum {
+			await MeshPackets.shared.discardChannelRefreshStage(for: closingNodeNum)
+		}
+
+		// Lockdown: clear per-connection state. If a Lock Now was in flight, the
+		// disconnect resolves the coordinator to `.lockNowAcknowledged`.
+		lockdownCoordinator?.onDisconnect()
+
+		// Stop sampling and clear the traffic gate so a stale "high traffic" flag can't linger and
+		// keep the map flyover paused after the mesh goes quiet on disconnect.
+		meshTrafficMonitor.reset()
+
 		connectionEventTask?.cancel()
 		connectionEventTask = nil
-		
+
 		locationTask?.cancel()
 		locationTask = nil
+
+		// Cancel the detached device image/link pass so its outstanding image HEADs unwind instead of
+		// hanging past teardown. The pass leaves the throttle un-armed when cancelled, so the next
+		// connect still runs a real restore.
+		deviceRefreshTask?.cancel()
+		deviceRefreshTask = nil
 		
 		await heartbeatTimer?.cancel(withReason: "Closing connection")
 		await heartbeatResponseTimer?.cancel(withReason: "Closing connection")
 		heartbeatTimer = nil
 		heartbeatResponseTimer = nil
 		
-		// Clean up continuations
-		wantConfigContinuation?.resume(throwing: CancellationError())
-		wantConfigContinuation = nil
-		firstDatabaseNodeInfoContinuation?.resume(throwing: CancellationError())
-		firstDatabaseNodeInfoContinuation = nil
+		// Clean up continuations — nil before resume to prevent double-resume races
+		if let continuation = firstDatabaseNodeInfoContinuation {
+			firstDatabaseNodeInfoContinuation = nil
+			continuation.resume(throwing: CancellationError())
+		}
 		
 		await wantDatabaseGate.cancelAll()
 		await wantDatabaseGate.reset()
 
-		// Re-fault all registered objects on the viewContext to release their in-memory data.
-		// Objects stay registered but their property storage is freed, which prevents unbounded
-		// memory growth across disconnect/reconnect cycles on long-running sessions.
-		context.refreshAllObjects()
-		Logger.data.info("💾 [AccessoryManager] Refreshed viewContext on disconnect (\(self.context.registeredObjects.count) registered objects)")
+		// Stop the MQTT proxy so it doesn't forward broker packets over BLE during reconnect,
+		// which would starve the wantConfig handshake. initializeMqtt() restarts it in Step 8.
+		// Disconnect unconditionally — mqttProxyConnected can be stale during a teardown race.
+		mqttManager.mqttClientProxy?.disconnect()
+
+		// Save any pending changes and let SwiftData manage object lifecycle on disconnect.
+		try? context.save()
+		Logger.data.info("💾 [AccessoryManager] Saved context on disconnect")
 		
 		// Turn off the disconnect buttons
 		allowDisconnect = false
@@ -342,21 +758,50 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 		// startDiscovery() would silently no-op and the device would never reappear in the list.
 		discoveryTask?.cancel()
 		discoveryTask = nil
-		
-		self.startDiscovery()
+
+		// During a device switch the teardown must NOT re-arm discovery: with autoconnect on,
+		// discovery can immediately re-connect (and start a node dump) while the switch is
+		// still clearing/restoring the database — interleaving one radio's dump with another
+		// radio's data. The switch flow restarts discovery itself if its connect fails.
+		if !isSwitchingDevices {
+			self.startDiscovery()
+		}
 	}
 	
 	// Should only be called by UI-facing callers.
 	// Pangea: returns once the teardown has finished (see `isFullyDisconnected`), or after
 	// `timeout`, so a connect straight after it isn't refused as "Already connecting".
 	func disconnect(timeout: Duration = .seconds(5)) async throws {
+		guard !isClosingConnection else {
+			// A teardown is already running: wait for it rather than starting another.
+			let deadline = ContinuousClock.now + timeout
+			while !isFullyDisconnected && ContinuousClock.now < deadline {
+				try? await Task.sleep(for: .milliseconds(20))
+			}
+			return
+		}
 		self.userRequestedConnectionCancellation = true
 		// Cancel ongoing connection task if it exists
 		await self.connectionStepper?.cancel()
 
-		// Close out the connection
-		if let activeConnection = activeConnection {
-			try await activeConnection.connection.disconnect(withError: nil, shouldReconnect: false)
+		// Flush any debounced position/telemetry saves before disconnecting
+		await MeshPackets.shared.flushDebouncedSaves()
+
+		// Close out the transport, then finish manager teardown before returning. Connection
+		// events are asynchronous, so awaiting the transport alone can leave activeConnection set.
+		var disconnectError: Error?
+		if let activeConnection {
+			do {
+				try await activeConnection.connection.disconnect(withError: nil, shouldReconnect: false)
+			} catch {
+				disconnectError = error
+			}
+		}
+		try await closeConnection()
+		updateState(.discovering)
+
+		if let disconnectError {
+			throw disconnectError
 		}
 
 		// Cancelling only flags the attempt; its own clean-up (closeConnection, then clearing
@@ -399,14 +844,11 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 		// Update the device in the devices array if it exists
 		if let index = devices.firstIndex(where: { $0.id == deviceId }) {
 			var device = devices[index]
-			device[keyPath: key] = value
 			if device[keyPath: key] != value {
-				// Update the @Published stuff for the UI
-				self.objectWillChange.send()
-				
-				if let index = devices.firstIndex(where: { $0.id == deviceId }) {
-					devices[index] = device
-				}
+				// No objectWillChange here: `devices` is @Published, so assigning to it
+				// notifies on its own. Sending as well invalidated twice per change.
+				device[keyPath: key] = value
+				devices[index] = device
 			}
 		} else {
 			// Durring active connections, this discover list will be empty, so this is expected.
@@ -424,6 +866,8 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 		case .uninitialized, .idle, .discovering:
 			self.isConnected = false
 			self.isConnecting = false
+			self.firmwareEdition = .vanilla
+			self.loRaRegionPresets = [:]
 		case .connecting, .communicating, .retrying:
 			self.isConnected = false
 			self.isConnecting = true
@@ -460,25 +904,49 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	}
 
 	func didReceive(_ event: ConnectionEvent) async {
+		let shouldIgnoreTransientEvent = isClosingConnection || userRequestedConnectionCancellation || activeConnection == nil
+
 		packetsReceived += 1
-		
+
 		switch event {
 		case .data(let fromRadio):
+			guard !shouldIgnoreTransientEvent else {
+				Logger.transport.debug("[Accessory] Dropping data event during disconnect teardown")
+				return
+			}
 			// Logger.transport.info("✅ [Accessory] didReceive: \(fromRadio.payloadVariant.debugDescription)")
 			await self.processFromRadio(fromRadio)
+			// Periodically recycle the ingest actor so its ModelContext releases accumulated
+			// registered objects (see packetsAtLastIngestRecycle). Only while subscribed —
+			// never mid node-DB retrieval — and only here, between packets, where no in-flight
+			// handler still holds the retiring instance. Flush first: recreateShared's
+			// invalidate deliberately drops a retired instance's pending writes.
+			if case .subscribed = state, packetsReceived - packetsAtLastIngestRecycle >= Self.ingestRecycleInterval {
+				packetsAtLastIngestRecycle = packetsReceived
+				await MeshPackets.shared.flushDebouncedSaves()
+				MeshPackets.recreateShared()
+			}
 			Task {
 				await self.heartbeatResponseTimer?.cancel(withReason: "Data packet received")
-				await self.heartbeatTimer?.reset(delay: .seconds(15.0))
+				await self.heartbeatTimer?.reset(delay: .seconds(Self.heartbeatInterval))
 			}
 
 		case .logMessage(let message):
+			guard !shouldIgnoreTransientEvent else {
+				Logger.transport.debug("[Accessory] Dropping log event during disconnect teardown")
+				return
+			}
 			self.didReceiveLog(message: message)
 			Task {
 				await self.heartbeatResponseTimer?.cancel(withReason: "Log message packet received")
-				await self.heartbeatTimer?.reset(delay: .seconds(15.0))
+				await self.heartbeatTimer?.reset(delay: .seconds(Self.heartbeatInterval))
 			}
 		
 		case .rssiUpdate(let rssi):
+			guard !shouldIgnoreTransientEvent else {
+				Logger.transport.debug("[Accessory] Dropping RSSI update during disconnect teardown")
+				return
+			}
 			guard let deviceId = self.activeConnection?.device.id else {
 				Logger.transport.error("Could not update RSSI, no active connection")
 				return
@@ -491,7 +959,9 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 				if case .errorWithoutReconnect = event {
 					shouldAutomaticallyConnectToPreferredPeripheralAfterError = false
 				} else {
-					shouldAutomaticallyConnectToPreferredPeripheralAfterError = true
+					// A suspended session stays suspended: a transient error after a lost bond
+					// must not re-arm the reconnect loop the suspension exists to end.
+					shouldAutomaticallyConnectToPreferredPeripheralAfterError = !autoReconnectSuspendedForSession
 				}
 				
 				Logger.transport.info("🚨 [Accessory] didReceive with failure: \(error.localizedDescription, privacy: .public) (willReconnect = \(self.shouldAutomaticallyConnectToPreferredPeripheralAfterError, privacy: .public))")
@@ -515,8 +985,12 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			}
 			
 		case .disconnected:
+			guard !shouldIgnoreTransientEvent else {
+				Logger.transport.info("[Accessory] Ignoring disconnect event during teardown.")
+				return
+			}
 			Task {
-				// This is user-initatied, so don't reconnect
+				// This is user-initiated, so don't reconnect
 				shouldAutomaticallyConnectToPreferredPeripheralAfterError = false
 				try? await self.closeConnection()
 				updateState(.discovering)
@@ -574,6 +1048,7 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	}
 
 	private func processFromRadio(_ decodedInfo: FromRadio) async {
+		// Logger.transport.info("📻 [processFromRadio] Processing: \(String(describing: decodedInfo.payloadVariant), privacy: .public)")
 		switch decodedInfo.payloadVariant {
 		case .mqttClientProxyMessage(let mqttClientProxyMessage):
 			handleMqttClientProxyMessage(mqttClientProxyMessage)
@@ -585,15 +1060,24 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			await handleMyInfo(myNodeInfo)
 
 		case .packet(let packet):
+			// Feed the traffic-rate estimator one tick per inbound mesh packet — this is the busy path
+			// whose re-renders make the map flyover stutter, so it's exactly what we want to measure.
+			meshTrafficMonitor.recordInboundPacket()
 			// All received packets get passed through updateAnyPacketFrom to update lastHeard, rxSnr, etc. (like firmware's NodeDB::updateFrom).
 			if let connectedNodeNum = self.activeDeviceNum {
-				await MeshPackets.shared.updateAnyPacketFrom(packet: packet, activeDeviceNum: connectedNodeNum)
+				await MeshPackets.shared.updateAnyPacketFrom(packet: packet, activeDeviceNum: connectedNodeNum,
+				                                             reportsHeardOnCurrentLora: reportsHeardOnCurrentLora)
 			} else {
 				Logger.mesh.error("🕸️ Unable to determine connectedNodeNum for updateAnyPacketFrom. Skipping.")
 			}
 
 			// Dispatch based on packet contents.
 			if case let .decoded(data) = packet.payloadVariant {
+				// Forward packets to discovery scan engine if active
+				if let engine = discoveryScanEngine, engine.isScanning {
+					engine.handleMeshPacket(packet, portNum: data.portnum)
+				}
+
 				switch data.portnum {
 				case .textMessageApp, .detectionSensorApp, .alertApp:
 					await handleTextMessageAppPacket(packet)
@@ -606,7 +1090,7 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 						}
 					}
 				case .remoteHardwareApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Remote Hardware App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Remote Hardware] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .positionApp:
 					await MeshPackets.shared.upsertPositionPacket(packet: packet)
 					WatchSessionManager.shared.sendNodesToWatch()
@@ -624,19 +1108,8 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 					// Broadcast waypoint to TAK clients
 					if let waypoint = try? Waypoint(serializedBytes: data.payload) {
 						Logger.tak.info("WAYPOINT PARSED: \(waypoint.name)")
-						// Ensure bridge is initialized before calling (not optional chaining, or lazy init won't run)
 						let server = TAKServerManager.shared
-						if server.meshToCotEnabled && server.isRunning && !server.connectedClients.isEmpty {
-							// Force bridge initialization if needed
-							if server.bridge == nil {
-								Logger.tak.info("Initializing bridge on demand")
-								let bridge = TAKMeshtasticBridge(
-									accessoryManager: AccessoryManager.shared,
-									takServerManager: server
-								)
-								bridge.context = AccessoryManager.shared.context
-								server.bridge = bridge
-							}
+						if server.ensureBridgeReadyForMeshToCot() {
 							await server.bridge?.broadcastMeshWaypointToTAK(waypoint: waypoint, from: packet.from)
 						} else {
 							Logger.tak.info("Waypoint broadcast skipped: server not ready or no clients")
@@ -659,18 +1132,18 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 					}
 					await MeshPackets.shared.routingPacket(packet: packet, connectedNodeNum: deviceNum)
 				case .adminApp:
-					await MeshPackets.shared.adminAppPacket(packet: packet)
+					await MeshPackets.shared.adminAppPacket(packet: packet, connectedNodeNum: self.activeDeviceNum)
 				case .replyApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Reply App handling as a text message")
+					Logger.mesh.info("[Reply] packet received from \(packet.from.toHex(), privacy: .public)")
 					guard let deviceNum = activeConnection?.device.num else {
 						Logger.mesh.error("🕸️ No active connection. Unable to determine connectedNodeNum for replyApp.")
 						return
 					}
 					await MeshPackets.shared.textMessageAppPacket(packet: packet, wantRangeTestPackets: wantRangeTestPackets, connectedNode: deviceNum, appState: appState)
 				case .ipTunnelApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for IP Tunnel App UNHANDLED UNHANDLED")
+					Logger.mesh.info("[IP Tunnel] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .serialApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Serial App UNHANDLED UNHANDLED")
+					Logger.mesh.info("[Serial] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .storeForwardApp:
 					guard let deviceNum = activeConnection?.device.num else {
 						Logger.mesh.error("🕸️ No active connection. Unable to determine connectedNodeNum for storeAndForward.")
@@ -690,7 +1163,7 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 							appState: appState
 						)
 					} else {
-						Logger.mesh.info("🕸️ MESH PACKET received for Range Test App Range testing is disabled.")
+						Logger.mesh.info("[Range Test] packet received from \(packet.from.toHex(), privacy: .public)")
 					}
 				case .telemetryApp:
 					guard let deviceNum = activeConnection?.device.num else {
@@ -699,53 +1172,86 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 					}
 					await MeshPackets.shared.telemetryPacket(packet: packet, connectedNode: deviceNum)
 				case .textMessageCompressedApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Text Message Compressed App UNHANDLED")
+					Logger.mesh.info("[Text Message Compressed] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .zpsApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Zero Positioning System App UNHANDLED")
+					Logger.mesh.info("[Zero Positioning System] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .privateApp:
 					GroupChats.handlePrivateAppPacket(packet)
 				case .atakForwarder:
 					handleATAKForwarderPacket(packet)
 				case .simulatorApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Simulator App UNHANDLED UNHANDLED")
+					Logger.mesh.info("[Simulator] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .storeForwardPlusplusApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for SFPP App UNHANDLED UNHANDLED")
+					Logger.mesh.info("[SFPP] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .audioApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Audio App UNHANDLED UNHANDLED")
+					Logger.mesh.info("[Audio] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .nodeStatusApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Node Status App UNHANDLED")
+					await MeshPackets.shared.upsertNodeStatusPacket(packet: packet)
 				case .tracerouteApp:
 					handleTraceRouteApp(packet)
 				case .neighborinfoApp:
 					if let neighborInfo = try? NeighborInfo(serializedBytes: decodedInfo.packet.decoded.payload) {
-						Logger.mesh.info("🕸️ MESH PACKET received for Neighbor Info App UNHANDLED \((try? neighborInfo.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+						if let engine = discoveryScanEngine, engine.isScanning {
+							engine.handleNeighborInfo(neighborInfo, packet: decodedInfo.packet)
+						} else {
+							Logger.mesh.info("[Neighbor Info] packet received from \(packet.from.toHex(), privacy: .public) — \(neighborInfo.neighbors.count, privacy: .public) neighbors")
+						}
 					}
 				case .paxcounterApp:
 					await MeshPackets.shared.paxCounterPacket(packet: decodedInfo.packet)
 				case .mapReportApp:
-					Logger.mesh.info("🕸️ MESH PACKET received Map Report App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Map Report] packet received from \(packet.from.toHex(), privacy: .public)")
+				case .meshBeaconApp:
+					if let beacon = try? MeshBeacon(serializedBytes: decodedInfo.packet.decoded.payload) {
+						if let engine = discoveryScanEngine, engine.isScanning {
+							engine.handleBeacon(beacon, packet: decodedInfo.packet)
+						} else {
+							// No active scan: passively capture the beacon as a session-less record so it
+							// shows in the Beacons list and feeds the next scan setup (FR-015). Two gates
+							// apply: "no active scan" here, plus the connected node's MeshBeaconConfig
+							// FLAG_LISTEN_ENABLED enforced inside ingestPassiveBeacon.
+							ingestPassiveBeacon(beacon, packet: decodedInfo.packet)
+						}
+					} else {
+						Logger.mesh.info("[Mesh Beacon] packet received from \(packet.from.toHex(), privacy: .public) — failed to decode payload")
+					}
 				case .UNRECOGNIZED:
-					Logger.mesh.info("🕸️ MESH PACKET received UNRECOGNIZED App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Unrecognized] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .max:
 					Logger.services.info("MAX PORT NUM OF 511")
 				case .atakPlugin:
 					handleATAKPluginPacket(packet)
+				case .atakPluginV2:
+					handleATAKPluginV2Packet(packet)
 				case .powerstressApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Power Stress App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Power Stress] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .reticulumTunnelApp:
-					Logger.mesh.info("🕸️ MESH PACKET received for Reticulum Tunnel App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Reticulum Tunnel] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .keyVerificationApp:
-					Logger.mesh.warning("🕸️ MESH PACKET received for Key Verification App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Key Verification] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .cayenneApp:
-					Logger.mesh.info("🕸️ MESH PACKET received Cayenne App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Cayenne] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .groupalarmApp:
-					Logger.mesh.info("🕸️ MESH PACKET received Group Alarm App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Group Alarm] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .lorawanBridge:
-					Logger.mesh.info("🕸️ MESH PACKET received for LoRaWAN Bridge UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[LoRaWAN Bridge] packet received from \(packet.from.toHex(), privacy: .public)")
+				case .loraOtaApp:
+					Logger.mesh.info("[LoRa OTA] packet received from \(packet.from.toHex(), privacy: .public)")
+				case .remoteShellApp:
+					Logger.mesh.info("[Remote Shell] packet received from \(packet.from.toHex(), privacy: .public)")
+				case .pagingApp:
+					Logger.mesh.info("[Paging] packet received from \(packet.from.toHex(), privacy: .public)")
 				case .unknownApp:
-					Logger.mesh.warning("🕸️ MESH PACKET received for unknown App UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+					Logger.mesh.info("[Unknown] packet received from \(packet.from.toHex(), privacy: .public)")
 				}
 			}
+			// Flush via the debouncer rather than saving immediately. This runs for
+			// EVERY packet, so an immediate save here force-flushed the whole context
+			// on every packet — defeating the position/telemetry debounce and firing a
+			// main-context merge (and a full @Query re-sort) ~10×/sec under load. A
+			// debounced flush coalesces these to ≤1 save / 2s (5s hard ceiling) and also
+			// covers the updateAnyPacketFrom mutations for portnums with no dedicated handler.
+			await MeshPackets.shared.scheduleDebouncedSave()
 
 		case .nodeInfo(let nodeInfo):
 			await handleNodeInfo(nodeInfo)
@@ -762,19 +1268,22 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 		case .metadata(let metadata):
 			await handleDeviceMetadata(metadata)
 
+		case .regionPresets(let regionPresets):
+			handleRegionPresets(regionPresets)
+
 		case .deviceuiConfig:
 #if DEBUG
-			Logger.mesh.info("🕸️ MESH PACKET received for deviceUIConfig UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+			Logger.admin.info("🕸️ MESH PACKET received for deviceUIConfig UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
 #endif
 		case .fileInfo:
 #if DEBUG
-			Logger.mesh.info("🕸️ MESH PACKET received for fileInfo UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+			Logger.admin.info("🕸️ MESH PACKET received for fileInfo UNHANDLED \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
 #endif
 		case .queueStatus:
 #if DEBUG
-			Logger.mesh.info("🕸️ MESH PACKET received for queueStatus \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
+			Logger.transport.info("🕸️ MESH PACKET received for queueStatus \((try? decodedInfo.packet.jsonString()) ?? "JSON Decode Failure", privacy: .public)")
 #else
-			Logger.mesh.info("🕸️ MESH PACKET received for heartbeat response")
+			Logger.transport.info("🕸️ MESH PACKET received for heartbeat response")
 #endif
 		case .logRecord(let record):
 			didReceiveLog(message: record.stringRepresentation)
@@ -796,21 +1305,29 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			Logger.transport.info("✅ [Accessory] Notifying completions that have completed for configCompleteID: \(configCompleteID)")
 			switch configCompleteID {
 			case UInt32(NONCE_ONLY_CONFIG):
-				// Pangea: every channel has been reported, so the list can be settled and the TAK
-				// server can check the primary channel now that there is one to check.
+				guard let refresh = activeAutomaticConfigRefresh,
+					  refresh.sessionID == activeConnection?.device.id else {
+					Logger.transport.warning("[Accessory] Ignoring config completion without its active refresh owner")
+					break
+				}
+				// Only an owned config completion proves the cached configuration is fresh.
+				lastConfigRefresh = Date()
+				if let completedNodeNum = refresh.nodeNum {
+					await MeshPackets.shared.commitChannelRefreshStage(for: completedNodeNum, owner: refresh.owner)
+					MeshShareSnapshotBuilder.refresh(nodeNum: completedNodeNum, context: context)
+				}
+				await finishAutomaticConfigRefresh(owner: refresh.owner, error: nil)
+				// Pangea: every channel has been reported (the staged list was committed above), so
+				// the TAK server can check the primary channel now that there is one to check.
 				if let deviceNum = activeDeviceNum {
-					await MeshPackets.shared.finishChannelDownload(fromNum: deviceNum)
 					// The first sweep waits for the database phase (below): replies the radio
 					// queued for sends from before a dropped link come after it.
-					DeliveryStatus.checkForStaleSends(fromNum: deviceNum, context: context)
+					DeliveryStatus.checkForStaleSends(fromNum: deviceNum, accessoryManager: self)
 					if TAKServerManager.shared.isRunning {
 						TAKServerManager.shared.checkPrimaryChannelValidity()
 					}
 				}
-				if let continuation = wantConfigContinuation {
-					continuation.resume()
-				}
-				
+
 			case UInt32(NONCE_ONLY_DB):
 				// Open the gate for the wantDatabaseContinuation
 				Task { await wantDatabaseGate.open() }
@@ -819,6 +1336,7 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 				// once the radio has handed over the replies it queued while the app was away.
 				if let deviceNum = activeDeviceNum, let deviceId = activeConnection?.device.id {
 					let databaseDone = Date()
+					databaseDownloadedAt = databaseDone
 					Task { @MainActor in
 						try? await Task.sleep(for: .seconds(DeliveryStatus.replyGrace))
 						guard activeDeviceNum == deviceNum, activeConnection?.device.id == deviceId, isConnected else { return }
@@ -829,22 +1347,48 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 				// If we get the "done" for NONCE_ONLY_DB, but are still waiting for the first NodeInfo,
 				// Then the database is probably empty, and can continue
 				if let firstDatabaseNodeInfoContinuation {
-					firstDatabaseNodeInfoContinuation.resume()
 					self.firstDatabaseNodeInfoContinuation = nil
+					firstDatabaseNodeInfoContinuation.resume()
 				}
-				
+
 				// Perform a single batch save after database retrieval completes
 				// This significantly improves performance on reconnect
-				do {
-					try context.save()
-					Logger.data.info("💾 [Database] Batch saved all node info after database retrieval")
+				let dumpNums = nodeDatabaseDumpNums
+				let dumpWasRequested = nodeDatabaseDumpInProgress
+				nodeDatabaseDumpInProgress = false
+				let saveGeneration = nodeDatabaseSaveGeneration
+				let loraChange = nodeDatabaseRequestLoRaChange
+				nodeDatabaseRequestLoRaChange = nil
+				Task {
+					// The dump was ingested with deferred saves on the MeshPackets actor
+					// (see handleNodeInfo); flush it so every node from the dump is persisted
+					// now rather than waiting on the debounce timer.
+					await MeshPackets.shared.flushDebouncedSaves()
+					if dumpWasRequested, !dumpNums.isEmpty, reportsHeardOnCurrentLora {
+						await MeshPackets.shared.markAbsentFromRadio(presentNums: dumpNums)
+					}
+					do {
+						try context.save()
+						if let loraChange {
+							loraChangeTracker.finished(loraChange)
+						}
+						if nodeDatabaseSaveGeneration == saveGeneration {
+							nodeDatabaseSavedAt = Date()
+						}
+						Logger.data.info("💾 [Database] Batch saved all node info after database retrieval")
+						if let activeDeviceNum {
+							MeshShareSnapshotBuilder.refresh(
+								nodeNum: activeDeviceNum,
+								context: context
+							)
+						}
 
-					// Push updated node data to the companion Watch app
-					WatchSessionManager.shared.sendNodesToWatch()
-				} catch {
-					context.rollback()
-					let nsError = error as NSError
-					Logger.data.error("💥 [Database] Error saving batch node info: \(nsError, privacy: .public)")
+						// Push updated node data to the companion Watch app
+						WatchSessionManager.shared.sendNodesToWatch()
+					} catch {
+						let nsError = error as NSError
+						Logger.data.error("💥 [Database] Error saving batch node info: \(nsError, privacy: .public)")
+					}
 				}
 				
 			default:
@@ -856,9 +1400,15 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			if state == .subscribed {
 				Task { try? await sendWantConfig() }
 			}
-			
+
+		case .lockdownStatus(let status):
+			// MESHTASTIC_LOCKDOWN-hardened firmware reports state after config_complete_id
+			// (and again in response to each LockdownAuth admin command). Route to the
+			// coordinator, which owns the per-connection state machine + passphrase cache.
+			lockdownCoordinator?.handle(status)
+
 		default:
-			Logger.mesh.error("Unknown FromRadio variant: \(decodedInfo.payloadVariant.debugDescription)")
+			Logger.transport.error("Unknown FromRadio variant: \(decodedInfo.payloadVariant.debugDescription)")
 		}
 
 	}
@@ -869,6 +1419,16 @@ extension AccessoryManager {
 		return activeConnection?.device.firmwareVersion
 	}
 
+	/// The connected radio's `MyNodeInfo.device_id`, which is what backups are keyed on. Nil before
+	/// MyInfo lands, and for a radio whose firmware reports none.
+	var connectedDeviceId: Data? {
+		guard let connectedNodeNum = activeDeviceNum else { return nil }
+		let descriptor = FetchDescriptor<MyInfoEntity>(
+			predicate: #Predicate { $0.myNodeNum == connectedNodeNum }
+		)
+		return try? context.fetch(descriptor).first?.deviceId
+	}
+
 	var connectedDeviceRole: DeviceRoles? {
 		guard let connectedNodeNum = activeDeviceNum else { return nil }
 		guard let connectedNode = getNodeInfo(id: connectedNodeNum, context: context) else { return nil }
@@ -877,11 +1437,117 @@ extension AccessoryManager {
 	}
 
 	func checkIsVersionSupported(forVersion: String) -> Bool {
-		let myVersion = connectedVersion ?? "0.0.0"
-		let supportedVersion = UserDefaults.firmwareVersion == "0.0.0" ||
-		forVersion.compare(myVersion, options: .numeric) == .orderedAscending ||
-		forVersion.compare(myVersion, options: .numeric) == .orderedSame
-		return supportedVersion
+		// Prefer the live `connectedVersion` (full string including build hash,
+		// e.g. "2.8.0.3a0c08b"). Fall back to the persisted UserDefaults value
+		// (stripped of trailing hash, e.g. "2.8.0") because
+		// `activeConnection?.device.firmwareVersion` is briefly nil during
+		// reconnects before `handleDeviceMetadata` repopulates it — using only
+		// `connectedVersion` in that window collapses `myVersion` to "0.0.0"
+		// and incorrectly returns false for every capability check.
+		let storedVersion = UserDefaults.firmwareVersion
+		let myVersion: String
+		if let live = connectedVersion, !live.isEmpty {
+			myVersion = live
+		} else if storedVersion != "0.0.0" {
+			myVersion = storedVersion
+		} else {
+			// No firmware info at all — be permissive (matches the prior
+			// "first-launch" behavior; newer firmware is the common case).
+			return true
+		}
+
+		let comparison = forVersion.compare(myVersion, options: .numeric)
+		return comparison == .orderedAscending || comparison == .orderedSame
+	}
+
+	/// Whether the connected radio supports the v2 TAK port (ATAK_PLUGIN_V2 = 78)
+	/// with TAKPacketV2 + zstd dictionary compression via TAKPacket-SDK.
+	///
+	/// Firmware **>= 2.8.0** supports v2 (full typed CoT payloads — PLI, GeoChat,
+	/// DrawnShape, Marker, Route, Aircraft, Casevac, Emergency, Task — under
+	/// the 237 B LoRa MTU). Firmware **<= 2.7.x** falls back to the legacy
+	/// ATAK_PLUGIN port (72) with the original `TAKPacket` schema, which only
+	/// supports PLI and GeoChat (no shapes, markers, routes, etc.).
+	///
+	var supportsTAKv2: Bool {
+		Self.isTAKv2Supported(firmwareVersion: connectedVersion)
+	}
+
+	/// Whether the connected radio reports NodeInfo.heard_on_current_lora (firmware 2.8.1+).
+	var reportsHeardOnCurrentLora: Bool {
+		Self.reportsHeardOnCurrentLora(firmwareVersion: connectedVersion)
+	}
+
+	/// Strict on purpose: unlike `checkIsVersionSupported`, an unknown version is false. Older firmware
+	/// never sends the field, so reading it there would mark every node unheard.
+	nonisolated static func reportsHeardOnCurrentLora(firmwareVersion: String?) -> Bool {
+		guard let firmwareVersion else { return false }
+		let parts = firmwareVersion.split(separator: ".").prefix(3).map { Int($0) }
+		guard parts.count == 3, let major = parts[0], let minor = parts[1], let patch = parts[2] else {
+			return false
+		}
+		return (major, minor, patch) >= (2, 8, 1)
+	}
+
+	static func isTAKv2Supported(firmwareVersion: String?) -> Bool {
+		guard let firmwareVersion else {
+			return false
+		}
+
+		let components = firmwareVersion.split(separator: ".", omittingEmptySubsequences: false)
+		let decimalDigits = CharacterSet(charactersIn: "0123456789")
+		guard (3...4).contains(components.count),
+			  components.prefix(3).allSatisfy({
+				  !$0.isEmpty && $0.unicodeScalars.allSatisfy { decimalDigits.contains($0) }
+			  }),
+			  let major = Int(components[0]),
+			  let minor = Int(components[1]),
+			  let patch = Int(components[2]) else {
+			return false
+		}
+		if components.count == 4 {
+			let hexDigits = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+			guard !components[3].isEmpty,
+				  components[3].unicodeScalars.allSatisfy(hexDigits.contains) else {
+				return false
+			}
+		}
+
+		return major > 2 || (major == 2 && (minor > 8 || (minor == 8 && patch >= 0)))
+	}
+
+	/// The Status Message module (`ModuleConfig.StatusMessageConfig` + the
+	/// `NODE_STATUS_APP` broadcast) ships in firmware 2.8.0 (design#115). Gate the editor on
+	/// it so we don't expose a broken/empty config screen on a *known* older firmware.
+	/// `checkIsVersionSupported` is intentionally permissive when the version is unknown
+	/// (first-launch / reconnect window) — matching every other capability gate here — so the
+	/// editor still appears until the radio reports a confirmed sub-2.8.0 version.
+	var supportsStatusMessage: Bool {
+		checkIsVersionSupported(forVersion: "2.8.0")
+	}
+
+	/// Whether a LoRa config save lands without dropping the connection.
+	///
+	/// Firmware 2.8 applies every LoRa change live (firmware #9962). Before that, `set_config(lora)`
+	/// skipped the reboot only when no radio field actually changed, which a real edit never
+	/// satisfies.
+	///
+	/// Deliberately conservative where the other gates here are permissive, and read from the live
+	/// connection only. `UserDefaults.firmwareVersion` is global rather than per radio, so falling
+	/// back to it right after switching radios answers for the *previous* radio — and assuming
+	/// "no reboot" on the wrong radio is the direction that hurts: it warns nobody before a reboot
+	/// they did not expect, and turns a real post-save failure into a shrug. No live version means
+	/// assume it may reboot, which merely restores the old forgiving behavior for that window.
+	var appliesLoRaConfigWithoutReboot: Bool {
+		Self.appliesLoRaConfigWithoutReboot(liveVersion: connectedVersion)
+	}
+
+	/// Pure core of the gate, split out so tests exercise the decision without a live connection
+	/// or the global stored version.
+	nonisolated static func appliesLoRaConfigWithoutReboot(liveVersion: String?) -> Bool {
+		guard let liveVersion, !liveVersion.isEmpty else { return false }
+		let comparison = "2.8.0".compare(liveVersion, options: .numeric)
+		return comparison == .orderedAscending || comparison == .orderedSame
 	}
 }
 
@@ -893,7 +1559,10 @@ extension AccessoryManager {
 			self.heartbeatTimer = nil
 		}
 		
-		self.heartbeatTimer = ResettableTimer(isRepeating: true, debugName: Bundle.main.isDebug ? "Send Heartbeat" : nil) {
+		// No debugName: this timer is reset on every received data/log packet, so a per-reset debug
+		// line would flood the log on busy TCP/serial links. The meaningful "heartbeat sent" log
+		// below still fires only when a heartbeat is actually sent (i.e. after an idle interval).
+		self.heartbeatTimer = ResettableTimer(isRepeating: true) {
 			Logger.transport.debug("💓 [Heartbeat] Sending periodic heartbeat")
 			try? await self.sendHeartbeat()
 		}
@@ -901,7 +1570,10 @@ extension AccessoryManager {
 		// We can send heartbeats for older versions just fine, but only 2.7.4 and up will respond with
 		// a definite queueStatus packet.
 		if self.checkIsVersionSupported(forVersion: "2.7.4") {
-			self.heartbeatResponseTimer = ResettableTimer(isRepeating: false, debugName: Bundle.main.isDebug ? "Heartbeat Timeout" : nil) { @MainActor in
+			// No debugName: this timer is cancelled on every received data/log packet, so a per-cancel
+			// debug line would flood the log on busy links. The timeout error below still fires if a
+			// heartbeat truly goes unanswered.
+			self.heartbeatResponseTimer = ResettableTimer(isRepeating: false) { @MainActor in
 				Logger.transport.error("💓 [Heartbeat] Connection Timeout: Did not receive a packet after heartbeat.")
 				// If we're in the middle of a connection cancel it.
 				await self.connectionStepper?.cancel()
@@ -915,7 +1587,7 @@ extension AccessoryManager {
 				}
 			}
 		}
-		await self.heartbeatTimer?.reset(delay: .seconds(15.0))
+		await self.heartbeatTimer?.reset(delay: .seconds(Self.heartbeatInterval))
 	}
 }
 
@@ -927,6 +1599,9 @@ enum PossiblyAlreadyDoneContinuation {
 extension AccessoryManager {
 	func appDidEnterBackground() {
 		if self.state == .uninitialized { return }
+		// Persist any debounced position/telemetry/nodeinfo changes before suspension,
+		// since the debounce timer may not fire while backgrounded.
+		Task { await MeshPackets.shared.flushDebouncedSaves() }
 		if let connection = self.activeConnection?.connection {
 			Logger.transport.info("[AccessoryManager] informing active connection that we are entering the background")
 			Task { await connection.appDidEnterBackground() }
@@ -946,6 +1621,79 @@ extension AccessoryManager {
 				Logger.transport.info("[AccessoryManager] Previosuly in the background but not scanning, starting scanning again")
 				self.startDiscovery()
 			}
+		}
+	}
+}
+
+// MARK: - Passive beacon listen (FR-015 / contract C7)
+
+extension AccessoryManager {
+
+	/// Persist a `MESH_BEACON_APP` beacon heard outside an active scan as a session-less
+	/// `DiscoveredBeaconEntity` (session / presetResult nil). Ignores beacons from the connected
+	/// node itself and de-dupes against a recent identical capture (same node + channel within a
+	/// short window) so a beacon broadcast repeatedly doesn't spam the list.
+	func ingestPassiveBeacon(_ beacon: MeshBeacon, packet: MeshPacket) {
+		let fromNodeNum = Int64(packet.from)
+
+		// Ignore self-beacons (FR-001/FR-002).
+		let connectedNodeNum = Int64(UserDefaults.preferredPeripheralNum)
+		guard fromNodeNum != connectedNodeNum else { return }
+
+		// FR-015: only capture passive beacons when the connected node is configured to listen
+		// (MeshBeaconConfig FLAG_LISTEN_ENABLED). Without the config synced, or with listening off,
+		// we don't store — this is in addition to the "no active scan" gate at the call site.
+		let listenFlags = getNodeInfo(id: connectedNodeNum, context: context)?.meshBeaconConfig?.flags ?? 0
+		guard MeshBeaconFlags.has(listenFlags, MeshBeaconFlags.listenEnabled) else {
+			Logger.mesh.debug("📡 [Beacon] Passive beacon ignored — listening not enabled on connected node")
+			return
+		}
+
+		let hasCustomChannel = beacon.hasOfferChannel && !beacon.offerChannel.name.isEmpty
+		let channelName = hasCustomChannel ? beacon.offerChannel.name : ""
+
+		// De-dupe: skip if we already stored a session-less beacon from this node + channel within the
+		// last 5 minutes. (The session-less check is done in memory to avoid a relationship predicate.)
+		let cutoff = Date().addingTimeInterval(-300)
+		let descriptor = FetchDescriptor<DiscoveredBeaconEntity>(
+			predicate: #Predicate { entity in
+				entity.nodeNum == fromNodeNum
+				&& entity.offerChannelName == channelName
+				&& entity.timestamp > cutoff
+			}
+		)
+		if let existing = try? context.fetch(descriptor),
+		   existing.contains(where: { $0.session == nil }) {
+			return
+		}
+
+		let entity = DiscoveredBeaconEntity()
+		entity.nodeNum = fromNodeNum
+		entity.message = beacon.message
+		entity.offerRegion = beacon.offerRegion != .unset ? beacon.offerRegion.rawValue : 0
+		entity.offerPreset = beacon.hasOfferPreset ? beacon.offerPreset.rawValue : -1
+		entity.hasOfferChannel = hasCustomChannel
+		entity.offerChannelName = channelName
+		entity.offerChannelPSK = hasCustomChannel ? beacon.offerChannel.psk : Data()
+		entity.snr = packet.rxSnr
+		entity.rssi = Int(packet.rxRssi)
+		entity.timestamp = Date()
+		entity.heardOnPresetName = ""
+		// Session-less: heard passively, not during a scan.
+		entity.session = nil
+		entity.presetResult = nil
+
+		if let knownNode = getNodeInfo(id: fromNodeNum, context: context) {
+			entity.shortName = knownNode.user?.shortName ?? ""
+			entity.longName = knownNode.user?.longName ?? ""
+		}
+
+		context.insert(entity)
+		do {
+			try context.save()
+			Logger.mesh.info("📡 [Beacon] Passively captured beacon from \(packet.from.toHex(), privacy: .public) — customChannel \(hasCustomChannel, privacy: .public)")
+		} catch {
+			Logger.data.error("🚫 Failed to persist passive beacon: \(error.localizedDescription, privacy: .public)")
 		}
 	}
 }

@@ -116,6 +116,10 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
   case keyVerificationApp // = 12
 
   ///
+  /// Module/port for handling primitive remote shell access.
+  case remoteShellApp // = 13
+
+  ///
   /// Provides a 'ping' service that replies to any packet it receives.
   /// Also serves as a small example module.
   /// ENCODING: ASCII Plaintext
@@ -144,6 +148,21 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
   /// This module allows setting an extra string of status for a node.
   /// Broadcasts on change and on a timer, possibly once a day.
   case nodeStatusApp // = 36
+
+  ///
+  /// Beacon module broadcast packets.
+  /// ENCODING: protobuf
+  /// Periodically broadcast by nodes in beacon mode; received by nodes with MeshBeaconConfig.FLAG_LISTEN_ENABLED.
+  /// Carries a text message plus optional channel/preset offers for client apps.
+  case meshBeaconApp // = 37
+
+  ///
+  /// Acknowledged paging: alerts a person is expected to physically acknowledge, and the
+  /// acknowledgements themselves.
+  /// ENCODING: protobuf PagingPacket
+  /// Distinct from ALERT_APP, which is a text message the recipient never confirms, and from a
+  /// routing or delivery ACK, which says the packet arrived rather than that someone saw it.
+  case pagingApp // = 38
 
   ///
   /// Provides a hardware serial interface to send and receive from the Meshtastic network.
@@ -213,7 +232,7 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
 
   ///
   /// LoraWAN Payload Transport
-  /// ENCODING: compact binary LoRaWAN uplink (10-byte RF metadata + PHY payload) - see LoRaWANBridgeModule
+  /// ENCODING: LoRaWANBridge protobuf, see lorawan_bridge.proto
   case lorawanBridge // = 75
 
   ///
@@ -226,6 +245,17 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
   /// arbitrary telemetry over meshtastic that is not covered by telemetry.proto
   /// ENCODING: CayenneLLP
   case cayenneApp // = 77
+
+  ///
+  /// ATAK Plugin V2
+  /// Portnum for payloads from the official Meshtastic ATAK plugin using
+  /// TAKPacketV2 with zstd dictionary compression.
+  case atakPluginV2 // = 78
+
+  /// signed firmware updates over lora.
+  ///
+  /// ENCODING: binary (ota-common transport frames)
+  case loraOtaApp // = 79
 
   ///
   /// GroupAlarm integration
@@ -268,11 +298,14 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 10: self = .detectionSensorApp
     case 11: self = .alertApp
     case 12: self = .keyVerificationApp
+    case 13: self = .remoteShellApp
     case 32: self = .replyApp
     case 33: self = .ipTunnelApp
     case 34: self = .paxcounterApp
     case 35: self = .storeForwardPlusplusApp
     case 36: self = .nodeStatusApp
+    case 37: self = .meshBeaconApp
+    case 38: self = .pagingApp
     case 64: self = .serialApp
     case 65: self = .storeForwardApp
     case 66: self = .rangeTestApp
@@ -287,6 +320,8 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 75: self = .lorawanBridge
     case 76: self = .reticulumTunnelApp
     case 77: self = .cayenneApp
+    case 78: self = .atakPluginV2
+    case 79: self = .loraOtaApp
     case 112: self = .groupalarmApp
     case 256: self = .privateApp
     case 257: self = .atakForwarder
@@ -310,11 +345,14 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .detectionSensorApp: return 10
     case .alertApp: return 11
     case .keyVerificationApp: return 12
+    case .remoteShellApp: return 13
     case .replyApp: return 32
     case .ipTunnelApp: return 33
     case .paxcounterApp: return 34
     case .storeForwardPlusplusApp: return 35
     case .nodeStatusApp: return 36
+    case .meshBeaconApp: return 37
+    case .pagingApp: return 38
     case .serialApp: return 64
     case .storeForwardApp: return 65
     case .rangeTestApp: return 66
@@ -329,6 +367,8 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .lorawanBridge: return 75
     case .reticulumTunnelApp: return 76
     case .cayenneApp: return 77
+    case .atakPluginV2: return 78
+    case .loraOtaApp: return 79
     case .groupalarmApp: return 112
     case .privateApp: return 256
     case .atakForwarder: return 257
@@ -352,11 +392,14 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     .detectionSensorApp,
     .alertApp,
     .keyVerificationApp,
+    .remoteShellApp,
     .replyApp,
     .ipTunnelApp,
     .paxcounterApp,
     .storeForwardPlusplusApp,
     .nodeStatusApp,
+    .meshBeaconApp,
+    .pagingApp,
     .serialApp,
     .storeForwardApp,
     .rangeTestApp,
@@ -371,6 +414,8 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
     .lorawanBridge,
     .reticulumTunnelApp,
     .cayenneApp,
+    .atakPluginV2,
+    .loraOtaApp,
     .groupalarmApp,
     .privateApp,
     .atakForwarder,
@@ -382,5 +427,5 @@ public enum PortNum: SwiftProtobuf.Enum, Swift.CaseIterable {
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 extension PortNum: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNKNOWN_APP\0\u{1}TEXT_MESSAGE_APP\0\u{1}REMOTE_HARDWARE_APP\0\u{1}POSITION_APP\0\u{1}NODEINFO_APP\0\u{1}ROUTING_APP\0\u{1}ADMIN_APP\0\u{1}TEXT_MESSAGE_COMPRESSED_APP\0\u{1}WAYPOINT_APP\0\u{1}AUDIO_APP\0\u{1}DETECTION_SENSOR_APP\0\u{1}ALERT_APP\0\u{1}KEY_VERIFICATION_APP\0\u{2}\u{14}REPLY_APP\0\u{1}IP_TUNNEL_APP\0\u{1}PAXCOUNTER_APP\0\u{1}STORE_FORWARD_PLUSPLUS_APP\0\u{1}NODE_STATUS_APP\0\u{2}\u{1c}SERIAL_APP\0\u{1}STORE_FORWARD_APP\0\u{1}RANGE_TEST_APP\0\u{1}TELEMETRY_APP\0\u{1}ZPS_APP\0\u{1}SIMULATOR_APP\0\u{1}TRACEROUTE_APP\0\u{1}NEIGHBORINFO_APP\0\u{1}ATAK_PLUGIN\0\u{1}MAP_REPORT_APP\0\u{1}POWERSTRESS_APP\0\u{1}LORAWAN_BRIDGE\0\u{1}RETICULUM_TUNNEL_APP\0\u{1}CAYENNE_APP\0\u{2}#GROUPALARM_APP\0\u{2}P\u{2}PRIVATE_APP\0\u{1}ATAK_FORWARDER\0\u{2}~\u{3}MAX\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNKNOWN_APP\0\u{1}TEXT_MESSAGE_APP\0\u{1}REMOTE_HARDWARE_APP\0\u{1}POSITION_APP\0\u{1}NODEINFO_APP\0\u{1}ROUTING_APP\0\u{1}ADMIN_APP\0\u{1}TEXT_MESSAGE_COMPRESSED_APP\0\u{1}WAYPOINT_APP\0\u{1}AUDIO_APP\0\u{1}DETECTION_SENSOR_APP\0\u{1}ALERT_APP\0\u{1}KEY_VERIFICATION_APP\0\u{1}REMOTE_SHELL_APP\0\u{2}\u{13}REPLY_APP\0\u{1}IP_TUNNEL_APP\0\u{1}PAXCOUNTER_APP\0\u{1}STORE_FORWARD_PLUSPLUS_APP\0\u{1}NODE_STATUS_APP\0\u{1}MESH_BEACON_APP\0\u{1}PAGING_APP\0\u{2}\u{1a}SERIAL_APP\0\u{1}STORE_FORWARD_APP\0\u{1}RANGE_TEST_APP\0\u{1}TELEMETRY_APP\0\u{1}ZPS_APP\0\u{1}SIMULATOR_APP\0\u{1}TRACEROUTE_APP\0\u{1}NEIGHBORINFO_APP\0\u{1}ATAK_PLUGIN\0\u{1}MAP_REPORT_APP\0\u{1}POWERSTRESS_APP\0\u{1}LORAWAN_BRIDGE\0\u{1}RETICULUM_TUNNEL_APP\0\u{1}CAYENNE_APP\0\u{1}ATAK_PLUGIN_V2\0\u{1}LORA_OTA_APP\0\u{2}!GROUPALARM_APP\0\u{2}P\u{2}PRIVATE_APP\0\u{1}ATAK_FORWARDER\0\u{2}~\u{3}MAX\0")
 }

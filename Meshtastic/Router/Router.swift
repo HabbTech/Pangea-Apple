@@ -1,5 +1,5 @@
 import Combine
-import CoreData
+import SwiftData
 import OSLog
 import SwiftUI
 
@@ -9,49 +9,102 @@ class Router: ObservableObject {
 	@Published
 	var selectedTab: NavigationState.Tab
 
+	/// Transient deep-link *command* for the Messages tab (carries the channelId/userNum payload).
+	/// Set by `route(url:)` / restoration and consumed exactly once by the Messages view, which
+	/// resolves it into a selected conversation and then clears it. Kept separate from
+	/// `messagesSection` so the one-shot payload never reaches the sidebar selection and so a later
+	/// tab re-appear can't re-resolve it and snap the user back into the notified conversation.
 	@Published
 	var messagesState: MessagesNavigationState?
 
+	/// Durable, payload-free Messages sidebar/section selection (`.channels()` / `.directMessages()`
+	/// / nil). Drives the sidebar `List` selection and the content column. Because it only ever
+	/// holds payload-free values it always matches a sidebar row, keeping the collapsed
+	/// `NavigationSplitView` back stack intact. Survives across tab switches; reset by `popToRoot`.
 	@Published
-	var nodeListSelectedNodeNum: Int64?
+	var messagesSection: MessagesNavigationState?
 
 	@Published
 	var mapState: MapNavigationState?
 
 	@Published
-	var settingsState: SettingsNavigationState?
+	var settingsPath: [SettingsNavigationState] = []
+
+	/// The control a search result asked for, cleared by the screen that honours it.
+	/// Separate from `settingsPath` because the path is also how deep links and restored
+	/// state name a screen, and neither singles out a control.
+	///
+	/// Set it through `navigate(toSetting:focusing:)` rather than directly: a request
+	/// left behind by navigation that never reached the screen owning that field would
+	/// be picked up later by whichever screen does own it.
+	@Published
+	private(set) var settingsFieldFocus: FieldIdentity?
+
+	/// Opens a settings screen, optionally asking it to single out one control.
+	/// Any earlier request is dropped, so only the most recent navigation can scroll.
+	func navigate(toSetting setting: SettingsNavigationState, focusing field: FieldIdentity? = nil) {
+		settingsFieldFocus = field
+		settingsPath = [setting]
+	}
+
+	/// Called by the screen that honoured the request, and by any navigation that did
+	/// not come from a search result.
+	func clearSettingsFieldFocus() {
+		settingsFieldFocus = nil
+	}
+
+	@Published
+	var discoveryShowHistory: Bool = false
 
 	/// Computed property that assembles the individual per-tab properties into a `NavigationState`.
 	/// Provided for backward compatibility (e.g. tests) and convenience.
-	/// Use the individual `@Published` properties to mutate navigation state.
 	var navigationState: NavigationState {
-		NavigationState(
-			selectedTab: selectedTab,
-			messages: messagesState,
-			nodeListSelectedNodeNum: nodeListSelectedNodeNum,
-			map: mapState,
-			settings: settingsState
-		)
+		get {
+			return NavigationState(
+				selectedTab: selectedTab,
+				messages: messagesState,
+				nodeListSelectedNodeNum: selectedNodeNum,
+				map: mapState,
+				settings: settingsPath.last
+			)
+		}
+		set {
+			selectedTab = newValue.selectedTab
+			messagesState = newValue.messages
+			messagesSection = newValue.messages?.sidebarSection
+			selectedNodeNum = newValue.nodeListSelectedNodeNum
+			mapState = newValue.map
+			if let setting = newValue.settings {
+				settingsPath = [setting]
+				settingsFieldFocus = nil
+			} else {
+				settingsPath = []
+				settingsFieldFocus = nil
+			}
+		}
 	}
+
+	/// The currently selected node in the NavigationSplitView detail pane.
+	@Published var selectedNodeNum: Int64?
 
 	// MARK: Node Object ID Cache
 
-	/// In-memory cache mapping node numbers to their Core Data `NSManagedObjectID` for O(1) lookups.
+	/// In-memory cache mapping node numbers to their SwiftData `PersistentIdentifier` for O(1) lookups.
 	/// Thread-safe by virtue of Router's @MainActor isolation — all access is on the main thread.
-	private var nodeObjectIDCache: [Int64: NSManagedObjectID] = [:]
+	private var nodeObjectIDCache: [Int64: PersistentIdentifier] = [:]
 
 	/// Updates the node cache from a set of fetched nodes. Call this when the node list changes.
 	func updateNodeIndex<C: Collection>(from nodes: C) where C.Element: NodeInfoEntity {
 		nodeObjectIDCache = Dictionary(
-			nodes.map { ($0.num, $0.objectID) },
+			nodes.map { ($0.num, $0.persistentModelID) },
 			uniquingKeysWith: { _, new in new }
 		)
 	}
 
-	/// Looks up a node using the in-memory cache for O(1) performance, falling back to a Core Data fetch.
-	func cachedNodeInfo(id: Int64, context: NSManagedObjectContext) -> NodeInfoEntity? {
-		if let objectID = nodeObjectIDCache[id] {
-			if let node = try? context.existingObject(with: objectID) as? NodeInfoEntity {
+	/// Looks up a node using the in-memory cache for O(1) performance, falling back to a SwiftData fetch.
+	func cachedNodeInfo(id: Int64, context: ModelContext) -> NodeInfoEntity? {
+		if let persistentID = nodeObjectIDCache[id] {
+			if let node = context.model(for: persistentID) as? NodeInfoEntity {
 				return node
 			}
 			// Stale entry (object deleted or faulted) — evict and fall back to a fresh fetch
@@ -60,7 +113,7 @@ class Router: ObservableObject {
 		// Cache miss — fall back to standard fetch
 		let node = getNodeInfo(id: id, context: context)
 		if let node {
-			nodeObjectIDCache[id] = node.objectID
+			nodeObjectIDCache[id] = node.persistentModelID
 		}
 		return node
 	}
@@ -74,9 +127,15 @@ class Router: ObservableObject {
 	) {
 		self.selectedTab = navigationState.selectedTab
 		self.messagesState = navigationState.messages
-		self.nodeListSelectedNodeNum = navigationState.nodeListSelectedNodeNum
+		self.messagesSection = navigationState.messages?.sidebarSection
+		if let num = navigationState.nodeListSelectedNodeNum {
+			self.selectedNodeNum = num
+		}
 		self.mapState = navigationState.map
-		self.settingsState = navigationState.settings
+		if let setting = navigationState.settings {
+			self.settingsPath = [setting]
+			settingsFieldFocus = nil
+		}
 
 		$selectedTab.sink { tab in
 			Logger.services.info("🛣 [App] Routed to \(tab.rawValue, privacy: .public)")
@@ -135,6 +194,7 @@ class Router: ObservableObject {
 		}
 		selectedTab = .messages
 		messagesState = state
+		messagesSection = state?.sidebarSection
 	}
 
 	private func routeNodes(_ components: URLComponents) {
@@ -144,12 +204,45 @@ class Router: ObservableObject {
 			.flatMap(Int64.init)
 
 		selectedTab = .nodes
-		nodeListSelectedNodeNum = nodeId
+		if let nodeId {
+			selectedNodeNum = nodeId
+		} else {
+			selectedNodeNum = nil
+		}
 	}
+
 	func navigateToNodeDetail(nodeNum: Int64) {
 		Logger.services.info("🛣 [App] Direct route to node detail \(nodeNum, privacy: .public)")
 		selectedTab = .nodes
-		nodeListSelectedNodeNum = nodeNum
+		selectedNodeNum = nodeNum
+	}
+
+	func popToRoot(tab: NavigationState.Tab) {
+		switch tab {
+		case .messages:
+			messagesState = nil
+			messagesSection = nil
+		case .nodes:
+			selectedNodeNum = nil
+		case .map:
+			mapState = nil
+		case .settings:
+			settingsPath = []
+			settingsFieldFocus = nil
+		default:
+			break
+		}
+	}
+
+	/// Drops every detail stack in this window. Leaves `selectedTab` alone so a
+	/// store reset can unmount doomed model objects without dragging every
+	/// window onto the same tab.
+	func popAllStacks() {
+		popToRoot(tab: .messages)
+		popToRoot(tab: .nodes)
+		popToRoot(tab: .map)
+		popToRoot(tab: .settings)
+		discoveryShowHistory = false
 	}
 
 	private func routeMap(_ components: URLComponents) {
@@ -161,26 +254,116 @@ class Router: ObservableObject {
 			.first(where: { $0.name == "waypointId" })?
 			.value
 			.flatMap(Int64.init)
+		let traceRouteId = components.queryItems?
+			.first(where: { $0.name == "tracerouteId" })?
+			.value
+			.flatMap(Int64.init)
 
 		selectedTab = .map
 		mapState = if let nodeId {
 			.selectedNode(nodeId)
 		} else if let waypointId {
 			.waypoint(waypointId)
+		} else if let traceRouteId {
+			.traceRoute(traceRouteId)
 		} else {
 			nil
 		}
 	}
 
+	/// Imports a GeoJSON map overlay handed to the app as a file URL — e.g. via "Open in Meshtastic"
+	/// from the Share Sheet, the Files app, or a drag-and-drop — reusing the same pipeline as the
+	/// in-app file picker. Called from `onOpenURL` for file URLs, which is a distinct path from
+	/// `route(url:)` (that only handles `meshtastic://` scheme URLs).
+	func importMapFile(url: URL) {
+		if OfflineMapImportValidator.format(for: url) != nil {
+			importOfflineMap(url: url)
+			return
+		}
+		selectedTab = .map
+
+		Task {
+			do {
+				let metadata = try await MapDataManager.shared.processUploadedFile(from: url)
+				Logger.services.info("🗺️ [App] Imported '\(metadata.originalName, privacy: .public)' (\(metadata.overlayCount, privacy: .public) overlays) via Open In.")
+			} catch {
+				Logger.services.error("🗺️ [App] Open In GeoJSON import failed: \(error.localizedDescription, privacy: .public)")
+			}
+		}
+	}
+
+	/// Imports an offline basemap handed to the app through Files, AirDrop, or Open In.
+	func importOfflineMap(url: URL) {
+		selectedTab = .map
+		let hasAccess = url.startAccessingSecurityScopedResource()
+		Task { @MainActor in
+			defer {
+				if hasAccess { url.stopAccessingSecurityScopedResource() }
+			}
+			do {
+				let region = try await OfflineMapManager.shared.importOfflineMap(from: url)
+				Logger.services.info("🗺️ [Offline] Imported '\(region.name, privacy: .private)' via Open In.")
+			} catch {
+				Logger.services.error("🗺️ [Offline] Map archive import failed: \(error.localizedDescription, privacy: .private)")
+			}
+		}
+	}
+
 	private func routeSettings(_ components: URLComponents) {
-		let settingFromPath = components.path
+		let segments = components.path
 			.split(separator: "/")
 			.dropFirst()
-			.first
-			.flatMap(String.init)
+			.map(String.init)
+
+		let settingFromPath = segments.first
 			.flatMap(SettingsNavigationState.init(rawValue:))
 
 		selectedTab = .settings
-		settingsState = settingFromPath
+		if let settingFromPath {
+			settingsPath = [settingFromPath]
+			settingsFieldFocus = nil
+		} else {
+			settingsPath = []
+			settingsFieldFocus = nil
+		}
+
+		if settingFromPath == .localMeshDiscovery && segments.count > 1 && segments[1] == "history" {
+			discoveryShowHistory = true
+		}
+	}
+}
+
+/// The open windows' routers.
+///
+/// A node switch has to pop detail views on every window before it touches the
+/// store, and that pop has to happen in the call, not on a later `onChange`:
+/// the views are still mounted, holding model objects the reset is about to
+/// destroy. Each window registers the router it owns. This does not own a tab.
+///
+/// Not itself main-actor isolated: `AppState` is created and passed into the
+/// packet actor, and a main-actor type cannot live on it. Every method hops
+/// to the main actor before touching a router. The dictionary is only used
+/// from those methods.
+final class SceneRouters: @unchecked Sendable {
+	private var routers: [UUID: Router] = [:]
+
+	@MainActor
+	@discardableResult
+	func register(_ router: Router) -> UUID {
+		let id = UUID()
+		routers[id] = router
+		return id
+	}
+
+	@MainActor
+	func unregister(_ id: UUID) {
+		routers.removeValue(forKey: id)
+	}
+
+	@MainActor
+	func popAllStacks() {
+		for router in Array(routers.values) {
+			router.popAllStacks()
+		}
 	}
 }

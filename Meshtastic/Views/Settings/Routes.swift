@@ -6,14 +6,15 @@
 //
 
 import SwiftUI
-import CoreData
+import SwiftData
 import MapKit
 import OSLog
 
 struct Routes: View {
 
 	@State private var columnVisibility = NavigationSplitViewVisibility.doubleColumn
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@State private var selectedRoute: RouteEntity?
 	@State private var importing = false
@@ -27,9 +28,9 @@ struct Routes: View {
 	@State var enabled = true
 	@State var color = Color(red: 51, green: 199, blue: 88)
 
-	@FetchRequest(sortDescriptors: [NSSortDescriptor(key: "enabled", ascending: false), NSSortDescriptor(key: "name", ascending: true), NSSortDescriptor(key: "date", ascending: false)], animation: .default)
-
-	var routes: FetchedResults<RouteEntity>
+	@Query(sort: [SortDescriptor(\RouteEntity.name, order: .forward),
+				  SortDescriptor(\RouteEntity.date, order: .reverse)])
+	var routes: [RouteEntity]
 	var body: some View {
 
 		VStack {
@@ -72,7 +73,8 @@ struct Routes: View {
 								}
 							}
 							if latIndex >= 0 && longIndex >= 0 {
-								let newRoute = RouteEntity(context: context)
+								let newRoute = RouteEntity()
+								context.insert(newRoute)
 								newRoute.name = String(routeName)
 								newRoute.id = Int32.random(in: Int32(Int8.max) ... Int32.max)
 								newRoute.color = Int64(UIColor.random.hex)
@@ -84,13 +86,22 @@ struct Routes: View {
 									if data.count > 1 {
 										let latitude = latIndex >= 0 ? data[latIndex].trimmingCharacters(in: .whitespaces) : "0"
 										let longitude = longIndex >= 0 ? data[longIndex].trimmingCharacters(in: .whitespaces) : "0"
-										let loc = LocationEntity(context: context)
-										loc.latitudeI = Int32((Double(latitude) ?? 0) * 1e7)
-										loc.longitudeI = Int32((Double(longitude) ?? 0) * 1e7)
+										let loc = LocationEntity()
+										context.insert(loc)
+										// Clamp to valid coordinate ranges (and reject non-finite) before scaling:
+										// a malformed CSV cell (huge value, 1e400 -> inf, or nan) would otherwise
+										// make Int32(Double) trap and crash the import. Clamped × 1e7 stays well
+										// within Int32, so the conversion below can no longer overflow.
+										let latValue = Double(latitude) ?? 0
+										let lonValue = Double(longitude) ?? 0
+										let safeLat = latValue.isFinite ? min(max(latValue, -90), 90) : 0
+										let safeLon = lonValue.isFinite ? min(max(lonValue, -180), 180) : 0
+										loc.latitudeI = Int32(safeLat * 1e7)
+										loc.longitudeI = Int32(safeLon * 1e7)
 										newLocations.append(loc)
 									}
 								}
-								newRoute.locations? = NSOrderedSet(array: newLocations)
+								newRoute.locations = newLocations
 								do {
 									try context.save()
 								} catch let error as NSError {
@@ -118,7 +129,7 @@ struct Routes: View {
 								.padding(.top)
 								.foregroundStyle(.primary)
 
-							Text("\(route.date?.formatted() ?? "Unknown Time")")
+							Text("\(route.date?.formatted(date: .numeric, time: .shortened) ?? "Unknown Time")")
 								.padding(.bottom)
 								.font(.callout)
 								.foregroundColor(.gray)
@@ -143,7 +154,7 @@ struct Routes: View {
 							}
 						}
 					}
-					.badge(Text("\(Image(systemName: "mappin.and.ellipse")) \(route.locations?.count ?? 0)"))
+					.badge(Text("\(Image(systemName: "mappin.and.ellipse")) \(route.locations.count)"))
 							.font(.headline)
 					.swipeActions {
 						Button(role: .destructive) {
@@ -163,7 +174,7 @@ struct Routes: View {
 			} else {
 				VStack {
 					if selectedRoute != nil {
-						let locationArray = selectedRoute?.locations?.array as? [LocationEntity] ?? []
+						let locationArray = selectedRoute?.locations ?? []
 						let lineCoords = locationArray.compactMap({(location) -> CLLocationCoordinate2D in
 							return location.locationCoordinate ?? LocationsHandler.DefaultLocation
 						})
@@ -187,7 +198,7 @@ struct Routes: View {
 								Label("Enabled", systemImage: "point.topleft.filled.down.to.point.bottomright.curvepath")
 								Text("Show on the mesh map.")
 							}
-							.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+							.toggleStyle(.switch)
 
 							ColorPicker("Color", selection: $color, supportsOpacity: false)
 
@@ -225,7 +236,6 @@ struct Routes: View {
 									selectedRoute = nil
 									Logger.data.info("💾 Saved a route")
 								} catch {
-									context.rollback()
 									let nsError = error as NSError
 									Logger.data.error("Error Saving RouteEntity from the Route Editor \(nsError, privacy: .public)")
 								}
@@ -274,9 +284,9 @@ struct Routes: View {
 								.stroke(Color(UIColor(hex: UInt32(selectedRoute?.color ?? 0))), style: solid)
 						}
 						.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-						.safeAreaInset(edge: .bottom, alignment: UIDevice.current.userInterfaceIdiom == .phone ? .leading : .trailing) {
+						.safeAreaInset(edge: .bottom, alignment: horizontalSizeClass == .regular ? .trailing : .leading) {
 							Button {
-								exportString = routeToCsvFile(locations: selectedRoute!.locations!.array as? [LocationEntity] ?? [])
+								exportString = routeToCsvFile(locations: selectedRoute?.locations ?? [])
 								isExporting = true
 							} label: {
 								Label("Export", systemImage: "square.and.arrow.down")
@@ -293,7 +303,7 @@ struct Routes: View {
 					isPresented: $isExporting,
 					document: CsvDocument(emptyCsv: exportString),
 					contentType: .commaSeparatedText,
-					defaultFilename: String("\(selectedRoute?.name ?? "Route") Log"),
+					defaultFilename: CsvDocument.exportFilename("\(selectedRoute?.name ?? "Route") Log"),
 					onCompletion: { result in
 						switch result {
 						case .success:

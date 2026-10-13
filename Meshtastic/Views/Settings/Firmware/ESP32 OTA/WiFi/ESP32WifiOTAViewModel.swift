@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Network
 import CryptoKit
 import Combine
@@ -24,28 +25,90 @@ class ESP32WifiOTAViewModel: ObservableObject {
 	
 	// MARK: - Public Interface
 	
+	/// What the radio said about the update it was asked to start. A refusal arrives while
+	/// the app is still waiting for the device to come up in update mode, and it is a far
+	/// better error than the timeout that would otherwise be reported.
+	@Published private(set) var deviceRefusal: String?
+
+	/// The last thing the radio said about this update, recognized or not. A message we
+	/// cannot classify does not end the update, but if the update then fails anyway the
+	/// radio's own words are a better error than the timeout.
+	private var lastDeviceNotice: String?
+
 	func retry() {
 		self.progress = 0
 		self.statusMessage = "Idle"
 		self.errorMessage = nil
+		self.deviceRefusal = nil
+		self.lastDeviceNotice = nil
 		self.otaState = .idle
+	}
+
+	/// End the update before any bytes are sent, and say why. The sheet shows
+	/// `statusMessage`, so the reason has to land there and not only in the log.
+	func reportFailure(_ message: String) {
+		errorMessage = message
+		statusMessage = message
+		otaState = .error
+	}
+
+	func handleDeviceNotice(_ message: String) {
+		guard otaState != .completed, otaState != .error else { return }
+		lastDeviceNotice = message
+		switch OTARefusal.classify(message) {
+		case .refused(let explanation):
+			statusMessage = explanation
+			errorMessage = explanation
+			deviceRefusal = explanation
+			otaState = .error
+		case .progress(let text):
+			statusMessage = text
+		case nil:
+			// Not a sentence we know. Show it, but leave the update running: it may be
+			// unrelated, and firmware wording changes.
+			statusMessage = message
+		}
 	}
 	
 	func startUpdate(host: String? = nil, firmwareUrl: URL, password: String? = nil) async {
 		guard otaState == .idle || otaState == .error else { return }
+
+		// A hostname here would be resolved again. Every node answers Meshtastic.local,
+		// and the loader does not answer mDNS, so only an IPv4 literal is dialed.
+		if let manualHost = host,
+		   !manualHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+		   WifiOTAHandoffAddress.ipv4Literal(manualHost) == nil {
+			Logger.services.error("[ESP OTA] \(OTAError.missingIPv4Address, privacy: .public)")
+			reportFailure(OTAError.missingIPv4Address)
+			return
+		}
+		
+		UIApplication.shared.isIdleTimerDisabled = true
+		defer {
+			UIApplication.shared.isIdleTimerDisabled = false
+		}
 		
 		progress = 0.0
 		errorMessage = nil
+		deviceRefusal = nil
+		lastDeviceNotice = nil
 		statusMessage = "Starting..."
 		otaState = .waitingForConnection
 		
 		do {
-			let firmwareData = try Data(contentsOf: firmwareUrl)
+			let (firmwareData, fileHash) = try await Task.detached(priority: .userInitiated) {
+				let data = try Data(contentsOf: firmwareUrl, options: .mappedIfSafe)
+				let digest = SHA256.hash(data: data)
+				let hash = digest.map { String(format: "%02hhx", $0) }.joined()
+				return (data, hash)
+			}.value
+			
 			let targetEndpoint: NWEndpoint
 			
 			// 1. Discovery / Connection Phase
-			if let manualHost = host, !manualHost.isEmpty {
-				Logger.services.info("[ESP OTA] Using manual host: \(manualHost)")
+			if let manualHost = WifiOTAHandoffAddress.ipv4Literal(host) {
+				// The address was taken from the live socket before the reboot. Dial it as written.
+				Logger.services.info("[ESP OTA] Using manual host: \(manualHost, privacy: .private)")
 				targetEndpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(manualHost), port: port)
 				
 				statusMessage = "Waiting for device..."
@@ -60,7 +123,7 @@ class ESP32WifiOTAViewModel: ObservableObject {
 			statusMessage = "Device ready. Negotiating..."
 			Logger.services.info("[ESP OTA] Device Ready at \(String(describing: targetEndpoint)). Starting Protocol.")
 			
-			try await connectAndUpload(endpoint: targetEndpoint, data: firmwareData)
+			try await connectAndUpload(endpoint: targetEndpoint, data: firmwareData, fileHash: fileHash)
 			
 			// 3. Success
 			// Explicitly force progress to 1.0 to ensure Checkmark appears
@@ -70,16 +133,18 @@ class ESP32WifiOTAViewModel: ObservableObject {
 			Logger.services.info("[ESP OTA] Update Complete")
 			
 		} catch {
-			Logger.services.error("[ESP OTA] Error: \(error.localizedDescription)")
-			errorMessage = error.localizedDescription
-			statusMessage = "Failed"
+			// The radio's own reason beats the timeout, which is only ever the symptom of it.
+			let reason = deviceRefusal ?? lastDeviceNotice ?? error.localizedDescription
+			Logger.services.error("[ESP OTA] Error: \(reason, privacy: .public)")
+			errorMessage = reason
+			statusMessage = deviceRefusal ?? "Failed"
 			otaState = .error
 		}
 	}
 	
 	// MARK: - TCP Protocol Logic
 	
-	private func connectAndUpload(endpoint: NWEndpoint, data: Data) async throws {
+	private func connectAndUpload(endpoint: NWEndpoint, data: Data, fileHash: String) async throws {
 		let connection = NWConnection(to: endpoint, using: .tcp)
 		let reader = AsyncLineReader(connection: connection)
 		
@@ -88,8 +153,6 @@ class ESP32WifiOTAViewModel: ObservableObject {
 		try await waitForConnectionReady(connection)
 		
 		// 2. Prepare Command
-		let sha256Digest = SHA256.hash(data: data)
-		let fileHash = sha256Digest.map { String(format: "%02hhx", $0) }.joined()
 		let command = "OTA \(data.count) \(fileHash)\n"
 		
 		Logger.services.info("[ESP OTA] Sending Command: \(command)")
@@ -219,6 +282,7 @@ class ESP32WifiOTAViewModel: ObservableObject {
 	private func waitForManualHostReboot(endpoint: NWEndpoint) async throws {
 		let deadline = Date().addingTimeInterval(connectionTimeout)
 		while Date() < deadline {
+			try Task.checkCancellation()
 			if await probeTcpConnection(endpoint: endpoint) { return }
 			try await Task.sleep(for: .seconds(1))
 		}
@@ -236,7 +300,7 @@ class ESP32WifiOTAViewModel: ObservableObject {
 					hasResumed = true
 					connection.cancel()
 					continuation.resume(returning: true)
-				case .failed(_), .waiting(_):
+				case .failed, .waiting:
 					hasResumed = true
 					connection.cancel()
 					continuation.resume(returning: false)
@@ -256,7 +320,7 @@ class ESP32WifiOTAViewModel: ObservableObject {
 			let hasResumed = OSAllocatedUnfairLock(initialState: false)
 			listener.newConnectionHandler = { newConnection in
 				newConnection.start(queue: .global())
-				newConnection.receiveMessage { data, context, isComplete, error in
+				newConnection.receiveMessage { data, _, _, _ in
 					if let data = data, let message = String(data: data, encoding: .utf8) {
 						if message.hasPrefix("MeshtasticOTA") {
 							hasResumed.withLock { resumed in
@@ -311,7 +375,7 @@ class ESP32WifiOTAViewModel: ObservableObject {
 		}
 	}
 	
-	nonisolated private func withTimeout<T>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+	nonisolated private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @escaping @Sendable () async throws -> T) async throws -> T {
 		return try await withThrowingTaskGroup(of: T.self) { group in
 			group.addTask { return try await operation() }
 			group.addTask {
@@ -396,12 +460,38 @@ actor AsyncLineReader {
 	}
 }
 
+/// Which address to dial on port 3232 after the radio reboots into the loader.
+///
+/// An IPv4 literal is used as given (the debug Device IP field). Otherwise the
+/// address is the peer of the socket that is already connected. A hostname is
+/// never returned: looking up Meshtastic.local again can reach a different radio,
+/// and the loader does not answer that name.
+enum WifiOTAHandoffAddress {
+	static func resolve(providedHost: String?, connectedPeerIPv4: String?) -> String? {
+		if let literal = ipv4Literal(providedHost) {
+			return literal
+		}
+		return ipv4Literal(connectedPeerIPv4)
+	}
+
+	static func ipv4Literal(_ host: String?) -> String? {
+		guard let host else { return nil }
+		let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty, Network.IPv4Address(trimmed) != nil else { return nil }
+		return trimmed
+	}
+}
+
 // MARK: - Extensions & Errors
 enum OTAError: Error, LocalizedError {
+	/// Shown when the handoff has no IPv4 address to dial. Not a hostname fallback.
+	static let missingIPv4Address = "This connection has no IPv4 address. Wi-Fi update dials that address after the radio reboots, so the update was not started."
+
 	case connectionFailed
 	case unexpectedResponse(String)
 	case discoveryFailed
 	case timeout
+	case notAnIPv4Address
 	
 	var errorDescription: String? {
 		switch self {
@@ -409,6 +499,7 @@ enum OTAError: Error, LocalizedError {
 		case .connectionFailed: return "Failed to establish connection."
 		case .discoveryFailed: return "Could not discover ESP32."
 		case .unexpectedResponse(let r): return "Error from device: \(r)"
+		case .notAnIPv4Address: return Self.missingIPv4Address
 		}
 	}
 }

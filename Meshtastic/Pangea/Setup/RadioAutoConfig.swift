@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import OSLog
 
@@ -44,7 +44,7 @@ enum RadioAutoConfig {
 		case "RU": return .ru
 		case "IN": return .in
 		case "TH": return .th
-		case "UA": return .ua868
+		case "UA": return .eu868 // UA 868 was folded into EU 868 (firmware #10994)
 		case "MY": return .my919
 		case "SG": return .sg923
 		case "PH": return .ph915
@@ -145,6 +145,17 @@ enum RadioAutoConfig {
 		(defaults.dictionary(forKey: pairingCodeAttemptsKey)?[String(num)] as? Int) ?? 0
 	}
 
+	/// The same radio now reports another node number (see `NodeRenumber`): its tries go with it,
+	/// or a radio that refused twice would be sent the change twice more.
+	static func renumberPairingCodeAttempts(from oldNum: Int64, to newNum: Int64, defaults: UserDefaults = .standard) {
+		let attempts = pairingCodeAttempts(for: oldNum, defaults: defaults)
+		guard attempts > 0 else { return }
+		setPairingCodeAttempts(max(attempts, pairingCodeAttempts(for: newNum, defaults: defaults)), for: newNum, defaults: defaults)
+		var all = defaults.dictionary(forKey: pairingCodeAttemptsKey) ?? [:]
+		all[String(oldNum)] = nil
+		defaults.set(all, forKey: pairingCodeAttemptsKey)
+	}
+
 	static func setPairingCodeAttempts(_ attempts: Int, for num: Int64, defaults: UserDefaults = .standard) {
 		var all = defaults.dictionary(forKey: pairingCodeAttemptsKey) ?? [:]
 		all[String(num)] = attempts
@@ -159,8 +170,11 @@ enum RadioAutoConfig {
 	/// no code isn't proof the radio took it.
 	@MainActor
 	static func turnOffPairingCode(accessoryManager: AccessoryManager) async {
+		// A fresh context, as readiness uses: the config is saved by the packet actor and the
+		// main context can lag behind it when the radio first turns ready.
+		let context = ModelContext(accessoryManager.context.container)
 		guard let num = accessoryManager.activeDeviceNum,
-			  let node = getNodeInfo(id: num, context: accessoryManager.context),
+			  let node = getNodeInfo(id: num, context: context),
 			  let user = node.user,
 			  let bluetooth = node.bluetoothConfig,
 			  needsCodeTurnedOff(mode: bluetooth.mode, expertMode: UserDefaults.expertModeEnabled) else { return }

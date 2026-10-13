@@ -25,6 +25,44 @@ struct RouterTests {
 		#expect(state == custom)
 	}
 
+	@Test func popAllStacksKeepsTheTab() async {
+		let router = await Router(navigationState: NavigationState(
+			selectedTab: .settings,
+			messages: .channels(),
+			nodeListSelectedNodeNum: 5,
+			map: .waypoint(9),
+			settings: .lora
+		))
+		await router.popAllStacks()
+		let state = await router.navigationState
+		#expect(state.selectedTab == .settings)
+		#expect(state.messages == nil)
+		#expect(state.nodeListSelectedNodeNum == nil)
+		#expect(state.map == nil)
+		#expect(state.settings == nil)
+	}
+
+	@Test func poppingEverySceneKeepsEachTab() async {
+		let messages = await Router(navigationState: NavigationState(
+			selectedTab: .messages,
+			messages: .directMessages()
+		))
+		let nodes = await Router(navigationState: NavigationState(
+			selectedTab: .nodes,
+			nodeListSelectedNodeNum: 3
+		))
+		let registry = SceneRouters()
+		let messagesToken = await registry.register(messages)
+		let nodesToken = await registry.register(nodes)
+		await registry.popAllStacks()
+		#expect(await messages.selectedTab == .messages)
+		#expect(await messages.messagesState == nil)
+		#expect(await nodes.selectedTab == .nodes)
+		#expect(await nodes.selectedNodeNum == nil)
+		await registry.unregister(messagesToken)
+		await registry.unregister(nodesToken)
+	}
+
 	// MARK: - Invalid URL Handling
 
 	@Test func invalidSchemeIsIgnored() async throws {
@@ -200,6 +238,7 @@ struct RouterTests {
 		("position", SettingsNavigationState.position),
 		("power", SettingsNavigationState.power),
 		("ambientLighting", SettingsNavigationState.ambientLighting),
+		("audio", SettingsNavigationState.audio),
 		("cannedMessages", SettingsNavigationState.cannedMessages),
 		("detectionSensor", SettingsNavigationState.detectionSensor),
 		("externalNotification", SettingsNavigationState.externalNotification),
@@ -211,6 +250,7 @@ struct RouterTests {
 		("security", SettingsNavigationState.security),
 		("storeAndForward", SettingsNavigationState.storeAndForward),
 		("telemetry", SettingsNavigationState.telemetry),
+		("trafficManagement", SettingsNavigationState.trafficManagement),
 		("debugLogs", SettingsNavigationState.debugLogs),
 		("appFiles", SettingsNavigationState.appFiles),
 		("firmwareUpdates", SettingsNavigationState.firmwareUpdates),
@@ -238,6 +278,78 @@ struct RouterTests {
 		let state = await router.navigationState
 		#expect(state.selectedTab == .nodes)
 		#expect(state.nodeListSelectedNodeNum == 9876543210)
+	}
+
+	@Test func navigateToNodeDetailClearsExistingPath() async {
+		let router = await Router()
+		await router.navigateToNodeDetail(nodeNum: 111)
+		await router.navigateToNodeDetail(nodeNum: 222)
+		let state = await router.navigationState
+		#expect(state.nodeListSelectedNodeNum == 222)
+		let selected = await router.selectedNodeNum
+		#expect(selected == 222)
+	}
+
+	// MARK: - popToRoot
+
+	@Test func popToRootNodes() async {
+		let router = await Router()
+		await router.navigateToNodeDetail(nodeNum: 42)
+		await router.popToRoot(tab: .nodes)
+		let selected = await router.selectedNodeNum
+		#expect(selected == nil)
+		let state = await router.navigationState
+		#expect(state.nodeListSelectedNodeNum == nil)
+	}
+
+	@Test func popToRootMessages() async {
+		let router = await Router()
+		let url = URL(string: "meshtastic:///messages?channelId=1")!
+		await router.route(url: url)
+		let msgBefore = await router.messagesState
+		#expect(msgBefore != nil)
+		await router.popToRoot(tab: .messages)
+		let msgAfter = await router.messagesState
+		#expect(msgAfter == nil)
+	}
+
+	@Test func popToRootMap() async {
+		let router = await Router()
+		let url = URL(string: "meshtastic:///map?nodenum=99")!
+		await router.route(url: url)
+		let mapBefore = await router.mapState
+		#expect(mapBefore != nil)
+		await router.popToRoot(tab: .map)
+		let mapAfter = await router.mapState
+		#expect(mapAfter == nil)
+	}
+
+	@Test func popToRootSettings() async {
+		let router = await Router()
+		let url = URL(string: "meshtastic:///settings/about")!
+		await router.route(url: url)
+		await router.popToRoot(tab: .settings)
+		let pathCount = await router.settingsPath.count
+		#expect(pathCount == 0)
+		let state = await router.navigationState
+		#expect(state.settings == nil)
+	}
+
+	// MARK: - Path Properties
+
+	@Test func nodeSelectionDrivesNavigation() async {
+		let router = await Router()
+		await router.navigateToNodeDetail(nodeNum: 12345)
+		let selected = await router.selectedNodeNum
+		#expect(selected == 12345)
+	}
+
+	@Test func settingsPathDrivesNavigation() async throws {
+		let router = await Router()
+		let url = try #require(URL(string: "meshtastic:///settings/lora"))
+		await router.route(url: url)
+		let path = await router.settingsPath
+		#expect(path == [.lora])
 	}
 
 	// MARK: - State Transitions

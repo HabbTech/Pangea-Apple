@@ -48,7 +48,7 @@ class MetricsTableColumn: ObservableObject {
 		visible: Bool = true,
 		@ViewBuilder tableBody: @escaping (MetricsTableColumn, Value) -> TableContent?
 	) {
-		// This works because TelemetryEntity is an NSManagedObject and derrived from NSObject
+		// This works because TelemetryEntity is an @Model and conforms to PersistentModel
 		self.id = id
 		self.name = name
 		self.abbreviatedName = abbreviatedName
@@ -80,5 +80,21 @@ extension MetricsTableColumn: Identifiable, Hashable {
 
 	func hash(into hasher: inout Hasher) {
 		hasher.combine(id)
+	}
+}
+
+/// Wide or narrow cell content from the width available now. Both iPhone Duo
+/// displays report the phone idiom, so a pad check never sees the open display.
+struct MetricsColumnWidth<Regular: View, Compact: View>: View {
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+	@ViewBuilder var regular: () -> Regular
+	@ViewBuilder var compact: () -> Compact
+
+	var body: some View {
+		if horizontalSizeClass == .regular {
+			regular()
+		} else {
+			compact()
+		}
 	}
 }

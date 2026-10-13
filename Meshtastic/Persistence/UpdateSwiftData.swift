@@ -1,0 +1,2059 @@
+//
+//  UpdateSwiftData.swift
+//  Meshtastic
+//
+//  Copyright(c) Garth Vander Houwen 10/3/22.
+
+@preconcurrency import SwiftData
+import CoreLocation
+import MeshtasticProtobufs
+import OSLog
+
+extension MeshPackets {
+	public func clearStaleNodes(nodeExpireDays: Int) -> Bool {
+		var nodeExpireTime: TimeInterval {
+			return TimeInterval(-nodeExpireDays * 86400)
+		}
+		var nodePKIExpireTime: TimeInterval {
+			return TimeInterval((nodeExpireDays < 7 ? -7 : -nodeExpireDays) * 86400)
+		}
+		
+		if nodeExpireDays == 0 {
+			Logger.data.info("💾 [NodeInfoEntity] Skip clearing stale nodes")
+			return false
+		}
+		let expireDate = Date(timeIntervalSinceNow: nodeExpireTime)
+		let pkiExpireDate = Date(timeIntervalSinceNow: nodePKIExpireTime)
+		let descriptor = FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { node in
+				node.favorite == false && node.ignored == false && node.lastHeard != nil
+			}
+		)
+		do {
+			Logger.data.info("💾 [NodeInfoEntity] Clearing nodes older than \(nodeExpireDays) days")
+			let candidates = try modelContext.fetch(descriptor)
+			let staleNodes = candidates.filter { node in
+				guard let lastHeard = node.lastHeard else { return false }
+				if node.user?.pkiEncrypted == true {
+					return lastHeard < pkiExpireDate
+				} else {
+					return lastHeard < expireDate
+				}
+			}
+			guard !staleNodes.isEmpty else {
+				Logger.data.info("💾 [NodeInfoEntity] No stale nodes to clear")
+				return false
+			}
+			let deletedNodes = staleNodes.count
+			for node in staleNodes {
+				modelContext.delete(node)
+			}
+			try modelContext.save()
+			Logger.data.info("💾 [NodeInfoEntity] Cleared \(deletedNodes) stale nodes")
+			return true
+		} catch {
+			Logger.data.error("💥 [NodeInfoEntity] Error deleting stale nodes: \(error.localizedDescription, privacy: .public)")
+		}
+		return false
+	}
+	
+	func clearPax(destNum: Int64) -> Bool {
+		let num = destNum
+		var descriptor = FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { $0.num == num }
+		)
+		descriptor.fetchLimit = 1
+		do {
+			if let node = try modelContext.fetch(descriptor).first {
+				node.pax = []
+				try modelContext.save()
+				return true
+			}
+		} catch {
+			Logger.data.error("💥 [NodeInfoEntity] Error clearing pax: \(error.localizedDescription, privacy: .public)")
+		}
+		return false
+	}
+	
+	public func clearPositions(destNum: Int64) -> Bool {
+		let num = destNum
+		var descriptor = FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { $0.num == num }
+		)
+		descriptor.fetchLimit = 1
+		do {
+			if let node = try modelContext.fetch(descriptor).first {
+				node.positions = []
+				try modelContext.save()
+				return true
+			}
+		} catch {
+			Logger.data.error("💥 [NodeInfoEntity] Error clearing positions: \(error.localizedDescription, privacy: .public)")
+		}
+		return false
+	}
+	
+	public func clearTelemetry(destNum: Int64, metricsType: Int32) -> Bool {
+		let num = destNum
+		var descriptor = FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { $0.num == num }
+		)
+		descriptor.fetchLimit = 1
+		do {
+			if let node = try modelContext.fetch(descriptor).first {
+				let toDelete = node.telemetries.filter { $0.metricsType == metricsType }
+				for entity in toDelete {
+					modelContext.delete(entity)
+				}
+				try modelContext.save()
+				return true
+			}
+		} catch {
+			Logger.data.error("💥 [NodeInfoEntity] Error clearing telemetry: \(error.localizedDescription, privacy: .public)")
+		}
+		return false
+	}
+	
+	public func deleteChannelMessages(channel: ChannelEntity) {
+		let channelIndex = channel.index
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> { msg in
+				msg.channel == channelIndex && msg.isEmoji == false
+			}
+		)
+		do {
+			let objects = try modelContext.fetch(descriptor)
+			for object in objects where object.toUser == nil {
+				modelContext.delete(object)
+			}
+			try modelContext.save()
+		} catch {
+			Logger.data.error("💥 [MessageEntity] Error deleting channel messages: \(error.localizedDescription, privacy: .public)")
+		}
+	}
+	
+	public func deleteUserMessages(userNum: Int64) {
+		// Fetch in this actor's OWN ModelContext (mirrors deleteChannelMessages and the DM message
+		// list's own query), keyed on the scalar `num`. The previous version read
+		// `user.sentMessages`/`receivedMessages` off a UserEntity handed in from the view's context:
+		// across the actor/context boundary those relationships resolved empty, and deleting
+		// foreign-context objects through this context was a no-op — so deleting a DM did nothing.
+		// Keep only the selective OR in the #Predicate: the full five-term compound (two
+		// optional-chained comparisons + three scalar tests) blows the #Predicate macro's
+		// type-check budget — the same limit documented in UserMessageList's ACK counts.
+		// The scalar screens run in-memory over the (small) single-conversation result.
+		let descriptor = FetchDescriptor<MessageEntity>(
+			predicate: #Predicate<MessageEntity> { msg in
+				msg.fromUser?.num == userNum || msg.toUser?.num == userNum
+			}
+		)
+		do {
+			let objects = try modelContext.fetch(descriptor).filter { msg in
+				msg.toUser != nil && msg.isEmoji == false && msg.admin == false && msg.portNum != 10
+			}
+			for object in objects {
+				modelContext.delete(object)
+			}
+			try modelContext.save()
+		} catch {
+			Logger.data.error("💥 [MessageEntity] Error deleting user messages: \(error.localizedDescription, privacy: .public)")
+		}
+	}
+	
+	/// Returns true when every delete committed; false when the clear aborted part-way (callers
+	/// that require an empty store — the device-switch and cross-device reset paths — must
+	/// escalate, e.g. destroy and recreate the store, rather than proceed on a half-cleared one).
+	@discardableResult
+	public func clearDatabase(includeRoutes: Bool, preserveFavorites: Bool = false) -> Bool {
+		// Delete + SAVE one model type at a time. SwiftData's batch `delete(model:)` ENQUEUES a
+		// deletion (committed on the next save) and nullifies inverse relationships. Reconciling MANY
+		// types' deletions in a SINGLE trailing save makes SwiftData tear down objects whose inverse
+		// targets were also deleted in the same uncommitted batch, tripping an internal assertion
+		// (`_assertionFailure` in `objectdestroy` → SIGTRAP — the 2.7.15 clearDatabase crash). Saving
+		// after each delete keeps every reconcile against already-committed, consistent state.
+		//
+		// `commit()` THROWS and any failure aborts the whole clear: swallowing a failed save would
+		// leave that type's deletions pending, so the next save would reconcile multiple types at once
+		// and re-create the very multi-type batch this avoids. Mirrors PersistenceController.clearDatabase.
+		func commit() throws {
+			guard modelContext.hasChanges else { return }
+			try modelContext.save()
+		}
+
+		do {
+			// Sever the DeviceHardware relationships from the owning side first: a batch delete
+			// alone trips the mandatory MTM nullify inverse between DeviceHardwareEntity.tags and
+			// DeviceHardwareTagEntity.devices, and likewise batch-deleting the images fails with
+			// "mandatory OTO nullify inverse on DeviceHardwareImageEntity/device" while any device
+			// still references them ("Constraint trigger violation" — which aborted the whole clear
+			// and quietly left EVERY entity in place, the direct cause of one radio's nodes
+			// surviving into another radio's session). Save the severing before the batch deletes.
+			let hardwareDevices = try modelContext.fetch(FetchDescriptor<DeviceHardwareEntity>())
+			for device in hardwareDevices {
+				device.tags.removeAll()
+				device.images.removeAll()
+			}
+			try commit()
+			try modelContext.delete(model: DeviceHardwareTagEntity.self)
+			try commit()
+			try modelContext.delete(model: DeviceHardwareImageEntity.self)
+			try commit()
+			// The image/link network pass is throttled (staleDeviceImageLinkInterval); clearing the
+			// rows it populates must also clear that throttle so the next connect's Step 3b restores
+			// them instead of skipping as "refreshed recently". Goes through the throttle rather than
+			// writing the timestamp directly so a pass already in flight is superseded and cannot
+			// re-arm the throttle when it finishes.
+			DeviceImageLinkThrottle.invalidate()
+
+			// Collect favorite node IDs before the delete loop so we can skip related entities that
+			// belong to preserved nodes. If this fetch fails we abort rather than treat the set as
+			// empty — otherwise we'd delete the very favorites we were asked to preserve.
+			var favoriteNodeNums: Set<Int64> = []
+			if preserveFavorites {
+				let favDescriptor = FetchDescriptor<NodeInfoEntity>(
+					predicate: #Predicate<NodeInfoEntity> { $0.favorite == true }
+				)
+				favoriteNodeNums = Set(try modelContext.fetch(favDescriptor).map(\.num))
+			}
+
+			for modelType in MeshtasticSchema.allModels {
+				if !includeRoutes && (modelType == RouteEntity.self || modelType == LocationEntity.self) {
+					continue
+				}
+				if modelType == DeviceHardwareTagEntity.self || modelType == DeviceHardwareImageEntity.self {
+					continue // already deleted above
+				}
+				if modelType == EventFirmwareEntity.self {
+					continue // global display cache, not data owned by the connected radio
+				}
+				if preserveFavorites && modelType == NodeInfoEntity.self {
+					// Keep favorited nodes so the device and app stay in sync when the
+					// firmware is told to preserve favorites (nodedbReset = true).
+					let descriptor = FetchDescriptor<NodeInfoEntity>(
+						predicate: #Predicate<NodeInfoEntity> { node in
+							node.favorite == false
+						}
+					)
+					for node in try modelContext.fetch(descriptor) {
+						modelContext.delete(node)
+					}
+					try commit()
+					continue
+				}
+				if preserveFavorites && modelType == UserEntity.self {
+					// Only delete users not belonging to favorite nodes.
+					for user in try modelContext.fetch(FetchDescriptor<UserEntity>()) {
+						if let userNodeNum = user.userNode?.num, favoriteNodeNums.contains(userNodeNum) {
+							continue
+						}
+						modelContext.delete(user)
+					}
+					try commit()
+					continue
+				}
+				try modelContext.delete(model: modelType)
+				try commit()
+			}
+			return true
+		} catch {
+			// Abort before the next type so a failed save can't leave a multi-type batch pending.
+			Logger.data.error("💥 Failed while clearing database, aborted: \(error.localizedDescription, privacy: .public)")
+			return false
+		}
+	}
+	
+	func updateAnyPacketFrom (packet: MeshPacket, activeDeviceNum: Int64, reportsHeardOnCurrentLora: Bool = false) {
+		// Update NodeInfoEntity for any packet received. This mirrors the firmware's NodeDB::updateFrom, which sniffs ALL received packets and updates the radio's nodeDB with packet.from's:
+		// - last_heard (from rxTime)
+		// - snr
+		// - via_mqtt
+		// - hops_away
+		
+		guard packet.from > 0 else { return }
+		guard packet.from != activeDeviceNum else { return }
+		
+		// Skip routing packets with no rxTime — these are locally-generated implicit ACKs
+		// that don't represent actual RF contact with the remote node.
+		let isImplicitAck = packet.decoded.portnum == .routingApp && packet.rxTime == 0
+		
+		let num = Int64(packet.from)
+		var descriptor = FetchDescriptor<NodeInfoEntity>(
+			predicate: #Predicate<NodeInfoEntity> { $0.num == num }
+		)
+		descriptor.fetchLimit = 1
+		
+		do {
+			if let node = try modelContext.fetch(descriptor).first {
+				node.id = Int64(packet.from)
+				node.num = Int64(packet.from)
+				
+				// Single source of truth for lastHeard on received packets: this runs for
+				// every packet (mirroring firmware NodeDB::updateFrom), so the per-packet
+				// handlers no longer touch lastHeard for remote nodes.
+				if !isImplicitAck {
+					if packet.rxTime > 0 {
+						node.lastHeard = Date(timeIntervalSince1970: TimeInterval(Int64(packet.rxTime)))
+					} else {
+						node.lastHeard = Date()
+					}
+				}
+				
+				node.snr = packet.rxSnr
+				node.rssi = packet.rxRssi
+				node.viaMqtt = packet.viaMqtt
+				// Heard over RF just now, so heard on the current settings. Mirrors the firmware, which
+				// sets the flag when it hears the node, so the row clears before the next node db dump.
+				// After a node db download the radio replays stored packets marked as LoRa but without
+				// RSSI, which every real reception has (0 dBm included); those were heard earlier, maybe
+				// on other settings.
+				if reportsHeardOnCurrentLora && !isImplicitAck && !packet.viaMqtt && packet.hasRxRssi {
+					node.heardOnCurrentLora = true
+				}
+				
+				if packet.hopStart != 0 && packet.hopLimit <= packet.hopStart {
+					node.hopsAway = Int32(truncatingIfNeeded: packet.hopStart - packet.hopLimit)
+					Logger.data.debug("💾 [updateAnyPacketFrom] Updating node \(packet.from.toHex(), privacy: .public) hopsAway=\(node.hopsAway)")
+				}
+				
+				// Changes are saved by the subsequent packet handler's save call
+				Logger.data.debug("💾 [updateAnyPacketFrom] Updated node \(node.num.toHex(), privacy: .public) snr=\(node.snr), rssi=\(node.rssi) from packet \(packet.id.toHex(), privacy: .public)")
+			}
+		} catch {
+			Logger.data.error("💥 [updateAnyPacketFrom] fetch data error")
+		}
+	}
+
+	/// Compact, human-readable summary of a NodeInfo packet's `User` payload, appended to the mesh
+	/// log line so the Packet Stream shows the decoded protobuf at a glance (not raw JSON), e.g.
+	/// " — 🔐 Long Name (SHRT) client TBEAM". Returns "" when there's no usable identity.
+	private func nodeInfoLogDetails(from packet: MeshPacket) -> String {
+		guard let user = try? User(serializedBytes: packet.decoded.payload), !user.id.isEmpty else {
+			return ""
+		}
+		var parts: [String] = []
+		let long = user.longName.trimmingCharacters(in: .whitespacesAndNewlines)
+		let short = user.shortName.trimmingCharacters(in: .whitespacesAndNewlines)
+		switch (long.isEmpty, short.isEmpty) {
+		case (false, false): parts.append("\(long) (\(short))")
+		case (false, true):  parts.append(long)
+		case (true, false):  parts.append(short)
+		case (true, true):   break
+		}
+		parts.append(String(describing: user.role))
+		let hw = String(describing: user.hwModel).uppercased()
+		if hw != "UNSET" { parts.append(hw) }
+		if user.isLicensed { parts.append("licensed") }
+		if user.hasIsUnmessagable && user.isUnmessagable { parts.append("unmessagable") }
+		// Lock leads the line so PKI-encrypted nodes are obvious at a glance.
+		if !user.publicKey.isEmpty { parts.insert("🔐", at: 0) }
+		return parts.isEmpty ? "" : " — " + parts.joined(separator: " ")
+	}
+
+	/// - Parameter overTheMesh: true when this NodeInfo arrived as an over-the-air packet from a
+	///   remote node — logged on .mesh so it appears in the Packet Stream. false for local updates
+	///   (e.g. the favorite action), which did not cross the mesh and log on .data.
+	/// - Parameter acceptsKeyReplacement: Set only for a contact import where the person was shown
+	///   that the key differs from the stored one and confirmed the replacement. It lifts
+	///   first-wins for that one write, so the app ends up holding the same key the `add_contact`
+	///   just gave the radio. Every other path leaves it false and keeps first-wins.
+	func upsertNodeInfoPacket (packet: MeshPacket, favorite: Bool = false, overTheMesh: Bool = true,
+	                           acceptsKeyReplacement: Bool = false) {
+
+		let details = nodeInfoLogDetails(from: packet)
+		if overTheMesh {
+			Logger.mesh.info("📟 [Node Info] packet received from \(packet.from.toHex(), privacy: .public)\(details, privacy: .public)")
+		} else {
+			Logger.data.info("📟 [Node Info] packet received from \(packet.from.toHex(), privacy: .public)\(details, privacy: .public)")
+		}
+
+		guard packet.from > 0 else { return }
+		
+		let fetchNum = Int64(packet.from)
+		var fetchNodeInfoAppRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+		fetchNodeInfoAppRequest.fetchLimit = 1
+		
+		do {
+			
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoAppRequest)
+			if fetchedNode.count == 0 {
+				// Not Found Insert. Use findOrCreateNode (not a bare insert): NodeInfoEntity.num is
+				// @Attribute(.unique), and the fetch above only sees SAVED rows — a crafted second
+				// NODEINFO packet arriving inside the debounced-save window would otherwise create a
+				// second un-saved node with the same num and trap with a fatal SwiftData assertion.
+				let newNode = findOrCreateNode(num: Int64(packet.from), context: modelContext)
+				newNode.id = Int64(packet.from)
+				newNode.num = Int64(packet.from)
+				newNode.favorite = favorite
+				if packet.rxTime > 0 {
+					newNode.firstHeard = Date(timeIntervalSince1970: TimeInterval(Int64(packet.rxTime)))
+					newNode.lastHeard = Date(timeIntervalSince1970: TimeInterval(Int64(packet.rxTime)))
+				} else {
+					newNode.firstHeard = Date()
+					newNode.lastHeard = Date()
+				}
+				newNode.snr = packet.rxSnr
+				newNode.rssi = packet.rxRssi
+				newNode.viaMqtt = packet.viaMqtt
+				
+				if packet.to == Constants.maximumNodeNum || packet.to == UserDefaults.preferredPeripheralNum {
+					newNode.channel = Int32(truncatingIfNeeded: packet.channel)
+				}
+				if let nodeInfoMessage = try? NodeInfo(serializedBytes: packet.decoded.payload) {
+					newNode.favorite = nodeInfoMessage.isFavorite
+					// Derive the "Signed node" shield from the radio-verified transport signature
+					// (MeshPacket.xeddsa_signed, set by the local radio only after it cryptographically
+					// verifies this packet's XEdDSA signature) — NOT from the NodeInfo payload's
+					// has_xeddsa_signed bit, which is attacker-controlled over the mesh and would let a
+					// spoofed NODEINFO forge the verified shield. This still marks any node we hear
+					// signing (not just the connected one); the connected radio's NodeDB dump path
+					// (MeshPackets.nodeInfoPacket) keeps sourcing it from the radio's own database.
+					newNode.hasXeddsaSigned = packet.xeddsaSigned
+				}
+				if packet.hopStart != 0 && packet.hopLimit <= packet.hopStart {
+					newNode.hopsAway = Int32(truncatingIfNeeded: packet.hopStart - packet.hopLimit)
+				}
+				
+				if let newUserMessage = try? User(serializedBytes: packet.decoded.payload) {
+					
+					if newUserMessage.id.isEmpty {
+						if packet.from > Constants.minimumNodeNum {
+							do {
+								let newUser = try createUser(num: Int64(truncatingIfNeeded: packet.from), context: modelContext)
+								newNode.user = newUser
+							} catch PersistenceError.invalidInput(let message) {
+								Logger.data.error("Error Creating a new UserEntity (Invalid Input) from node number: \(packet.from, privacy: .public) Error:  \(message, privacy: .public)")
+							} catch {
+								Logger.data.error("Error Creating a new UserEntity from node number: \(packet.from, privacy: .public) Error:  \(error.localizedDescription, privacy: .public)")
+							}
+						}
+					} else {
+						
+						// findOrCreateNode already attached a find-or-create user for this num; reuse it
+						// (or find-or-create) instead of a bare insert. UserEntity.num is @Attribute(.unique)
+						// and the fetch only sees SAVED rows, so a duplicate insert inside the debounce
+						// window would trap on save when a second NODEINFO packet lands.
+						let newUser = newNode.user ?? findOrCreateUser(num: Int64(truncatingIfNeeded: packet.from), context: modelContext)
+						newUser.userId = newNode.num.toHex()
+						newUser.num = Int64(packet.from)
+						newUser.longName = newUserMessage.longName
+						newUser.shortName = newUserMessage.shortName
+						newUser.role = Int32(newUserMessage.role.rawValue)
+						newUser.hwModel = String(describing: newUserMessage.hwModel).uppercased()
+						newUser.hwModelId = Int32(newUserMessage.hwModel.rawValue)
+						/// For nodes that have the optional isUnmessagable boolean use that, otherwise excluded roles that are unmessagable by default
+						if newUserMessage.hasIsUnmessagable {
+							newUser.unmessagable = newUserMessage.isUnmessagable
+						} else {
+							let roles = [2, 4, 5, 6, 7, 10, 11]
+							let containsRole = roles.contains(Int(newUser.role))
+							if containsRole {
+								newUser.unmessagable = true
+							} else {
+								newUser.unmessagable = false
+							}
+						}
+						if !newUserMessage.publicKey.isEmpty {
+							newUser.pkiEncrypted = true
+							newUser.publicKey = newUserMessage.publicKey
+						}
+						
+						let fetchHwModel1 = Int64(newUser.hwModelId)
+						let hwDescriptor1 = FetchDescriptor<DeviceHardwareEntity>(
+							predicate: #Predicate { $0.hwModel == fetchHwModel1 }
+						)
+						if let hardware = try? modelContext.fetch(hwDescriptor1) {
+							newUser.hwDisplayName = HardwareCatalogResolver.presentation(for: fetchHwModel1, in: hardware)?.displayName
+						}
+						newNode.user = newUser
+						
+						if UserDefaults.newNodeNotifications {
+							Task { @MainActor in
+								let manager = LocalNotificationManager()
+								manager.notifications = [
+									Notification(
+										id: (UUID().uuidString),
+										title: "New Node".localized,
+										subtitle: "\(newUser.longName ?? "Unknown".localized)",
+										content: "New Node has been discovered".localized,
+										target: "nodes",
+										path: "meshtastic:///nodes?nodenum=\(newUser.num)"
+									)
+								]
+								manager.schedule()
+							}
+						}
+					}
+				} else {
+					if packet.from > Constants.minimumNodeNum {
+						do {
+							let newUser = try createUser(num: Int64(truncatingIfNeeded: packet.from), context: modelContext)
+							if !packet.publicKey.isEmpty {
+								newNode.user?.pkiEncrypted = true
+								newNode.user?.publicKey = packet.publicKey
+							}
+							newNode.user = newUser
+						} catch PersistenceError.invalidInput(let message) {
+							Logger.data.error("Error Creating a new UserEntity (Invalid Input) from node number: \(packet.from, privacy: .public) Error:  \(message, privacy: .public)")
+						} catch {
+							Logger.data.error("Error Creating a new UserEntity from node number: \(packet.from, privacy: .public) Error:  \(error.localizedDescription, privacy: .public)")
+						}
+					}
+				}
+				// User is messed up and has failed to create at least once, if this fails bail out
+				if newNode.user == nil && packet.from > Constants.minimumNodeNum {
+					do {
+						let newUser = try createUser(num: Int64(packet.from), context: modelContext)
+						newNode.user = newUser
+					} catch PersistenceError.invalidInput(let message) {
+						Logger.data.error("Error Creating a new UserEntity (Invalid Input) from node number: \(packet.from, privacy: .public) Error:  \(message, privacy: .public)")
+						return
+					} catch {
+						Logger.data.error("Error Creating a new UserEntity from node number: \(packet.from, privacy: .public) Error:  \(error.localizedDescription, privacy: .public)")
+						return
+					}
+				}
+				
+				// Over-the-mesh ingestion is high-frequency, so debounce; local actions
+				// (e.g. adding a contact / favoriting) persist immediately for snappy UI.
+				if overTheMesh { scheduleDebouncedSave() } else { savePendingChanges() }
+				Logger.data.debug("💾 [Node Info] Buffered a Node Info for node number: \(packet.from.toHex(), privacy: .public)")
+				
+			} else {
+				// Update an existing node
+				if packet.to == Constants.maximumNodeNum || packet.to == UserDefaults.preferredPeripheralNum {
+					fetchedNode[0].channel = Int32(truncatingIfNeeded: packet.channel)
+				}
+				
+				if let nodeInfoMessage = try? NodeInfo(serializedBytes: packet.decoded.payload) {
+
+					fetchedNode[0].favorite = nodeInfoMessage.isFavorite
+					// Latch the "Signed node" shield from the radio-verified transport signature
+					// (MeshPacket.xeddsa_signed), NOT the attacker-controllable NodeInfo payload bit —
+					// otherwise a spoofed NODEINFO could forge the verified shield for any node. Latching
+					// means one verified signed broadcast persists even if a later packet omits the bit.
+					fetchedNode[0].hasXeddsaSigned = fetchedNode[0].hasXeddsaSigned || packet.xeddsaSigned
+					if nodeInfoMessage.hasDeviceMetrics {
+						let telemetry = TelemetryEntity()
+						modelContext.insert(telemetry)
+						telemetry.batteryLevel = Int32(truncatingIfNeeded: nodeInfoMessage.deviceMetrics.batteryLevel)
+						telemetry.voltage = nodeInfoMessage.deviceMetrics.voltage
+						telemetry.channelUtilization = nodeInfoMessage.deviceMetrics.channelUtilization
+						telemetry.airUtilTx = nodeInfoMessage.deviceMetrics.airUtilTx
+						telemetry.nodeTelemetry = fetchedNode[0]
+					}
+					if nodeInfoMessage.hasUser {
+						fetchedNode[0].user?.userId = nodeInfoMessage.num.toHex()
+						fetchedNode[0].user?.num = Int64(nodeInfoMessage.num)
+						fetchedNode[0].user?.longName = nodeInfoMessage.user.longName
+						fetchedNode[0].user?.shortName = nodeInfoMessage.user.shortName
+						fetchedNode[0].user?.role = Int32(nodeInfoMessage.user.role.rawValue)
+						fetchedNode[0].user?.hwModel = String(describing: nodeInfoMessage.user.hwModel).uppercased()
+						fetchedNode[0].user?.hwModelId = Int32(nodeInfoMessage.user.hwModel.rawValue)
+						/// For nodes that have the optional isUnmessagable boolean use that, otherwise excluded roles that are unmessagable by default
+						if nodeInfoMessage.user.hasIsUnmessagable {
+							fetchedNode[0].user?.unmessagable = nodeInfoMessage.user.isUnmessagable
+						} else {
+							let roles = [-1, 2, 4, 5, 6, 7, 10, 11]
+							let containsRole = roles.contains(Int(fetchedNode[0].user?.role ?? -1))
+							if containsRole {
+								fetchedNode[0].user?.unmessagable = true
+							} else {
+								fetchedNode[0].user?.unmessagable = false
+							}
+						}
+						// Security (finding H1): first-wins on the public key. See `applyInboundPublicKey`.
+						fetchedNode[0].user?.applyInboundPublicKey(nodeInfoMessage.user.publicKey, nodeNum: Int64(nodeInfoMessage.num))
+						if let user = fetchedNode.first?.user {
+							let fetchHwModel2 = Int64(user.hwModelId)
+							let hwDescriptor2 = FetchDescriptor<DeviceHardwareEntity>(
+								predicate: #Predicate { $0.hwModel == fetchHwModel2 }
+							)
+							if let hardware = try? modelContext.fetch(hwDescriptor2) {
+								user.hwDisplayName = HardwareCatalogResolver.presentation(for: fetchHwModel2, in: hardware)?.displayName
+							}
+						}
+					}
+				} else if let userMessage = try? User(serializedBytes: packet.decoded.payload), !userMessage.id.isEmpty {
+					// Mesh broadcast sends a User protobuf (not wrapped in NodeInfo)
+					if fetchedNode[0].user == nil {
+						// findOrCreateUser (not a bare insert): a user row for this unique num may already
+						// exist (orphaned or pending) even though this saved node's user is nil, so a bare
+						// insert would trap on save.
+						let newUser = findOrCreateUser(num: Int64(truncatingIfNeeded: packet.from), context: modelContext)
+						fetchedNode[0].user = newUser
+					}
+					fetchedNode[0].user?.userId = packet.from.toHex()
+					fetchedNode[0].user?.num = Int64(packet.from)
+					fetchedNode[0].user?.longName = userMessage.longName
+					fetchedNode[0].user?.shortName = userMessage.shortName
+					fetchedNode[0].user?.role = Int32(userMessage.role.rawValue)
+					fetchedNode[0].user?.hwModel = String(describing: userMessage.hwModel).uppercased()
+					fetchedNode[0].user?.hwModelId = Int32(userMessage.hwModel.rawValue)
+					if userMessage.hasIsUnmessagable {
+						fetchedNode[0].user?.unmessagable = userMessage.isUnmessagable
+					} else {
+						let roles = [-1, 2, 4, 5, 6, 7, 10, 11]
+						let containsRole = roles.contains(Int(fetchedNode[0].user?.role ?? -1))
+						fetchedNode[0].user?.unmessagable = containsRole
+					}
+					if acceptsKeyReplacement {
+						// A confirmed import: the sheet showed the key differs and the person said to
+						// replace it, and the radio has already taken it. See `acceptImportedPublicKey`.
+						fetchedNode[0].user?.acceptImportedPublicKey(userMessage.publicKey)
+					} else {
+						// Security (finding H1): first-wins on the public key. See `applyInboundPublicKey`.
+						fetchedNode[0].user?.applyInboundPublicKey(userMessage.publicKey, nodeNum: Int64(packet.from))
+					}
+					if packet.hopStart != 0 && packet.hopLimit <= packet.hopStart {
+						fetchedNode[0].hopsAway = Int32(truncatingIfNeeded: packet.hopStart - packet.hopLimit)
+					}
+
+				} else if packet.hopStart != 0 && packet.hopLimit <= packet.hopStart {
+					fetchedNode[0].hopsAway = Int32(truncatingIfNeeded: packet.hopStart - packet.hopLimit)
+				}
+				if fetchedNode[0].user == nil {
+					do {
+						let newUser = try createUser(num: Int64(truncatingIfNeeded: packet.from), context: modelContext)
+						fetchedNode[0].user = newUser
+					} catch PersistenceError.invalidInput(let message) {
+						Logger.data.error("Error Creating a new UserEntity on an existing node (Invalid Input) from node number: \(packet.from, privacy: .public) Error:  \(message, privacy: .public)")
+					} catch {
+						Logger.data.error("Error Creating a new UserEntity on an existing node from node number: \(packet.from, privacy: .public) Error:  \(error.localizedDescription, privacy: .public)")
+					}
+				}
+				if overTheMesh { scheduleDebouncedSave() } else { savePendingChanges() }
+				Logger.data.debug("💾 [NodeInfoEntity] Buffered update from Node Info App Packet For: \(fetchedNode[0].num.toHex(), privacy: .public)")
+			}
+		} catch {
+			Logger.data.error("💥 [NodeInfoEntity] fetch data error for NODEINFO_APP")
+		}
+	}
+	
+	/// Compact, human-readable summary of a Position packet's payload for the mesh log line, e.g.
+	/// " — 40.78661,-119.20650 1234m 8 sats 14-bit". Returns "" for empty/null-island positions.
+	private func positionLogDetails(from packet: MeshPacket) -> String {
+		guard let pos = try? Position(serializedBytes: packet.decoded.payload),
+			  pos.latitudeI != 0 || pos.longitudeI != 0 else {
+			return ""
+		}
+		var parts: [String] = []
+		parts.append(String(format: "%.5f,%.5f", Double(pos.latitudeI) / 1e7, Double(pos.longitudeI) / 1e7))
+		if pos.altitude != 0 { parts.append("\(pos.altitude)m") }
+		if pos.satsInView > 0 { parts.append("\(pos.satsInView) sats") }
+		if pos.precisionBits > 0 && pos.precisionBits < 32 { parts.append("\(pos.precisionBits)-bit") }
+		return parts.isEmpty ? "" : " — " + parts.joined(separator: " ")
+	}
+
+	func upsertPositionPacket (packet: MeshPacket) {
+
+		Logger.mesh.info("📍 [Position] packet received from \(packet.from.toHex(), privacy: .public)\(self.positionLogDetails(from: packet), privacy: .public)")
+		
+		let fetchNum = Int64(packet.from)
+			var fetchNodePositionRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodePositionRequest.fetchLimit = 1
+		do {
+			
+			if let positionMessage = try? Position(serializedBytes: packet.decoded.payload) {
+				
+				/// Don't save placeholder position packets from null island (0, 0) or Apple Park.
+				if positionMessage.hasValidCoordinates {
+					var fetchedNode = try modelContext.fetch(fetchNodePositionRequest)
+					// Create a stub node if one doesn't exist yet — it will be updated when the NodeInfo packet arrives
+					if fetchedNode.isEmpty {
+						let newNode = findOrCreateNode(num: Int64(packet.from), context: modelContext)
+						newNode.lastHeard = Date()
+						fetchedNode = [newNode]
+						Logger.data.debug("📍 [Position] created stub node for: \(packet.from.toHex(), privacy: .public)")
+					}
+					if fetchedNode.count == 1 {
+						
+						let posNum = Int64(packet.from)
+						// Previous latest is tracked directly on the node — no PositionEntity table scan.
+						let previousLatest = fetchedNode[0].latestPosition
+
+						// Near-duplicate fixes REUSE the previous-latest row instead of insert-new +
+						// delete-old. The old per-packet delete left every main-thread holder of the
+						// node's latestPositionCache (node list rows, node detail, the Watch update
+						// walk) one merge window away from a SwiftData invalid-entity SIGTRAP — and
+						// for a stationary node that window reopened on every position packet.
+						// Updating the same row keeps every outstanding handle valid; rows are now
+						// only deleted when a node actually moves beyond the 9m near-duplicate radius.
+						let newCoordinate = CLLocationCoordinate2D(
+							latitude: Double(positionMessage.latitudeI) / 1e7,
+							longitude: Double(positionMessage.longitudeI) / 1e7
+						)
+						let reusePreviousLatest: Bool = {
+							guard let previousLatest, let prevCoord = previousLatest.nodeCoordinate else { return false }
+							return prevCoord.distance(from: newCoordinate) < 9.0
+						}()
+
+						let position: PositionEntity
+						if reusePreviousLatest, let previousLatest {
+							position = previousLatest
+						} else {
+							previousLatest?.latest = false
+							position = PositionEntity()
+							modelContext.insert(position)
+						}
+						position.latest = true
+						position.snr = packet.rxSnr
+						position.rssi = packet.rxRssi
+						// All of these protobuf fields are UInt32; convert with truncatingIfNeeded
+						// (as the rest of this file does) so an attacker-crafted value > Int32.max
+						// can't SIGTRAP the app on a single unauthenticated POSITION_APP packet.
+						position.seqNo = Int32(truncatingIfNeeded: positionMessage.seqNumber)
+						position.latitudeI = positionMessage.latitudeI
+						position.longitudeI = positionMessage.longitudeI
+						position.altitude = positionMessage.altitude
+						position.satsInView = Int32(truncatingIfNeeded: positionMessage.satsInView)
+						position.speed = Int32(truncatingIfNeeded: positionMessage.groundSpeed)
+						position.heading = positionMessage.groundTrackDegrees ?? 0
+						// Clamp to the valid maximum (32 = full precision) instead of truncatingIfNeeded: an
+						// oversized UInt32 would wrap to a negative/garbage Int32 that the reduced-precision
+						// prune below (precisionBits != 32 && != 0) would treat as reduced accuracy and erase
+						// this node's stored position history. min(_, 32) is always <= 32 so it can't trap.
+						position.precisionBits = Int32(min(positionMessage.precisionBits, 32))
+						if positionMessage.timestamp != 0 {
+							position.time = Date(timeIntervalSince1970: TimeInterval(Int64(positionMessage.timestamp)))
+						} else {
+							position.time = Date(timeIntervalSince1970: TimeInterval(Int64(positionMessage.time)))
+						}
+
+						// Assign to the node and record as the new latest — O(1), no table scan.
+						position.nodePosition = fetchedNode[0]
+						fetchedNode[0].latestPositionCache = position
+
+						let geofenceNodeName = fetchedNode[0].user?.longName ?? fetchedNode[0].user?.shortName ?? "\(packet.from)"
+						evaluateGeofences(nodeNum: posNum, latitudeI: positionMessage.latitudeI, longitudeI: positionMessage.longitudeI, nodeName: geofenceNodeName)
+
+						if !reusePreviousLatest && position.precisionBits != 32 && position.precisionBits != 0 {
+							// Reduced accuracy and the fuzzed coordinate actually moved: keep no history.
+							// Delete this node's older positions via its own relationship (small for
+							// reduced-accuracy nodes) instead of a global table scan. When the row was
+							// reused (the common, stationary case) there is nothing to delete.
+							for old in fetchedNode[0].positions where !old.latest {
+								modelContext.delete(old)
+							}
+						}
+
+						// Keep the history cap as a soft cap during packet bursts; the
+						// count/sort/delete prune pass is expensive with large node stores.
+						if shouldPrunePositionHistory(for: posNum) {
+							let countDescriptor = FetchDescriptor<PositionEntity>(
+								predicate: #Predicate<PositionEntity> { $0.nodePosition?.num == posNum }
+							)
+							let totalCount = try modelContext.fetchCount(countDescriptor)
+							if totalCount > MeshPackets.maxPositionHistoryPerNode {
+								let excess = totalCount - MeshPackets.maxPositionHistoryPerNode
+								var pruneDescriptor = FetchDescriptor<PositionEntity>(
+									predicate: #Predicate<PositionEntity> { $0.nodePosition?.num == posNum && $0.latest == false },
+									sortBy: [SortDescriptor(\PositionEntity.time, order: .forward)]
+								)
+								pruneDescriptor.fetchLimit = excess
+								let toDelete = try modelContext.fetch(pruneDescriptor)
+								for old in toDelete {
+									modelContext.delete(old)
+								}
+							}
+						}
+
+						fetchedNode[0].channel = Int32(truncatingIfNeeded: packet.channel)
+						
+						scheduleDebouncedSave()
+						Logger.data.debug("📍 [Position] buffered for Node: \(fetchedNode[0].num.toHex(), privacy: .public)")
+					}
+				} else {
+					// Valid POSITION_APP packet that carries no usable coordinates (e.g. a node with no
+					// GPS fix sending only a timestamp, or a null-island/Apple-Park placeholder). This is
+					// expected — there's simply nothing to plot — so log it as debug rather than an error.
+					Logger.data.debug("📍 [Position] packet without coordinates from \(packet.from.toHex(), privacy: .public) — nothing to plot")
+				}
+			}
+		} catch {
+			Logger.data.error("💥 Error Deserializing POSITION_APP packet.")
+		}
+	}
+	
+	/// Marks a node as successfully administered. Called when an admin response arrives
+	/// carrying a session passkey — proof that at least one admin request we sent to this
+	/// node succeeded. Never cleared once set; gates admin-only UI (like the status message
+	/// editor) for nodes other than the connected one.
+	func markNodeAdministered(num: Int64) {
+		var descriptor = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == num })
+		descriptor.fetchLimit = 1
+		guard let node = try? modelContext.fetch(descriptor).first, !node.hasBeenAdministered else { return }
+		node.hasBeenAdministered = true
+		savePendingChanges()
+	}
+
+	func upsertBluetoothConfigPacket(config: Config.BluetoothConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Bluetooth config received: %@".localized, String(nodeNum))
+		Logger.admin.info("📶 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Device Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].bluetoothConfig == nil {
+					let newBluetoothConfig = BluetoothConfigEntity()
+					modelContext.insert(newBluetoothConfig)
+					newBluetoothConfig.enabled = config.enabled
+					newBluetoothConfig.mode = Int32(config.mode.rawValue)
+					newBluetoothConfig.fixedPin = Int32(truncatingIfNeeded: config.fixedPin)
+					fetchedNode[0].bluetoothConfig = newBluetoothConfig
+				} else {
+					fetchedNode[0].bluetoothConfig?.enabled = config.enabled
+					fetchedNode[0].bluetoothConfig?.mode = Int32(config.mode.rawValue)
+					fetchedNode[0].bluetoothConfig?.fixedPin = Int32(truncatingIfNeeded: config.fixedPin)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [BluetoothConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [BluetoothConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Bluetooth Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [BluetoothConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertDeviceConfigPacket(config: Config.DeviceConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Device config received: %@".localized, String(nodeNum))
+		Logger.admin.info("📟 \(logString, privacy: .public)")
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Device Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].deviceConfig == nil {
+					let newDeviceConfig = DeviceConfigEntity()
+					modelContext.insert(newDeviceConfig)
+					newDeviceConfig.role = Int32(config.role.rawValue)
+					newDeviceConfig.buttonGpio = Int32(truncatingIfNeeded: config.buttonGpio)
+					newDeviceConfig.buzzerGpio =  Int32(truncatingIfNeeded: config.buzzerGpio)
+					newDeviceConfig.rebroadcastMode = Int32(config.rebroadcastMode.rawValue)
+					newDeviceConfig.nodeInfoBroadcastSecs = Int32(truncating: config.nodeInfoBroadcastSecs as NSNumber)
+					newDeviceConfig.doubleTapAsButtonPress = config.doubleTapAsButtonPress
+					newDeviceConfig.tripleClickAsAdHocPing = !config.disableTripleClick
+					newDeviceConfig.ledHeartbeatEnabled = !config.ledHeartbeatDisabled
+					newDeviceConfig.isManaged = config.isManaged
+					newDeviceConfig.tzdef = config.tzdef
+					fetchedNode[0].deviceConfig = newDeviceConfig
+				} else {
+					fetchedNode[0].deviceConfig?.role = Int32(config.role.rawValue)
+					fetchedNode[0].deviceConfig?.buttonGpio = Int32(truncatingIfNeeded: config.buttonGpio)
+					fetchedNode[0].deviceConfig?.buzzerGpio = Int32(truncatingIfNeeded: config.buzzerGpio)
+					fetchedNode[0].deviceConfig?.rebroadcastMode = Int32(config.rebroadcastMode.rawValue)
+					fetchedNode[0].deviceConfig?.nodeInfoBroadcastSecs = Int32(truncating: config.nodeInfoBroadcastSecs as NSNumber)
+					fetchedNode[0].deviceConfig?.doubleTapAsButtonPress = config.doubleTapAsButtonPress
+					fetchedNode[0].deviceConfig?.tripleClickAsAdHocPing = !config.disableTripleClick
+					fetchedNode[0].deviceConfig?.ledHeartbeatEnabled = !config.ledHeartbeatDisabled
+					fetchedNode[0].deviceConfig?.isManaged = config.isManaged
+					fetchedNode[0].deviceConfig?.tzdef = config.tzdef
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [DeviceConfigEntity] Updated Device Config for node number: \(nodeNum.toHex(), privacy: .public)")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [DeviceConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertDisplayConfigPacket(config: Config.DisplayConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Display config received: %@".localized, nodeNum.toHex())
+		Logger.data.info("🖥️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Device Config
+			if !fetchedNode.isEmpty {
+				
+				if fetchedNode[0].displayConfig == nil {
+					
+					let newDisplayConfig = DisplayConfigEntity()
+					modelContext.insert(newDisplayConfig)
+					newDisplayConfig.screenOnSeconds = Int32(truncatingIfNeeded: config.screenOnSecs)
+					newDisplayConfig.screenCarouselInterval = Int32(truncatingIfNeeded: config.autoScreenCarouselSecs)
+					newDisplayConfig.compassNorthTop = config.compassNorthTop
+					newDisplayConfig.compassOrientation = Int32(config.compassOrientation.rawValue)
+					newDisplayConfig.flipScreen = config.flipScreen
+					newDisplayConfig.oledType = Int32(config.oled.rawValue)
+					newDisplayConfig.displayMode = Int32(config.displaymode.rawValue)
+					newDisplayConfig.units = Int32(config.units.rawValue)
+					newDisplayConfig.headingBold = config.headingBold
+					newDisplayConfig.use12HClock = config.use12HClock
+					fetchedNode[0].displayConfig = newDisplayConfig
+				} else {
+					fetchedNode[0].displayConfig?.screenOnSeconds = Int32(truncatingIfNeeded: config.screenOnSecs)
+					fetchedNode[0].displayConfig?.screenCarouselInterval = Int32(truncatingIfNeeded: config.autoScreenCarouselSecs)
+					fetchedNode[0].displayConfig?.compassNorthTop = config.compassNorthTop
+					fetchedNode[0].displayConfig?.compassOrientation = Int32(config.compassOrientation.rawValue)
+					fetchedNode[0].displayConfig?.flipScreen = config.flipScreen
+					fetchedNode[0].displayConfig?.oledType = Int32(config.oled.rawValue)
+					fetchedNode[0].displayConfig?.displayMode = Int32(config.displaymode.rawValue)
+					fetchedNode[0].displayConfig?.units = Int32(config.units.rawValue)
+					fetchedNode[0].displayConfig?.headingBold = config.headingBold
+					fetchedNode[0].displayConfig?.use12HClock = config.use12HClock
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [DisplayConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [DisplayConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Display Config")
+			}
+			
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [DisplayConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertLoRaConfigPacket(config: Config.LoRaConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("LoRa config received: %@".localized, nodeNum.toHex())
+		Logger.data.info("📻 \(logString, privacy: .public)")
+		
+		let fetchNum = nodeNum
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save LoRa Config
+			if fetchedNode.count > 0 {
+				if fetchedNode[0].loRaConfig == nil {
+					// No lora config for node, save a new lora config
+					let newLoRaConfig = LoRaConfigEntity()
+					modelContext.insert(newLoRaConfig)
+					newLoRaConfig.regionCode = Int32(config.region.rawValue)
+					newLoRaConfig.usePreset = config.usePreset
+					newLoRaConfig.modemPreset = Int32(config.modemPreset.rawValue)
+					newLoRaConfig.bandwidth = Int32(truncatingIfNeeded: config.bandwidth)
+					newLoRaConfig.spreadFactor = Int32(truncatingIfNeeded: config.spreadFactor)
+					newLoRaConfig.codingRate = Int32(truncatingIfNeeded: config.codingRate)
+					newLoRaConfig.frequencyOffset = config.frequencyOffset
+					newLoRaConfig.overrideFrequency = config.overrideFrequency
+					newLoRaConfig.overrideDutyCycle = config.overrideDutyCycle
+					newLoRaConfig.paFanDisabled = config.paFanDisabled
+					newLoRaConfig.hopLimit = Int32(truncatingIfNeeded: config.hopLimit)
+					newLoRaConfig.txPower = Int32(truncatingIfNeeded: config.txPower)
+					newLoRaConfig.txEnabled = config.txEnabled
+					newLoRaConfig.channelNum = Int32(truncatingIfNeeded: config.channelNum)
+					newLoRaConfig.sx126xRxBoostedGain = config.sx126XRxBoostedGain
+					newLoRaConfig.ignoreMqtt = config.ignoreMqtt
+					newLoRaConfig.okToMqtt = config.configOkToMqtt
+					fetchedNode[0].loRaConfig = newLoRaConfig
+				} else {
+					fetchedNode[0].loRaConfig?.regionCode = Int32(config.region.rawValue)
+					fetchedNode[0].loRaConfig?.usePreset = config.usePreset
+					fetchedNode[0].loRaConfig?.modemPreset = Int32(config.modemPreset.rawValue)
+					fetchedNode[0].loRaConfig?.bandwidth = Int32(truncatingIfNeeded: config.bandwidth)
+					fetchedNode[0].loRaConfig?.spreadFactor = Int32(truncatingIfNeeded: config.spreadFactor)
+					fetchedNode[0].loRaConfig?.codingRate = Int32(truncatingIfNeeded: config.codingRate)
+					fetchedNode[0].loRaConfig?.frequencyOffset = config.frequencyOffset
+					fetchedNode[0].loRaConfig?.overrideFrequency = config.overrideFrequency
+					fetchedNode[0].loRaConfig?.overrideDutyCycle = config.overrideDutyCycle
+					fetchedNode[0].loRaConfig?.paFanDisabled = config.paFanDisabled
+					fetchedNode[0].loRaConfig?.hopLimit = Int32(truncatingIfNeeded: config.hopLimit)
+					fetchedNode[0].loRaConfig?.txPower = Int32(truncatingIfNeeded: config.txPower)
+					fetchedNode[0].loRaConfig?.txEnabled = config.txEnabled
+					fetchedNode[0].loRaConfig?.channelNum = Int32(truncatingIfNeeded: config.channelNum)
+					fetchedNode[0].loRaConfig?.sx126xRxBoostedGain = config.sx126XRxBoostedGain
+					fetchedNode[0].loRaConfig?.ignoreMqtt = config.ignoreMqtt
+					fetchedNode[0].loRaConfig?.okToMqtt = config.configOkToMqtt
+					fetchedNode[0].loRaConfig?.sx126xRxBoostedGain = config.sx126XRxBoostedGain
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [LoRaConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [LoRaConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Lora Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [LoRaConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertNetworkConfigPacket(config: Config.NetworkConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Network config received: %@".localized, String(nodeNum))
+		Logger.data.info("🌐 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save WiFi Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].networkConfig == nil {
+					let newNetworkConfig = NetworkConfigEntity()
+					modelContext.insert(newNetworkConfig)
+					newNetworkConfig.wifiEnabled = config.wifiEnabled
+					newNetworkConfig.wifiSsid = config.wifiSsid
+					newNetworkConfig.wifiPsk = config.wifiPsk
+					newNetworkConfig.ntpServer = config.ntpServer
+					newNetworkConfig.ethEnabled = config.ethEnabled
+					newNetworkConfig.enabledProtocols = Int32(truncatingIfNeeded: config.enabledProtocols)
+					newNetworkConfig.addressMode = Int32(config.addressMode.rawValue)
+					newNetworkConfig.rsyslogServer = config.rsyslogServer
+					newNetworkConfig.ip = Int32(bitPattern: config.ipv4Config.ip)
+					newNetworkConfig.gateway = Int32(bitPattern: config.ipv4Config.gateway)
+					newNetworkConfig.subnet = Int32(bitPattern: config.ipv4Config.subnet)
+					newNetworkConfig.dns = Int32(bitPattern: config.ipv4Config.dns)
+					fetchedNode[0].networkConfig = newNetworkConfig
+				} else {
+					fetchedNode[0].networkConfig?.ethEnabled = config.ethEnabled
+					fetchedNode[0].networkConfig?.wifiEnabled = config.wifiEnabled
+					fetchedNode[0].networkConfig?.wifiSsid = config.wifiSsid
+					fetchedNode[0].networkConfig?.wifiPsk = config.wifiPsk
+					fetchedNode[0].networkConfig?.ntpServer = config.ntpServer
+					fetchedNode[0].networkConfig?.enabledProtocols = Int32(truncatingIfNeeded: config.enabledProtocols)
+					fetchedNode[0].networkConfig?.addressMode = Int32(config.addressMode.rawValue)
+					fetchedNode[0].networkConfig?.rsyslogServer = config.rsyslogServer
+					fetchedNode[0].networkConfig?.ip = Int32(bitPattern: config.ipv4Config.ip)
+					fetchedNode[0].networkConfig?.gateway = Int32(bitPattern: config.ipv4Config.gateway)
+					fetchedNode[0].networkConfig?.subnet = Int32(bitPattern: config.ipv4Config.subnet)
+					fetchedNode[0].networkConfig?.dns = Int32(bitPattern: config.ipv4Config.dns)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [NetworkConfigEntity] Updated Network Config for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [NetworkConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Network Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [NetworkConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertPositionConfigPacket(config: Config.PositionConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Position config received: %@".localized, String(nodeNum))
+		Logger.data.info("🗺️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save LoRa Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].positionConfig == nil {
+					let newPositionConfig = PositionConfigEntity()
+					modelContext.insert(newPositionConfig)
+					newPositionConfig.smartPositionEnabled = config.positionBroadcastSmartEnabled
+					newPositionConfig.deviceGpsEnabled = config.gpsEnabled
+					newPositionConfig.gpsMode = Int32(truncatingIfNeeded: config.gpsMode.rawValue)
+					newPositionConfig.rxGpio = Int32(truncatingIfNeeded: config.rxGpio)
+					newPositionConfig.txGpio = Int32(truncatingIfNeeded: config.txGpio)
+					newPositionConfig.gpsEnGpio = Int32(truncatingIfNeeded: config.gpsEnGpio)
+					newPositionConfig.fixedPosition = config.fixedPosition
+					newPositionConfig.positionBroadcastSeconds = Int32(truncatingIfNeeded: config.positionBroadcastSecs)
+					newPositionConfig.broadcastSmartMinimumIntervalSecs = Int32(truncatingIfNeeded: config.broadcastSmartMinimumIntervalSecs)
+					newPositionConfig.broadcastSmartMinimumDistance = Int32(truncatingIfNeeded: config.broadcastSmartMinimumDistance)
+					newPositionConfig.positionFlags = Int32(truncatingIfNeeded: config.positionFlags)
+					newPositionConfig.gpsAttemptTime = 900
+					newPositionConfig.gpsUpdateInterval = Int32(truncatingIfNeeded: config.gpsUpdateInterval)
+					fetchedNode[0].positionConfig = newPositionConfig
+				} else {
+					fetchedNode[0].positionConfig?.smartPositionEnabled = config.positionBroadcastSmartEnabled
+					fetchedNode[0].positionConfig?.deviceGpsEnabled = config.gpsEnabled
+					fetchedNode[0].positionConfig?.gpsMode = Int32(truncatingIfNeeded: config.gpsMode.rawValue)
+					fetchedNode[0].positionConfig?.rxGpio = Int32(truncatingIfNeeded: config.rxGpio)
+					fetchedNode[0].positionConfig?.txGpio = Int32(truncatingIfNeeded: config.txGpio)
+					fetchedNode[0].positionConfig?.gpsEnGpio = Int32(truncatingIfNeeded: config.gpsEnGpio)
+					fetchedNode[0].positionConfig?.fixedPosition = config.fixedPosition
+					fetchedNode[0].positionConfig?.positionBroadcastSeconds = Int32(truncatingIfNeeded: config.positionBroadcastSecs)
+					fetchedNode[0].positionConfig?.broadcastSmartMinimumIntervalSecs = Int32(truncatingIfNeeded: config.broadcastSmartMinimumIntervalSecs)
+					fetchedNode[0].positionConfig?.broadcastSmartMinimumDistance = Int32(truncatingIfNeeded: config.broadcastSmartMinimumDistance)
+					fetchedNode[0].positionConfig?.gpsAttemptTime = 900
+					fetchedNode[0].positionConfig?.gpsUpdateInterval = Int32(truncatingIfNeeded: config.gpsUpdateInterval)
+					fetchedNode[0].positionConfig?.positionFlags = Int32(truncatingIfNeeded: config.positionFlags)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [PositionConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [PositionConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Position Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [PositionConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertPowerConfigPacket(config: Config.PowerConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		let logString = String.localizedStringWithFormat("Power config received: %@".localized, String(nodeNum))
+		Logger.data.info("🗺️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Power Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].powerConfig == nil {
+					let newPowerConfig = PowerConfigEntity()
+					modelContext.insert(newPowerConfig)
+					newPowerConfig.adcMultiplierOverride = config.adcMultiplierOverride
+					newPowerConfig.deviceBatteryInaAddress = Int32(truncatingIfNeeded: config.deviceBatteryInaAddress)
+					newPowerConfig.isPowerSaving = config.isPowerSaving
+					newPowerConfig.lsSecs = Int32(truncatingIfNeeded: config.lsSecs)
+					newPowerConfig.minWakeSecs = Int32(truncatingIfNeeded: config.minWakeSecs)
+					newPowerConfig.onBatteryShutdownAfterSecs = Int32(truncatingIfNeeded: config.onBatteryShutdownAfterSecs)
+					newPowerConfig.waitBluetoothSecs = Int32(truncatingIfNeeded: config.waitBluetoothSecs)
+					fetchedNode[0].powerConfig = newPowerConfig
+				} else {
+					fetchedNode[0].powerConfig?.adcMultiplierOverride = config.adcMultiplierOverride
+					fetchedNode[0].powerConfig?.deviceBatteryInaAddress = Int32(truncatingIfNeeded: config.deviceBatteryInaAddress)
+					fetchedNode[0].powerConfig?.isPowerSaving = config.isPowerSaving
+					fetchedNode[0].powerConfig?.lsSecs = Int32(truncatingIfNeeded: config.lsSecs)
+					fetchedNode[0].powerConfig?.minWakeSecs = Int32(truncatingIfNeeded: config.minWakeSecs)
+					fetchedNode[0].powerConfig?.onBatteryShutdownAfterSecs = Int32(truncatingIfNeeded: config.onBatteryShutdownAfterSecs)
+					fetchedNode[0].powerConfig?.waitBluetoothSecs = Int32(truncatingIfNeeded: config.waitBluetoothSecs)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [PowerConfigEntity] Updated Power Config for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [PowerConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Power Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [PowerConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	/// Mirrors the proto's positional `adminKey` repeated field onto the entity's three scalar slots,
+	/// clearing any slot the device no longer reports (a shrink from 3→1/2, or all the way to none) so a
+	/// retired key isn't retained and later written back into a device-profile (.cfg) export. Kept as one
+	/// helper so the insert and update branches of the security upsert stay in lockstep.
+	private func applyAdminKeys(_ adminKeys: [Data], to entity: SecurityConfigEntity) {
+		entity.adminKey = adminKeys.first
+		entity.adminKey2 = adminKeys.count > 1 ? adminKeys[1] : nil
+		entity.adminKey3 = adminKeys.count > 2 ? adminKeys[2] : nil
+	}
+
+	func upsertSecurityConfigPacket(config: Config.SecurityConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Security config received: @".localized, String(nodeNum))
+		Logger.data.info("🛡️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Security Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].securityConfig == nil {
+					let newSecurityConfig = SecurityConfigEntity()
+					modelContext.insert(newSecurityConfig)
+					newSecurityConfig.publicKey = config.publicKey
+					newSecurityConfig.privateKey = config.privateKey
+					applyAdminKeys(config.adminKey, to: newSecurityConfig)
+					newSecurityConfig.isManaged = config.isManaged
+					newSecurityConfig.serialEnabled = config.serialEnabled
+					newSecurityConfig.debugLogApiEnabled = config.debugLogApiEnabled
+					newSecurityConfig.adminChannelEnabled = config.adminChannelEnabled
+					newSecurityConfig.packetSignaturePolicy = Int32(config.packetSignaturePolicy.rawValue)
+					fetchedNode[0].securityConfig = newSecurityConfig
+} else if let securityConfig = fetchedNode[0].securityConfig {
+					securityConfig.publicKey = config.publicKey
+					securityConfig.privateKey = config.privateKey
+					applyAdminKeys(config.adminKey, to: securityConfig)
+					securityConfig.isManaged = config.isManaged
+					securityConfig.serialEnabled = config.serialEnabled
+					securityConfig.debugLogApiEnabled = config.debugLogApiEnabled
+					securityConfig.adminChannelEnabled = config.adminChannelEnabled
+					securityConfig.packetSignaturePolicy = Int32(config.packetSignaturePolicy.rawValue)
+				}
+				if sessionPasskey?.count != 0 {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [SecurityConfigEntity] Updated Security Config for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [SecurityConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Security Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [SecurityConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertAudioModuleConfigPacket(config: ModuleConfig.AudioConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Audio module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🔊 \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].audioConfig == nil {
+					let newAudioConfig = AudioConfigEntity()
+					modelContext.insert(newAudioConfig)
+					newAudioConfig.codec2Enabled = config.codec2Enabled
+					newAudioConfig.pttPin = Int32(truncatingIfNeeded: config.pttPin)
+					newAudioConfig.bitrate = Int32(config.bitrate.rawValue)
+					newAudioConfig.i2sWs = Int32(truncatingIfNeeded: config.i2SWs)
+					newAudioConfig.i2sSd = Int32(truncatingIfNeeded: config.i2SSd)
+					newAudioConfig.i2sDin = Int32(truncatingIfNeeded: config.i2SDin)
+					newAudioConfig.i2sSck = Int32(truncatingIfNeeded: config.i2SSck)
+					fetchedNode[0].audioConfig = newAudioConfig
+				} else {
+					fetchedNode[0].audioConfig?.codec2Enabled = config.codec2Enabled
+					fetchedNode[0].audioConfig?.pttPin = Int32(truncatingIfNeeded: config.pttPin)
+					fetchedNode[0].audioConfig?.bitrate = Int32(config.bitrate.rawValue)
+					fetchedNode[0].audioConfig?.i2sWs = Int32(truncatingIfNeeded: config.i2SWs)
+					fetchedNode[0].audioConfig?.i2sSd = Int32(truncatingIfNeeded: config.i2SSd)
+					fetchedNode[0].audioConfig?.i2sDin = Int32(truncatingIfNeeded: config.i2SDin)
+					fetchedNode[0].audioConfig?.i2sSck = Int32(truncatingIfNeeded: config.i2SSck)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [AudioConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [AudioConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Audio Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [AudioConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertAmbientLightingModuleConfigPacket(config: ModuleConfig.AmbientLightingConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Ambient Lighting module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🏮 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Ambient Lighting Config
+			if !fetchedNode.isEmpty {
+				
+				if fetchedNode[0].ambientLightingConfig == nil {
+					let newAmbientLighting = AmbientLightingConfigEntity()
+					modelContext.insert(newAmbientLighting)
+					fetchedNode[0].ambientLightingConfig = newAmbientLighting
+				}
+				fetchedNode[0].ambientLightingConfig?.ledState = config.ledState
+				fetchedNode[0].ambientLightingConfig?.current = Int32(truncatingIfNeeded: config.current)
+				fetchedNode[0].ambientLightingConfig?.red = Int32(truncatingIfNeeded: config.red)
+				fetchedNode[0].ambientLightingConfig?.green = Int32(truncatingIfNeeded: config.green)
+				fetchedNode[0].ambientLightingConfig?.blue = Int32(truncatingIfNeeded: config.blue)
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [AmbientLightingConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [AmbientLightingConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Ambient Lighting Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [AmbientLightingConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertCannedMessagesModuleConfigPacket(config: ModuleConfig.CannedMessageConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Canned Message module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🥫 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Canned Message Config
+			if !fetchedNode.isEmpty {
+				
+				if fetchedNode[0].cannedMessageConfig == nil {
+					let newCannedMessageConfig = CannedMessageConfigEntity()
+					modelContext.insert(newCannedMessageConfig)
+					// config.enabled is deprecated (no successor, removed from active use);
+					// tolerated on read but no longer written to the stored entity. (#2021)
+					newCannedMessageConfig.sendBell = config.sendBell
+					newCannedMessageConfig.rotary1Enabled = config.rotary1Enabled
+					newCannedMessageConfig.updown1Enabled = config.updown1Enabled
+					newCannedMessageConfig.inputbrokerPinA = Int32(truncatingIfNeeded: config.inputbrokerPinA)
+					newCannedMessageConfig.inputbrokerPinB = Int32(truncatingIfNeeded: config.inputbrokerPinB)
+					newCannedMessageConfig.inputbrokerPinPress = Int32(truncatingIfNeeded: config.inputbrokerPinPress)
+					newCannedMessageConfig.inputbrokerEventCw = Int32(config.inputbrokerEventCw.rawValue)
+					newCannedMessageConfig.inputbrokerEventCcw = Int32(config.inputbrokerEventCcw.rawValue)
+					newCannedMessageConfig.inputbrokerEventPress = Int32(config.inputbrokerEventPress.rawValue)
+					fetchedNode[0].cannedMessageConfig = newCannedMessageConfig
+				} else {
+					// config.enabled is deprecated (see above); no longer written. (#2021)
+					fetchedNode[0].cannedMessageConfig?.sendBell = config.sendBell
+					fetchedNode[0].cannedMessageConfig?.rotary1Enabled = config.rotary1Enabled
+					fetchedNode[0].cannedMessageConfig?.updown1Enabled = config.updown1Enabled
+					fetchedNode[0].cannedMessageConfig?.inputbrokerPinA = Int32(truncatingIfNeeded: config.inputbrokerPinA)
+					fetchedNode[0].cannedMessageConfig?.inputbrokerPinB = Int32(truncatingIfNeeded: config.inputbrokerPinB)
+					fetchedNode[0].cannedMessageConfig?.inputbrokerPinPress = Int32(truncatingIfNeeded: config.inputbrokerPinPress)
+					fetchedNode[0].cannedMessageConfig?.inputbrokerEventCw = Int32(config.inputbrokerEventCw.rawValue)
+					fetchedNode[0].cannedMessageConfig?.inputbrokerEventCcw = Int32(config.inputbrokerEventCcw.rawValue)
+					fetchedNode[0].cannedMessageConfig?.inputbrokerEventPress = Int32(config.inputbrokerEventPress.rawValue)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [CannedMessageConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [CannedMessageConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Canned Message Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [CannedMessageConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertDetectionSensorModuleConfigPacket(config: ModuleConfig.DetectionSensorConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Detection Sensor module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🕵️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Detection Sensor Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].detectionSensorConfig == nil {
+					let newConfig = DetectionSensorConfigEntity()
+					modelContext.insert(newConfig)
+					newConfig.enabled = config.enabled
+					newConfig.sendBell = config.sendBell
+					newConfig.name = config.name
+					newConfig.monitorPin = Int32(truncatingIfNeeded: config.monitorPin)
+					newConfig.triggerType = Int32(config.detectionTriggerType.rawValue)
+					newConfig.usePullup = config.usePullup
+					newConfig.minimumBroadcastSecs = Int32(truncatingIfNeeded: config.minimumBroadcastSecs)
+					newConfig.stateBroadcastSecs = Int32(truncatingIfNeeded: config.stateBroadcastSecs)
+					fetchedNode[0].detectionSensorConfig = newConfig
+				} else {
+					fetchedNode[0].detectionSensorConfig?.enabled = config.enabled
+					fetchedNode[0].detectionSensorConfig?.sendBell = config.sendBell
+					fetchedNode[0].detectionSensorConfig?.name = config.name
+					fetchedNode[0].detectionSensorConfig?.monitorPin = Int32(truncatingIfNeeded: config.monitorPin)
+					fetchedNode[0].detectionSensorConfig?.usePullup = config.usePullup
+					fetchedNode[0].detectionSensorConfig?.triggerType = Int32(config.detectionTriggerType.rawValue)
+					fetchedNode[0].detectionSensorConfig?.minimumBroadcastSecs = Int32(truncatingIfNeeded: config.minimumBroadcastSecs)
+					fetchedNode[0].detectionSensorConfig?.stateBroadcastSecs = Int32(truncatingIfNeeded: config.stateBroadcastSecs)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [DetectionSensorConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+				
+			} else {
+				Logger.data.error("💥 [DetectionSensorConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Detection Sensor Module Config")
+			}
+			
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [DetectionSensorConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertMeshBeaconModuleConfigPacket(config: ModuleConfig.MeshBeaconConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Mesh Beacon module config received: %@".localized, String(nodeNum))
+		Logger.data.info("📡 \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+		var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+		fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Mesh Beacon Config
+			if !fetchedNode.isEmpty {
+				let entity: MeshBeaconConfigEntity
+				if let existing = fetchedNode[0].meshBeaconConfig {
+					entity = existing
+				} else {
+					entity = MeshBeaconConfigEntity()
+					modelContext.insert(entity)
+					fetchedNode[0].meshBeaconConfig = entity
+				}
+				entity.flags = Int32(truncatingIfNeeded: config.flags)
+				entity.broadcastMessage = config.broadcastMessage
+				entity.broadcastOfferChannelName = config.hasBroadcastOfferChannel ? config.broadcastOfferChannel.name : ""
+				entity.broadcastOfferChannelPSK = config.hasBroadcastOfferChannel ? config.broadcastOfferChannel.psk : Data()
+				entity.broadcastOfferRegion = Int32(config.broadcastOfferRegion.rawValue)
+				entity.broadcastOfferPreset = config.hasBroadcastOfferPreset ? Int32(config.broadcastOfferPreset.rawValue) : -1
+				entity.broadcastIntervalSecs = config.broadcastIntervalSecs > 0 ? Int32(truncatingIfNeeded: config.broadcastIntervalSecs) : 3600
+
+				// Rebuild the multi-target list from the incoming config (cascade replaces the old rows).
+				for old in entity.broadcastTargets {
+					modelContext.delete(old)
+				}
+				entity.broadcastTargets = config.broadcastTargets.map { target in
+					let newTarget = BroadcastTargetEntity(
+						preset: target.hasPreset ? Int32(target.preset.rawValue) : -1,
+						region: Int32(target.region.rawValue),
+						channelIndex: target.hasChannelIndex ? Int32(truncatingIfNeeded: target.channelIndex) : -1
+					)
+					modelContext.insert(newTarget)
+					return newTarget
+				}
+
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [MeshBeaconConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+
+			} else {
+				Logger.data.error("💥 [MeshBeaconConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Mesh Beacon Module Config")
+			}
+
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [MeshBeaconConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertExternalNotificationModuleConfigPacket(config: ModuleConfig.ExternalNotificationConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("External Notification module config received: %@".localized, String(nodeNum))
+		Logger.data.info("📣 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save External Notificaitone Config
+			if !fetchedNode.isEmpty {
+				
+				if fetchedNode[0].externalNotificationConfig == nil {
+					let newExternalNotificationConfig = ExternalNotificationConfigEntity()
+					modelContext.insert(newExternalNotificationConfig)
+					newExternalNotificationConfig.enabled = config.enabled
+					newExternalNotificationConfig.usePWM = config.usePwm
+					newExternalNotificationConfig.alertBell = config.alertBell
+					newExternalNotificationConfig.alertBellBuzzer = config.alertBellBuzzer
+					newExternalNotificationConfig.alertBellVibra = config.alertBellVibra
+					newExternalNotificationConfig.alertMessage = config.alertMessage
+					newExternalNotificationConfig.alertMessageBuzzer = config.alertMessageBuzzer
+					newExternalNotificationConfig.alertMessageVibra = config.alertMessageVibra
+					newExternalNotificationConfig.active = config.active
+					newExternalNotificationConfig.output = Int32(truncatingIfNeeded: config.output)
+					newExternalNotificationConfig.outputBuzzer = Int32(truncatingIfNeeded: config.outputBuzzer)
+					newExternalNotificationConfig.outputVibra = Int32(truncatingIfNeeded: config.outputVibra)
+					newExternalNotificationConfig.outputMilliseconds = Int32(truncatingIfNeeded: config.outputMs)
+					newExternalNotificationConfig.nagTimeout = Int32(truncatingIfNeeded: config.nagTimeout)
+					newExternalNotificationConfig.useI2SAsBuzzer = config.useI2SAsBuzzer
+					fetchedNode[0].externalNotificationConfig = newExternalNotificationConfig
+				} else {
+					fetchedNode[0].externalNotificationConfig?.enabled = config.enabled
+					fetchedNode[0].externalNotificationConfig?.usePWM = config.usePwm
+					fetchedNode[0].externalNotificationConfig?.alertBell = config.alertBell
+					fetchedNode[0].externalNotificationConfig?.alertBellBuzzer = config.alertBellBuzzer
+					fetchedNode[0].externalNotificationConfig?.alertBellVibra = config.alertBellVibra
+					fetchedNode[0].externalNotificationConfig?.alertMessage = config.alertMessage
+					fetchedNode[0].externalNotificationConfig?.alertMessageBuzzer = config.alertMessageBuzzer
+					fetchedNode[0].externalNotificationConfig?.alertMessageVibra = config.alertMessageVibra
+					fetchedNode[0].externalNotificationConfig?.active = config.active
+					fetchedNode[0].externalNotificationConfig?.output = Int32(truncatingIfNeeded: config.output)
+					fetchedNode[0].externalNotificationConfig?.outputBuzzer = Int32(truncatingIfNeeded: config.outputBuzzer)
+					fetchedNode[0].externalNotificationConfig?.outputVibra = Int32(truncatingIfNeeded: config.outputVibra)
+					fetchedNode[0].externalNotificationConfig?.outputMilliseconds = Int32(truncatingIfNeeded: config.outputMs)
+					fetchedNode[0].externalNotificationConfig?.nagTimeout = Int32(truncatingIfNeeded: config.nagTimeout)
+					fetchedNode[0].externalNotificationConfig?.useI2SAsBuzzer = config.useI2SAsBuzzer
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [ExternalNotificationConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [ExternalNotificationConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save External Notification Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [ExternalNotificationConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+	
+	func upsertNeighborInfoModuleConfigPacket(config: ModuleConfig.NeighborInfoConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Neighbor Info config received: %@".localized, String(nodeNum))
+		Logger.data.info("🏘️ \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].neighborInfoConfig == nil {
+					let newConfig = NeighborInfoConfigEntity()
+					modelContext.insert(newConfig)
+					newConfig.enabled = config.enabled
+					newConfig.updateInterval = Int32(truncatingIfNeeded: config.updateInterval)
+					newConfig.transmitOverLora = config.transmitOverLora
+					fetchedNode[0].neighborInfoConfig = newConfig
+				} else {
+					fetchedNode[0].neighborInfoConfig?.enabled = config.enabled
+					fetchedNode[0].neighborInfoConfig?.updateInterval = Int32(truncatingIfNeeded: config.updateInterval)
+					fetchedNode[0].neighborInfoConfig?.transmitOverLora = config.transmitOverLora
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [NeighborInfoConfigEntity] Updated for node number: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [NeighborInfoConfigEntity] No Nodes found in local database matching node number \(nodeNum.toHex(), privacy: .public) unable to save Neighbor Info Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [NeighborInfoConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertPaxCounterModuleConfigPacket(config: ModuleConfig.PaxcounterConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("PAX Counter config received: %@".localized, String(nodeNum))
+		Logger.data.info("🧑‍🤝‍🧑 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save PAX Counter Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].paxCounterConfig == nil {
+					let newPaxCounterConfig = PaxCounterConfigEntity()
+					modelContext.insert(newPaxCounterConfig)
+					newPaxCounterConfig.enabled = config.enabled
+					newPaxCounterConfig.updateInterval = Int32(truncatingIfNeeded: config.paxcounterUpdateInterval)
+					newPaxCounterConfig.wifiThreshold = config.wifiThreshold
+					newPaxCounterConfig.bleThreshold = config.bleThreshold
+					fetchedNode[0].paxCounterConfig = newPaxCounterConfig
+				} else {
+					fetchedNode[0].paxCounterConfig?.enabled = config.enabled
+					fetchedNode[0].paxCounterConfig?.updateInterval = Int32(truncatingIfNeeded: config.paxcounterUpdateInterval)
+					fetchedNode[0].paxCounterConfig?.wifiThreshold = config.wifiThreshold
+					fetchedNode[0].paxCounterConfig?.bleThreshold = config.bleThreshold
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [PaxCounterConfigEntity] Updated for node number: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [PaxCounterConfigEntity] No Nodes found in local database matching node number \(nodeNum.toHex(), privacy: .public) unable to save PAX Counter Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [PaxCounterConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertRtttlConfigPacket(ringtone: String, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("RTTTL Ringtone config received: %@".localized, String(nodeNum))
+		Logger.data.info("⛰️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save RTTTL Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].rtttlConfig == nil {
+					let newRtttlConfig = RTTTLConfigEntity()
+					modelContext.insert(newRtttlConfig)
+					newRtttlConfig.ringtone = ringtone
+					fetchedNode[0].rtttlConfig = newRtttlConfig
+				} else {
+					fetchedNode[0].rtttlConfig?.ringtone = ringtone
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [RtttlConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [RtttlConfigEntity] No nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save RTTTL Ringtone Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [RtttlConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertMqttModuleConfigPacket(config: ModuleConfig.MQTTConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("MQTT module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🌉 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save MQTT Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].mqttConfig == nil {
+					let newMQTTConfig = MQTTConfigEntity()
+					modelContext.insert(newMQTTConfig)
+					newMQTTConfig.enabled = config.enabled
+					newMQTTConfig.proxyToClientEnabled = config.proxyToClientEnabled
+					newMQTTConfig.address = config.address
+					newMQTTConfig.username = config.username
+					newMQTTConfig.password = config.password
+					newMQTTConfig.root = config.root
+					newMQTTConfig.encryptionEnabled = config.encryptionEnabled
+					newMQTTConfig.jsonEnabled = config.jsonEnabled
+					newMQTTConfig.tlsEnabled = config.tlsEnabled
+					newMQTTConfig.mapReportingEnabled = config.mapReportingEnabled
+					newMQTTConfig.mapReportingShouldReportLocation = config.mapReportSettings.shouldReportLocation
+					newMQTTConfig.mapPositionPrecision = Int32(truncatingIfNeeded: config.mapReportSettings.positionPrecision)
+					newMQTTConfig.mapPublishIntervalSecs = Int32(truncatingIfNeeded: config.mapReportSettings.publishIntervalSecs)
+					fetchedNode[0].mqttConfig = newMQTTConfig
+				} else {
+					fetchedNode[0].mqttConfig?.enabled = config.enabled
+					fetchedNode[0].mqttConfig?.proxyToClientEnabled = config.proxyToClientEnabled
+					fetchedNode[0].mqttConfig?.address = config.address
+					fetchedNode[0].mqttConfig?.username = config.username
+					fetchedNode[0].mqttConfig?.password = config.password
+					fetchedNode[0].mqttConfig?.root = config.root
+					fetchedNode[0].mqttConfig?.encryptionEnabled = config.encryptionEnabled
+					fetchedNode[0].mqttConfig?.jsonEnabled = config.jsonEnabled
+					fetchedNode[0].mqttConfig?.tlsEnabled = config.tlsEnabled
+					fetchedNode[0].mqttConfig?.mapReportingEnabled = config.mapReportingEnabled
+					fetchedNode[0].mqttConfig?.mapReportingShouldReportLocation = config.mapReportSettings.shouldReportLocation
+					fetchedNode[0].mqttConfig?.mapPositionPrecision = Int32(truncatingIfNeeded: config.mapReportSettings.positionPrecision)
+					fetchedNode[0].mqttConfig?.mapPublishIntervalSecs = Int32(truncatingIfNeeded: config.mapReportSettings.publishIntervalSecs)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [MQTTConfigEntity] Updated for node number: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [MQTTConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save MQTT Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [MQTTConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertRangeTestModuleConfigPacket(config: ModuleConfig.RangeTestConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Range Test module config received: %@".localized, String(nodeNum))
+		Logger.data.info("⛰️ \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Device Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].rangeTestConfig == nil {
+					let newRangeTestConfig = RangeTestConfigEntity()
+					modelContext.insert(newRangeTestConfig)
+					newRangeTestConfig.sender = Int32(truncatingIfNeeded: config.sender)
+					newRangeTestConfig.enabled = config.enabled
+					newRangeTestConfig.save = config.save
+					fetchedNode[0].rangeTestConfig = newRangeTestConfig
+				} else {
+					fetchedNode[0].rangeTestConfig?.sender = Int32(truncatingIfNeeded: config.sender)
+					fetchedNode[0].rangeTestConfig?.enabled = config.enabled
+					fetchedNode[0].rangeTestConfig?.save = config.save
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [RangeTestConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [RangeTestConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Range Test Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [RangeTestConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertSerialModuleConfigPacket(config: ModuleConfig.SerialConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Serial module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🤖 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Device Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].serialConfig == nil {
+					let newSerialConfig = SerialConfigEntity()
+					modelContext.insert(newSerialConfig)
+					newSerialConfig.enabled = config.enabled
+					newSerialConfig.echo = config.echo
+					newSerialConfig.rxd = Int32(truncatingIfNeeded: config.rxd)
+					newSerialConfig.txd = Int32(truncatingIfNeeded: config.txd)
+					newSerialConfig.baudRate = Int32(config.baud.rawValue)
+					newSerialConfig.timeout = Int32(truncatingIfNeeded: config.timeout)
+					newSerialConfig.mode = Int32(config.mode.rawValue)
+					fetchedNode[0].serialConfig = newSerialConfig
+				} else {
+					fetchedNode[0].serialConfig?.enabled = config.enabled
+					fetchedNode[0].serialConfig?.echo = config.echo
+					fetchedNode[0].serialConfig?.rxd = Int32(truncatingIfNeeded: config.rxd)
+					fetchedNode[0].serialConfig?.txd = Int32(truncatingIfNeeded: config.txd)
+					fetchedNode[0].serialConfig?.baudRate = Int32(config.baud.rawValue)
+					fetchedNode[0].serialConfig?.timeout = Int32(truncatingIfNeeded: config.timeout)
+					fetchedNode[0].serialConfig?.mode = Int32(config.mode.rawValue)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [SerialConfigEntity]Updated Serial Module Config for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [SerialConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Serial Module Config")
+			}
+		} catch {
+			
+			let nsError = error as NSError
+			Logger.data.error("💥 [SerialConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertStatusMessageModuleConfigPacket(config: ModuleConfig.StatusMessageConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Status Message module config received: %@".localized, String(nodeNum))
+		Logger.data.info("📬 \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].statusMessageConfig == nil {
+					let newConfig = StatusMessageConfigEntity()
+					modelContext.insert(newConfig)
+					newConfig.nodeStatus = config.nodeStatus
+					fetchedNode[0].statusMessageConfig = newConfig
+				} else {
+					fetchedNode[0].statusMessageConfig?.nodeStatus = config.nodeStatus
+				}
+				// The firmware broadcasts the configured value, so mirror it into the live
+				// status too — displays prefer the live field and would otherwise show the
+				// old status until the next broadcast arrives.
+				fetchedNode[0].nodeStatus = config.nodeStatus.isEmpty ? nil : config.nodeStatus
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [StatusMessageConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [StatusMessageConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Status Message Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [StatusMessageConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	/// Stores the live status message a node broadcasts over NODE_STATUS_APP. This is the
+	/// node's currently advertised status (shown in the node list), separate from the
+	/// configured value retrieved via admin (`statusMessageConfig`). Mirrors Android's
+	/// `handleReceivedNodeStatus`: an empty status clears the stored value.
+	func upsertNodeStatusPacket(packet: MeshPacket) {
+		let fetchNum = Int64(packet.from)
+		guard let statusMessage = try? StatusMessage(serializedBytes: packet.decoded.payload) else {
+			Logger.data.error("💥 [NodeStatus] Failed to decode StatusMessage from \(fetchNum.toHex(), privacy: .public)")
+			return
+		}
+
+		let logString = String.localizedStringWithFormat("Node status received: %@".localized, String(fetchNum))
+		Logger.data.info("📬 \(logString, privacy: .public)")
+
+		var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+		fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			guard !fetchedNode.isEmpty else {
+				Logger.data.error("💥 [NodeStatus] No node found matching \(fetchNum.toHex(), privacy: .public) unable to save node status")
+				return
+			}
+			fetchedNode[0].nodeStatus = statusMessage.status.isEmpty ? nil : statusMessage.status
+			savePendingChanges()
+			Logger.data.info("💾 [NodeStatus] Updated for node: \(fetchNum.toHex(), privacy: .public)")
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [NodeStatus] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertStoreForwardModuleConfigPacket(config: ModuleConfig.StoreForwardConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Store & Forward module config received: %@".localized, String(nodeNum))
+		Logger.data.info("📬 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Store & Forward Sensor Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].storeForwardConfig == nil {
+					let newConfig = StoreForwardConfigEntity()
+					modelContext.insert(newConfig)
+					newConfig.enabled = config.enabled
+					newConfig.heartbeat = config.heartbeat
+					newConfig.records = Int32(truncatingIfNeeded: config.records)
+					newConfig.historyReturnMax = Int32(truncatingIfNeeded: config.historyReturnMax)
+					newConfig.historyReturnWindow = Int32(truncatingIfNeeded: config.historyReturnWindow)
+					newConfig.isRouter = config.isServer
+					fetchedNode[0].storeForwardConfig = newConfig
+				} else {
+					fetchedNode[0].storeForwardConfig?.enabled = config.enabled
+					fetchedNode[0].storeForwardConfig?.heartbeat = config.heartbeat
+					fetchedNode[0].storeForwardConfig?.records = Int32(truncatingIfNeeded: config.records)
+					fetchedNode[0].storeForwardConfig?.historyReturnMax = Int32(truncatingIfNeeded: config.historyReturnMax)
+					fetchedNode[0].storeForwardConfig?.historyReturnWindow = Int32(truncatingIfNeeded: config.historyReturnWindow)
+					// Refresh the server flag too, otherwise toggling server mode on the device is never
+					// reflected after the first sync and the device-profile export keeps writing the old value.
+					fetchedNode[0].storeForwardConfig?.isRouter = config.isServer
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [StoreForwardConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [StoreForwardConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Store & Forward Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [StoreForwardConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertTelemetryModuleConfigPacket(config: ModuleConfig.TelemetryConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+		
+		let logString = String.localizedStringWithFormat("Telemetry module config received: %@".localized, String(nodeNum))
+		Logger.data.info("📈 \(logString, privacy: .public)")
+		
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			// Found a node, save Telemetry Config
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].telemetryConfig == nil {
+					let newTelemetryConfig = TelemetryConfigEntity()
+					modelContext.insert(newTelemetryConfig)
+					newTelemetryConfig.deviceUpdateInterval = Int32(truncatingIfNeeded: config.deviceUpdateInterval)
+					newTelemetryConfig.deviceTelemetryEnabled = config.deviceTelemetryEnabled
+					newTelemetryConfig.environmentUpdateInterval = Int32(truncatingIfNeeded: config.environmentUpdateInterval)
+					newTelemetryConfig.environmentMeasurementEnabled = config.environmentMeasurementEnabled
+					newTelemetryConfig.environmentScreenEnabled = config.environmentScreenEnabled
+					newTelemetryConfig.environmentDisplayFahrenheit = config.environmentDisplayFahrenheit
+					newTelemetryConfig.airQualityEnabled = config.airQualityEnabled
+					newTelemetryConfig.airQualityInterval = Int32(truncatingIfNeeded: config.airQualityInterval)
+					newTelemetryConfig.powerMeasurementEnabled = config.powerMeasurementEnabled
+					newTelemetryConfig.powerUpdateInterval = Int32(truncatingIfNeeded: config.powerUpdateInterval)
+					newTelemetryConfig.powerScreenEnabled = config.powerScreenEnabled
+					fetchedNode[0].telemetryConfig = newTelemetryConfig
+				} else {
+					fetchedNode[0].telemetryConfig?.deviceUpdateInterval = Int32(truncatingIfNeeded: config.deviceUpdateInterval)
+					fetchedNode[0].telemetryConfig?.deviceTelemetryEnabled = config.deviceTelemetryEnabled
+					fetchedNode[0].telemetryConfig?.environmentUpdateInterval = Int32(truncatingIfNeeded: config.environmentUpdateInterval)
+					fetchedNode[0].telemetryConfig?.environmentMeasurementEnabled = config.environmentMeasurementEnabled
+					fetchedNode[0].telemetryConfig?.environmentScreenEnabled = config.environmentScreenEnabled
+					fetchedNode[0].telemetryConfig?.environmentDisplayFahrenheit = config.environmentDisplayFahrenheit
+					fetchedNode[0].telemetryConfig?.airQualityEnabled = config.airQualityEnabled
+					fetchedNode[0].telemetryConfig?.airQualityInterval = Int32(truncatingIfNeeded: config.airQualityInterval)
+					fetchedNode[0].telemetryConfig?.powerMeasurementEnabled = config.powerMeasurementEnabled
+					fetchedNode[0].telemetryConfig?.powerUpdateInterval = Int32(truncatingIfNeeded: config.powerUpdateInterval)
+					fetchedNode[0].telemetryConfig?.powerScreenEnabled = config.powerScreenEnabled
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [TelemetryConfigEntity] Updated Telemetry Module Config for node: \(nodeNum.toHex(), privacy: .public)")
+				
+			} else {
+				Logger.data.error("💥 [TelemetryConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Telemetry Module Config")
+			}
+			
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [TelemetryConfigEntity] Fetching node for core data TelemetryConfigEntity failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertTAKModuleConfigPacket(config: ModuleConfig.TAKConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("TAK module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🎯 \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+			var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+			fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			if !fetchedNode.isEmpty {
+				if fetchedNode[0].takConfig == nil {
+					let newTAKConfig = TAKConfigEntity()
+					modelContext.insert(newTAKConfig)
+					newTAKConfig.team = Int32(config.team.rawValue)
+					newTAKConfig.role = Int32(config.role.rawValue)
+					fetchedNode[0].takConfig = newTAKConfig
+				} else {
+					fetchedNode[0].takConfig?.team = Int32(config.team.rawValue)
+					fetchedNode[0].takConfig?.role = Int32(config.role.rawValue)
+				}
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+					Logger.data.info("💾 [TAKConfigEntity] Updated TAK Module Config for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [TAKConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save TAK Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [TAKConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+
+	func upsertTrafficManagementModuleConfigPacket(config: ModuleConfig.TrafficManagementConfig, nodeNum: Int64, sessionPasskey: Data? = Data()) {
+
+		let logString = String.localizedStringWithFormat("Traffic Management module config received: %@".localized, String(nodeNum))
+		Logger.data.info("🚦 \(logString, privacy: .public)")
+
+		let fetchNum = Int64(nodeNum)
+		var fetchNodeInfoRequest = FetchDescriptor<NodeInfoEntity>(predicate: #Predicate<NodeInfoEntity> { $0.num == fetchNum })
+		fetchNodeInfoRequest.fetchLimit = 1
+		do {
+			let fetchedNode = try modelContext.fetch(fetchNodeInfoRequest)
+			if !fetchedNode.isEmpty {
+				let entity: TrafficManagementConfigEntity
+				if let existing = fetchedNode[0].trafficManagementConfig {
+					entity = existing
+				} else {
+					entity = TrafficManagementConfigEntity()
+					modelContext.insert(entity)
+					fetchedNode[0].trafficManagementConfig = entity
+				}
+
+				// 2.8 schema dropped the per-feature boolean flags and the
+				// precision-bits / hop-management fields. Each feature is now enabled
+				// implicitly by a non-zero value, so derive the stored booleans (still
+				// used by the config UI) from the incoming interval/threshold values.
+				let positionDedup = config.positionMinIntervalSecs > 0
+				let nodeinfoDirect = config.nodeinfoDirectResponseMaxHops > 0
+				let rateLimit = config.rateLimitWindowSecs > 0 || config.rateLimitMaxPackets > 0
+				let dropUnknown = config.unknownPacketThreshold > 0
+
+				entity.enabled = positionDedup || nodeinfoDirect || rateLimit || dropUnknown
+				entity.positionDedupEnabled = positionDedup
+				entity.positionMinIntervalSecs = Int32(truncatingIfNeeded: config.positionMinIntervalSecs)
+				entity.nodeinfoDirectResponse = nodeinfoDirect
+				entity.nodeinfoDirectResponseMaxHops = Int32(truncatingIfNeeded: config.nodeinfoDirectResponseMaxHops)
+				entity.rateLimitEnabled = rateLimit
+				entity.rateLimitWindowSecs = Int32(truncatingIfNeeded: config.rateLimitWindowSecs)
+				entity.rateLimitMaxPackets = Int32(truncatingIfNeeded: config.rateLimitMaxPackets)
+				entity.dropUnknownEnabled = dropUnknown
+				entity.unknownPacketThreshold = Int32(truncatingIfNeeded: config.unknownPacketThreshold)
+				if sessionPasskey != nil {
+					fetchedNode[0].sessionPasskey = sessionPasskey
+					fetchedNode[0].sessionExpiration = Date().addingTimeInterval(300)
+				}
+				savePendingChanges()
+				Logger.data.info("💾 [TrafficManagementConfigEntity] Updated for node: \(nodeNum.toHex(), privacy: .public)")
+			} else {
+				Logger.data.error("💥 [TrafficManagementConfigEntity] No Nodes found in local database matching node \(nodeNum.toHex(), privacy: .public) unable to save Traffic Management Module Config")
+			}
+		} catch {
+			let nsError = error as NSError
+			Logger.data.error("💥 [TrafficManagementConfigEntity] Fetching node for core data failed: \(nsError, privacy: .public)")
+		}
+	}
+}

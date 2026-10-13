@@ -1,16 +1,16 @@
 import SwiftUI
-import CoreData
+import SwiftData
 import OSLog
 
 struct MessageContextMenuItems: View {
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
 
 	let message: MessageEntity
 	let tapBackDestination: MessageDestination
 	let isCurrentUser: Bool
 	@Binding var isShowingDeleteConfirmation: Bool
-	@Binding var isShowingTapbackInput: Bool
+	let onTapback: () -> Void
 	let onReply: () -> Void
 	let canTranslate: Bool
 	let hasTranslatedText: Bool
@@ -25,33 +25,25 @@ struct MessageContextMenuItems: View {
 			if message.pkiEncrypted {
 				Label("Encrypted", systemImage: "lock")
 			}
+			if message.xeddsaSigned {
+				Label("Signed · verified", systemImage: "checkmark.shield.fill")
+			}
 			Text("Channel") + Text(": \(message.channel)")
 		}
 		.onAppear {
-			DispatchQueue.global(qos: .userInitiated).async {
-				let result = message.relayDisplay()
-				DispatchQueue.main.async {
-					relayDisplay = result
-				}
-			}
+			// relayDisplay() is @MainActor and reads the shared main ModelContext plus
+			// SwiftData @Model relationships, none of which are thread-safe. The previous
+			// DispatchQueue.global hop ran it on background threads — concurrently across
+			// every visible message's context menu — which corrupted the SwiftData object
+			// graph and aborted with a double-free (SIGABRT in libmalloc). onAppear already
+			// runs on the main actor, so call it directly on the right queue.
+			relayDisplay = message.relayDisplay()
 		}
 
 		Button("Tapback") {
 			// The context menu needs a moment to dismiss before the focus state can be changed.
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-				isShowingTapbackInput = true
-				#if targetEnvironment(macCatalyst)
-				// On Mac Catalyst, open the system Character Palette (emoji picker)
-				// by calling orderFrontCharacterPalette: directly on NSApplication.
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					if let nsApp = NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication") as? NSObject {
-						let selector = NSSelectorFromString("orderFrontCharacterPalette:")
-						if nsApp.responds(to: selector) {
-							nsApp.perform(selector, with: nil)
-						}
-					}
-				}
-				#endif
+				onTapback()
 			}
 		}
 
@@ -95,8 +87,12 @@ struct MessageContextMenuItems: View {
 			// Compute a relay display string if relayNode is present
 
 			VStack {
-				Text("\(messageDate.formattedDate(format: MessageText.dateFormatString))")
+				Text("\(messageDate.formatted(date: .numeric, time: .standard))")
 					.foregroundColor(.gray)
+			}
+
+			if message.xeddsaSigned {
+				Text("Verified with the sender's key.")
 			}
 
 			if let relayDisplay {
@@ -109,7 +105,7 @@ struct MessageContextMenuItems: View {
 			if !isCurrentUser && !(message.fromUser?.userNode?.viaMqtt ?? false) && message.fromUser?.userNode?.hopsAway ?? -1 == 0 {
 				VStack {
 					Text("SNR \(String(format: "%.2f", message.snr)) dB")
-					Text("RSSI \(String(format: "%d", message.rssi)) dBm")
+					Text("RSSI \(message.rssi) dBm")
 				}
 			} else if !isCurrentUser && !(message.fromUser?.userNode?.viaMqtt ?? false) {
 				VStack {
@@ -119,22 +115,17 @@ struct MessageContextMenuItems: View {
 			if message.relays != 0 && message.realACK == false {
 				Text("Relayed by \(message.relays) \(message.relays == 1 ? "node" : "nodes")")
 			}
-			if isCurrentUser && message.receivedACK {
-				VStack {
-					Text("Received Ack: \(message.receivedACK ? "✔️" : "")")
-					Text("Recipient Ack: \(message.realACK ? "✔️" : "")")
-				}
-			} else if isCurrentUser && message.ackError == 0 {
-				Text("Waiting")
-			} else if isCurrentUser && message.ackError > 0 {
-				let ackErrorVal = RoutingError(rawValue: Int(message.ackError))
-				Text(DeliveryStatus.text(for: ackErrorVal, isDirect: { if case .user = tapBackDestination { return true } else { return false } }()))
+			if isCurrentUser {
+				let status = message.deliveryStatus(isDirectMessage: tapBackDestination.isDirectMessage)
+				Text(status.text)
+					.fixedSize(horizontal: false, vertical: true)
+				Text(status.detail)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 
 			if isCurrentUser {
 				if let sixMonthsAgo, ackDate >= sixMonthsAgo {
-					Text("Ack Time: \(ackDate.formattedDate(format: MessageText.timeFormatString))")
+					Text("Ack Time: \(ackDate.formatted(date: .omitted, time: .standard))")
 						.foregroundColor(.gray)
 				}
 			}
@@ -160,7 +151,12 @@ struct MessageContextMenuItems: View {
 }
 
 private extension MessageDestination {
-	var managedObject: NSManagedObject {
+	var isDirectMessage: Bool {
+		if case .user = self { return true }
+		return false
+	}
+
+	var persistentModel: any PersistentModel {
 		switch self {
 		case let .user(user): return user
 		case let .channel(channel): return channel

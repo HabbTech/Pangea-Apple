@@ -1,0 +1,48 @@
+// MARK: DiscoveredNodeEntity
+//
+//  DiscoveredNodeEntity.swift
+//  Meshtastic
+//
+//  Copyright(c) Garth Vander Houwen 2026.
+//
+
+import Foundation
+import SwiftData
+
+@Model
+final class DiscoveredNodeEntity {
+	var nodeNum: Int64 = 0
+	var shortName: String = ""
+	var longName: String = ""
+	var neighborType: String = "direct"
+	var latitude: Double = 0.0
+	var longitude: Double = 0.0
+	var distanceFromUser: Double = 0.0
+	var hopCount: Int = 0
+	var snr: Float = 0.0
+	var rssi: Int = 0
+	var messageCount: Int = 0
+	var sensorPacketCount: Int = 0
+	var isInfrastructure: Bool = false
+	var presetName: String = ""
+
+	var session: DiscoverySessionEntity?
+	var presetResult: DiscoveryPresetResultEntity?
+
+	/// FR-011: messageCount >= sensorPacketCount → person.2.fill, else thermometer.medium
+	var iconName: String {
+		messageCount >= sensorPacketCount ? "person.2.fill" : "thermometer.medium"
+	}
+
+	/// A node label for display and VoiceOver, preferring the long name, then short, then the hex id.
+	/// The hex fallback intentionally matches `DiscoveryMapView`'s existing `CircleText` fallback
+	/// (last 4 hex digits, not `DiscoveredBeaconEntity.displayName`'s `!%08x` format) so a pin's
+	/// VoiceOver title and its visible abbreviation stay consistent.
+	var displayName: String {
+		if !longName.isEmpty { return longName }
+		if !shortName.isEmpty { return shortName }
+		return String(nodeNum.toHex().suffix(4))
+	}
+
+	init() {}
+}

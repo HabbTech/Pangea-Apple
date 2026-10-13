@@ -68,7 +68,7 @@ struct ConnectedDevice: View {
 							.accessibilityHidden(true)
 					}
 					.accessibilityElement(children: .ignore)
-					.accessibilityLabel("Connected to Bluetooth device".localized + ", " + name.formatNodeNameForVoiceOver())
+					.accessibilityLabel(String(localized: "Connected to Bluetooth device", comment: "VoiceOver label for a connected Bluetooth device") + ", " + name.formatNodeNameForVoiceOver())
 				} else {
 					// Create a container for disconnected state
 					HStack {
@@ -79,7 +79,7 @@ struct ConnectedDevice: View {
 							.accessibilityHidden(true)
 					}
 					.accessibilityElement(children: .ignore)
-					.accessibilityLabel("No Bluetooth device connected".localized)
+					.accessibilityLabel(String(localized: "No Bluetooth device connected", comment: "VoiceOver label when no Bluetooth device is connected"))
 				}
 			}
 		}
@@ -106,13 +106,15 @@ struct ConnectedDevice: View {
 	NavigationView {
 		Text("Connect screen")
 			.navigationTitle("Connect")
-			.navigationBarItems(
-				leading: MeshtasticLogo(),
-				trailing: ZStack {
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					MeshtasticLogo()
+				}
+				ToolbarItem(placement: .topBarTrailing) {
 					ConnectedDevice(deviceConnected: true, name: "MEMO", mqttProxyConnected: false)
 						.environmentObject(AccessoryManager.shared)
 				}
-			)
+			}
 	}
 }
 

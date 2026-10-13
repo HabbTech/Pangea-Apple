@@ -25,9 +25,8 @@ struct ChannelForm: View {
 	@Binding var supportedVersion: Bool
 
 	var body: some View {
-		NavigationStack {
-			Form {
-				Section(header: Text("Channel Details")) {
+		Form {
+			Section(header: Text("Channel Details")) {
 					HStack {
 						Text("Name")
 						Spacer()
@@ -48,6 +47,15 @@ struct ChannelForm: View {
 							}
 							hasChanges = true
 						}
+					}
+					if ChannelEntity.isReservedModuleName(channelName) {
+						Label {
+							Text("\"\(channelName)\" is a reserved module channel name and will not appear in the Messages channel list. Pick a different name for a messaging channel.")
+								.font(.callout)
+						} icon: {
+							Image(systemName: "exclamationmark.triangle.fill")
+						}
+						.foregroundColor(.orange)
 					}
 					HStack {
 						Picker("Key Size", selection: $channelKeySize) {
@@ -73,6 +81,7 @@ struct ChannelForm: View {
 						.buttonStyle(.bordered)
 						.buttonBorderShape(.capsule)
 						.controlSize(.small)
+						.accessibilityLabel(String(localized: "Generate channel key", comment: "VoiceOver label for the generate channel key button"))
 					}
 					HStack(alignment: .center) {
 						Text("Key")
@@ -132,7 +141,7 @@ struct ChannelForm: View {
 						Toggle(isOn: $positionsEnabled) {
 							Label(channelRole == 1 ? "Positions Enabled" : "Allow Position Requests", systemImage: positionsEnabled ? "mappin" : "mappin.slash")
 						}
-						.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+						.toggleStyle(.switch)
 						.disabled(!supportedVersion)
 					}
 
@@ -142,7 +151,7 @@ struct ChannelForm: View {
 								Toggle(isOn: $preciseLocation) {
 									Label("Precise Location", systemImage: "scope")
 								}
-								.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+								.toggleStyle(.switch)
 								.disabled(!supportedVersion)
 								.listRowSeparator(.visible)
 								.onChange(of: preciseLocation) { _, pl in
@@ -159,9 +168,13 @@ struct ChannelForm: View {
 								Slider(value: $positionPrecision, in: 12...15, step: 1) {
 								} minimumValueLabel: {
 									Image(systemName: "plus")
+										.accessibilityHidden(true)
 								} maximumValueLabel: {
 									Image(systemName: "minus")
+										.accessibilityHidden(true)
 								}
+								.accessibilityLabel(String(localized: "Approximate location precision", comment: "VoiceOver label for the approximate location precision slider"))
+								.accessibilityValue(PositionPrecision(rawValue: Int(positionPrecision))?.description ?? "")
 								Text(PositionPrecision(rawValue: Int(positionPrecision))?.description ?? "")
 									.foregroundColor(.gray)
 									.font(.callout)
@@ -171,81 +184,80 @@ struct ChannelForm: View {
 				}
 				Section(header: Text("MQTT")) {
 					Toggle(isOn: $uplink) {
-						Label("Uplink Enabled", systemImage: "arrowshape.up")
+						Label("MQTT Uplink Enabled", systemImage: "arrowshape.up")
 					}
-					.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+					.toggleStyle(.switch)
 					.listRowSeparator(.visible)
 
 					Toggle(isOn: $downlink) {
-						Label("Downlink Enabled", systemImage: "arrowshape.down")
+						Label("MQTT Downlink Enabled", systemImage: "arrowshape.down")
 					}
-					.toggleStyle(SwitchToggleStyle(tint: .accentColor))
+					.toggleStyle(.switch)
 				}
+		}
+		.onChange(of: channelName) {
+			hasChanges = true
+		}
+		.onChange(of: channelKeySize) {
+			if channelKeySize == -1 {
+				channelKey = "AQ=="
+			} else {
+				let key = generateChannelKey(size: channelKeySize)
+				channelKey = key
 			}
-			.onChange(of: channelName) {
-				hasChanges = true
+			hasChanges = true
+		}
+		.onChange(of: channelKey) {
+			hasChanges = true
+		}
+		.onChange(of: channelKeySize) {
+			if channelKeySize == -1 {
+				if channelRole == 0 {
+					preciseLocation = false
+				}
+				channelKey = "AQ=="
 			}
-			.onChange(of: channelKeySize) {
-				if channelKeySize == -1 {
-					channelKey = "AQ=="
+		}
+		.onChange(of: channelRole) {
+			hasChanges = true
+		}
+		.onChange(of: preciseLocation) { _, loc in
+			if loc == true {
+				if channelKey == "AQ==" || channelKeySize <= 1 {
+					preciseLocation = false
 				} else {
-					let key = generateChannelKey(size: channelKeySize)
-					channelKey = key
+					positionPrecision = 32
 				}
-				hasChanges = true
+			} else {
+				positionPrecision = 14
 			}
-			.onChange(of: channelKey) {
-				hasChanges = true
-			}
-			.onChange(of: channelKeySize) {
-				if channelKeySize == -1 {
-					if channelRole == 0 {
-						preciseLocation = false
-					}
-					channelKey = "AQ=="
+			hasChanges = true
+		}
+		.onChange(of: positionPrecision) {
+			hasChanges = true
+		}
+		.onChange(of: positionsEnabled) { _, pe in
+			if pe {
+				if positionPrecision == 0 {
+					positionPrecision = 15
 				}
+			} else {
+				positionPrecision = 0
 			}
-			.onChange(of: channelRole) {
-				hasChanges = true
-			}
-			.onChange(of: preciseLocation) { _, loc in
-				if loc == true {
-					if channelKey == "AQ==" || channelKeySize <= 1 {
-						preciseLocation = false
-					} else {
-						positionPrecision = 32
-					}
-				} else {
-					positionPrecision = 14
-				}
-				hasChanges = true
-			}
-			.onChange(of: positionPrecision) {
-				hasChanges = true
-			}
-			.onChange(of: positionsEnabled) { _, pe in
-				if pe {
-					if positionPrecision == 0 {
-						positionPrecision = 15
-					}
-				} else {
-					positionPrecision = 0
-				}
-				hasChanges = true
-			}
-			.onChange(of: uplink) {
-				hasChanges = true
-			}
-			.onChange(of: downlink) {
-				hasChanges = true
-			}
-			.onFirstAppear {
-				let tempKey = Data(base64Encoded: channelKey) ?? Data()
-				if tempKey.count == channelKeySize || channelKeySize == -1 {
-					hasValidKey = true
-				} else {
-					hasValidKey = false
-				}
+			hasChanges = true
+		}
+		.onChange(of: uplink) {
+			hasChanges = true
+		}
+		.onChange(of: downlink) {
+			hasChanges = true
+		}
+		.onFirstAppear {
+			let tempKey = Data(base64Encoded: channelKey) ?? Data()
+			if tempKey.count == channelKeySize || channelKeySize == -1 {
+				hasValidKey = true
+			} else {
+				hasValidKey = false
 			}
 		}
 	}

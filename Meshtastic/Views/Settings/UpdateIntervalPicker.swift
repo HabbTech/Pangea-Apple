@@ -8,7 +8,9 @@ import SwiftUI
 
 struct UpdateIntervalPicker: View {
 	let config: IntervalConfiguration
-	let pickerLabel: String
+	// LocalizedStringKey, not String: a String argument binds Picker's non-localizing
+	// StringProtocol overload, so these 19 labels were never extracted for translation.
+	let pickerLabel: LocalizedStringKey
 	let formatter: DateComponentsFormatter // Make it a stored property
 	
 	@Binding var selectedInterval: UpdateInterval
@@ -18,7 +20,7 @@ struct UpdateIntervalPicker: View {
 			.map { UpdateInterval(from: $0.rawValue) }
 	}
 	
-	init(config: IntervalConfiguration, pickerLabel: String, selectedInterval: Binding<UpdateInterval>) {
+	init(config: IntervalConfiguration, pickerLabel: LocalizedStringKey, selectedInterval: Binding<UpdateInterval>) {
 		self.config = config
 		self.pickerLabel = pickerLabel
 		self._selectedInterval = selectedInterval
@@ -48,7 +50,7 @@ struct UpdateIntervalPicker: View {
 	}
 	private var isOutOfRange: Bool {
 		switch selectedInterval.type {
-			case .manual:
+		case .manual:
 			return true
 		case .fixed(let fixedCase):
 			return !config.allowedCases.contains(fixedCase)

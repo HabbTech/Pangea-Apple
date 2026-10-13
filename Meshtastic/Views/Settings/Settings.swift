@@ -6,70 +6,275 @@
 //
 
 import SwiftUI
+import SwiftData
 import OSLog
 import TipKit
 import MeshtasticProtobufs
 
+// MARK: - SettingsNodeSnapshot
+
+/// Settings data captured while the corresponding node is still live.
+///
+/// Settings retains its node list between periodic fetches. Keeping only value data here stops
+/// `body` from reading a node or relationship invalidated by a store reset.
+struct SettingsNodeSnapshot: Identifiable, Equatable {
+	let num: Int64
+	let favorite: Bool
+	let canRemoteAdmin: Bool
+	let hasSessionPasskey: Bool
+	let hasMetadata: Bool
+	let hasTAKConfig: Bool
+	let userLongName: String?
+	let userIsLicensed: Bool
+	/// Hardware model slug, for the DIY check in settings search.
+	let hwModelSlug: String?
+	let userIsPkiEncrypted: Bool
+	let role: Int32?
+	let regionCode: Int?
+	let excludedModules: Int
+	/// The node's own reported firmware, for the module version gates.
+	let firmwareVersion: String?
+	let isManaged: Bool
+
+	var id: Int64 { num }
+
+	@MainActor init?(node: NodeInfoEntity) {
+		guard node.modelContext != nil, !node.isDeleted else { return nil }
+
+		num = node.num
+		favorite = node.favorite
+		canRemoteAdmin = node.canRemoteAdmin
+		hasSessionPasskey = node.sessionPasskey != nil
+
+		// `SecurityConfig.is_managed` is where this lives now — `DeviceConfig.is_managed`
+		// is deprecated upstream and marked "Moved to SecurityConfig", so reading only the
+		// device copy misses a radio that sets the current field. Android reads security.
+		//
+		// A radio that sends a SecurityConfig at all has the field, so its answer is the
+		// answer, including `false`. OR-ing the two would let a stale `true` left in the
+		// device copy keep saying managed after it was turned off. Only a radio too old to
+		// send SecurityConfig falls back to the deprecated field.
+		var managed = false
+		if let securityConfig = node.securityConfig,
+			securityConfig.modelContext != nil,
+			!securityConfig.isDeleted {
+			managed = securityConfig.isManaged
+		} else if let deviceConfig = node.deviceConfig,
+			deviceConfig.modelContext != nil,
+			!deviceConfig.isDeleted {
+			managed = deviceConfig.isManaged
+		}
+		isManaged = managed
+
+		if let user = node.user,
+			user.modelContext != nil,
+			!user.isDeleted {
+			userLongName = user.longName
+			hwModelSlug = user.hwModel
+			userIsLicensed = user.isLicensed
+			userIsPkiEncrypted = user.pkiEncrypted
+			let userRole = user.role
+			if let deviceConfig = node.deviceConfig,
+				deviceConfig.modelContext != nil,
+				!deviceConfig.isDeleted {
+				role = deviceConfig.role
+			} else {
+				role = userRole
+			}
+		} else {
+			userLongName = nil
+			hwModelSlug = nil
+			userIsLicensed = false
+			userIsPkiEncrypted = false
+			if let deviceConfig = node.deviceConfig,
+				deviceConfig.modelContext != nil,
+				!deviceConfig.isDeleted {
+				role = deviceConfig.role
+			} else {
+				role = nil
+			}
+		}
+
+		if let loRaConfig = node.loRaConfig,
+			loRaConfig.modelContext != nil,
+			!loRaConfig.isDeleted {
+			regionCode = Int(loRaConfig.regionCode)
+		} else {
+			regionCode = nil
+		}
+
+		if let metadata = node.metadata,
+			metadata.modelContext != nil,
+			!metadata.isDeleted {
+			hasMetadata = true
+			excludedModules = Int(metadata.excludedModules)
+			firmwareVersion = metadata.firmwareVersion
+		} else {
+			hasMetadata = false
+			excludedModules = 0
+			firmwareVersion = nil
+		}
+
+		if let takConfig = node.takConfig,
+			takConfig.modelContext != nil,
+			!takConfig.isDeleted {
+			hasTAKConfig = true
+		} else {
+			hasTAKConfig = false
+		}
+	}
+}
+
 struct Settings: View {
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@Environment(\.colorScheme) private var colorScheme
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@FetchRequest(
-		sortDescriptors: [
-			NSSortDescriptor(key: "favorite", ascending: false),
-			NSSortDescriptor(key: "user.pkiEncrypted", ascending: false),
-			NSSortDescriptor(key: "viaMqtt", ascending: true),
-			NSSortDescriptor(key: "user.longName", ascending: true)
-		],
-		animation: .default
-	)
-	private var nodes: FetchedResults<NodeInfoEntity>
+	/// Node snapshots for the admin picker / config gating, refreshed on a throttled cadence (see the
+	/// `.task` in `body`) instead of a live `@Query`. A live query re-evaluated this whole view's
+	/// `body` on every node write — and TabView keeps Settings alive on other tabs, so under heavy
+	/// ingestion (large mesh, TCP replay) it burned main-thread CPU while completely off-screen.
+	@State private var nodes: [SettingsNodeSnapshot] = []
 
+	private func refreshNodes() {
+		let descriptor = FetchDescriptor<NodeInfoEntity>(sortBy: [SortDescriptor(\NodeInfoEntity.lastHeard, order: .reverse)])
+		nodes = ((try? context.fetch(descriptor)) ?? []).compactMap(SettingsNodeSnapshot.init)
+	}
+
+	/// Nodes for the admin / configuration picker, ordered favorites-first while
+	/// preserving the snapshot fetch's `lastHeard`-descending order within each group. The
+	/// favorite-on-top behavior can't be expressed as a SwiftData `@Query` sort
+	/// because `favorite` is a `Bool` and `Bool` isn't `Comparable` (so it's not a
+	/// valid `SortDescriptor` key); it's applied here as a cheap stable partition over value data.
+	private var sortedNodes: [SettingsNodeSnapshot] {
+		nodes.filter(\.favorite) + nodes.filter { !$0.favorite }
+	}
+
+	private func nodeSnapshot(for nodeNum: Int) -> SettingsNodeSnapshot? {
+		sortedNodes.first(where: { $0.num == Int64(nodeNum) })
+	}
+
+	private func liveNode(for nodeNum: Int) -> NodeInfoEntity? {
+		guard nodeNum > 0,
+			let node = getNodeInfo(id: Int64(nodeNum), context: context),
+			node.modelContext != nil,
+			!node.isDeleted
+		else { return nil }
+		return node
+	}
+
+	@State private var searchText = ""
 	@State private var selectedNode: Int = 0
 	@State private var preferredNodeNum: Int = 0
 
+	@EnvironmentObject
+	var router: Router
+
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 
-	@ObservedObject
-	var router: Router
+	/// Pangea: a link only Expert Mode shows, captioned so it's clear why it isn't in standard mode.
+	private func expertLink<Icon: View>(_ value: SettingsNavigationState, _ title: LocalizedStringKey, @ViewBuilder icon: () -> Icon) -> some View {
+		NavigationLink(value: value) {
+			VStack(alignment: .leading, spacing: 2) {
+				Label {
+					Text(title)
+				} icon: {
+					icon()
+				}
+				Text("Expert Mode")
+					.font(.caption2)
+					.foregroundStyle(Color.pangeaTertiary)
+			}
+		}
+	}
 
 	// MARK: Helper
 
-	private var moduleConfigurationNode: NodeInfoEntity? {
+	private var moduleConfigurationNode: SettingsNodeSnapshot? {
 		let nodeNum = selectedNode > 0 ? selectedNode : preferredNodeNum
-		return nodes.first(where: { $0.num == nodeNum })
+		return nodeSnapshot(for: nodeNum)
 	}
 
-	private var showsAnyModuleConfiguration: Bool {
+	// The module-support helpers take a pre-resolved node snapshot + excluded-modules bitmask so
+	// `moduleConfigurationSection` can compute them ONCE per render. They used to read the
+	// `moduleConfigurationNode` computed property (a linear scan over the full node snapshot
+	// plus a `.metadata` relationship fault) on every call, and the section calls them ~28×
+	// per render — which, under live ingestion re-rendering, pegged the main thread.
+	private func showsAnyModuleConfiguration(node: SettingsNodeSnapshot?, excludedModules: Int) -> Bool {
 		isAnySupported([
 			.ambientlightingConfig,
+			.audioConfig,
 			.cannedmsgConfig,
 			.detectionsensorConfig,
 			.extnotifConfig,
 			.mqttConfig,
+			.neighborinfoConfig,
 			.rangetestConfig,
 			.paxcounterConfig,
 			.serialConfig,
 			.storeforwardConfig,
 			.telemetryConfig
-		]) || isTAKModuleSupported()
+		], excludedModules: excludedModules)
+			|| isTAKModuleSupported(node)
+			|| isTrafficManagementModuleSupported(node)
+			|| isMeshBeaconModuleSupported(node)
 	}
 
-	private func isModuleSupported(_ module: ExcludedModules) -> Bool {
-		return Int(moduleConfigurationNode?.metadata?.excludedModules ?? Int32.zero) & module.rawValue == 0
+	/// The `ModuleConfig` field tag for each module whose settings this screen offers.
+	/// The schema states on that field which firmware first reads the module, so the
+	/// version lives upstream instead of being written out here.
+	private enum ModuleField {
+		static let statusMessage = 14
+		static let trafficManagement = 15
+		static let tak = 16
+		static let meshBeacon = 17
 	}
 
-	private func isAnySupported(_ modules: [ExcludedModules]) -> Bool {
-		return modules.map(isModuleSupported).contains(true)
+	private func isMeshBeaconModuleSupported(_ node: SettingsNodeSnapshot?) -> Bool {
+		guard node != nil else { return false }
+		return firmwareReadsModule(tag: ModuleField.meshBeacon, node: node)
 	}
 
-	private func isTAKModuleSupported() -> Bool {
-		guard let node = moduleConfigurationNode else { return false }
-		if node.takConfig != nil {
+	/// Whether a module's settings belong on this node's list. Two separate questions:
+	/// whether the build left the module out, which is the `excluded_modules` bitmask,
+	/// and whether the firmware is new enough to read it at all, which is the schema's
+	/// `since_firmware`. Neither substitutes for the other - firmware older than a
+	/// module has no bit for it either way - and a module needs both to pass.
+	private func isModuleSupported(
+		_ module: ExcludedModules,
+		excludedModules: Int,
+		tag: Int? = nil,
+		node: SettingsNodeSnapshot? = nil
+	) -> Bool {
+		guard excludedModules & module.rawValue == 0 else { return false }
+		guard let tag else { return true }
+		return firmwareReadsModule(tag: tag, node: node)
+	}
+
+	/// Whether the node's firmware reads this module, from the version the schema puts
+	/// on its `ModuleConfig` field. A module with no annotation, or a node that has
+	/// never reported a version, is offered: hiding settings on a guess is worse than
+	/// offering ones the radio ignores.
+	private func firmwareReadsModule(tag: Int, node: SettingsNodeSnapshot?) -> Bool {
+		guard let since = FieldMetadataRegistry.get("meshtastic.ModuleConfig", tag: tag)?.sinceFirmware
+		else { return true }
+		return NodeInfoEntity.firmware(node?.firmwareVersion, isAtLeast: since)
+	}
+
+	private func isAnySupported(_ modules: [ExcludedModules], excludedModules: Int) -> Bool {
+		return modules.contains { isModuleSupported($0, excludedModules: excludedModules) }
+	}
+
+	private func isTAKModuleSupported(_ node: SettingsNodeSnapshot?) -> Bool {
+		guard let node else { return false }
+		// The role says whether TAK is relevant to this node; the schema says whether the
+		// firmware reads the config at all. Without the second, setting the role on an
+		// older radio opened a screen whose settings it ignores.
+		guard firmwareReadsModule(tag: ModuleField.tak, node: node) else { return false }
+		if node.hasTAKConfig {
 			return true
 		}
 
-		guard let roleValue = node.deviceConfig?.role ?? node.user?.role,
+		guard let roleValue = node.role,
 			  let deviceRole = DeviceRoles(rawValue: Int(roleValue)) else {
 			return false
 		}
@@ -77,47 +282,44 @@ struct Settings: View {
 		return deviceRole == .tak || deviceRole == .takTracker
 	}
 
+	private func isTrafficManagementModuleSupported(_ node: SettingsNodeSnapshot?) -> Bool {
+		guard node != nil else { return false }
+		return firmwareReadsModule(tag: ModuleField.trafficManagement, node: node)
+	}
+
+	private var showsDevelopersSection: Bool {
+		Bundle.main.isDebug || Bundle.main.isTestFlight
+	}
+
 	// MARK: Views
 
 	var radioConfigurationSection: some View {
 		Section(expertModeEnabled ? "Radio Configuration" : "Radio") {
-			if expertModeEnabled {
-				let node = nodes.first(where: { $0.num == preferredNodeNum })
-				if let node,
-					let loRaConfig = node.loRaConfig,
-					let rc = RegionCodes(rawValue: Int(loRaConfig.regionCode)),
-					let user = node.user,
-					!user.isLicensed,
-					rc.dutyCycle > 0 && rc.dutyCycle < 100 {
-					Label {
-						Text("Hourly Duty Cycle")
-					} icon: {
-						Image(systemName: "clock.arrow.circlepath")
-							.symbolRenderingMode(.hierarchical)
-							.foregroundColor(.red)
-					}
-					Text("Your region has a \(rc.dutyCycle)% hourly duty cycle, your radio will stop sending packets when it reaches the hourly limit.")
-						.foregroundColor(.orange)
-						.font(.caption)
-					Text("Limit all periodic broadcast intervals especially telemetry and position. If you need to increase hops, do it on nodes at the edges, not the ones in the middle. MQTT is not advised when you are duty cycle restricted because the gateway node is then doing all the work.")
-						.font(.caption2)
-						.foregroundColor(.gray)
+			let node = nodeSnapshot(for: preferredNodeNum)
+			if expertModeEnabled, let node,
+				let regionCode = node.regionCode,
+				let rc = RegionCodes(rawValue: regionCode),
+				!node.userIsLicensed,
+				rc.dutyCycle > 0 && rc.dutyCycle < 100 {
+				Label {
+					Text("Hourly Duty Cycle")
+				} icon: {
+					Image(systemName: "clock.arrow.circlepath")
+						.symbolRenderingMode(.hierarchical)
+						.foregroundColor(.red)
 				}
+				Text("Your region has a \(rc.dutyCycle)% hourly duty cycle, your radio will stop sending packets when it reaches the hourly limit.")
+					.foregroundColor(.orange)
+					.font(.caption)
+				Text("Limit all periodic broadcast intervals especially telemetry and position. If you need to increase hops, do it on nodes at the edges, not the ones in the middle. MQTT is not advised when you are duty cycle restricted because the gateway node is then doing all the work.")
+					.font(.caption2)
+					.foregroundColor(.gray)
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.lora) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("LoRa")
-						} icon: {
-							Image(systemName: "dot.radiowaves.left.and.right")
-								.rotationEffect(.degrees(-90))
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.lora, "LoRa") {
+					Image(systemName: "dot.radiowaves.left.and.right")
+						.rotationEffect(.degrees(-90))
 				}
 			}
 
@@ -131,17 +333,8 @@ struct Settings: View {
 			.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.security) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Security")
-						} icon: {
-							Image(systemName: "lock.shield")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.security, "Security") {
+					Image(systemName: "lock.shield")
 				}
 			}
 
@@ -167,32 +360,14 @@ struct Settings: View {
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.bluetooth) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Bluetooth")
-						} icon: {
-							Image(systemName: "antenna.radiowaves.left.and.right")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.bluetooth, "Bluetooth") {
+					Image(systemName: "antenna.radiowaves.left.and.right")
 				}
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.device) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Device")
-						} icon: {
-							Image(systemName: "flipphone")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.device, "Device") {
+					Image(systemName: "flipphone")
 				}
 			}
 
@@ -205,55 +380,33 @@ struct Settings: View {
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.network) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Network")
-						} icon: {
-							Image(systemName: "network")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.network, "Network") {
+					Image(systemName: "network")
 				}
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.position) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Position")
-						} icon: {
-							Image(systemName: "location")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.position, "Position") {
+					Image(systemName: "location")
 				}
 			}
 
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.power) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Power")
-						} icon: {
-							Image(systemName: "bolt.fill")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.power, "Power") {
+					Image(systemName: "bolt.fill")
 				}
 			}
 		}
 	}
 
 	var moduleConfigurationSection: some View {
-		Section {
-			if isModuleSupported(.ambientlightingConfig) {
+		// Resolve the target node and its excluded-modules bitmask ONCE per render, then feed
+		// them to the cheap per-module checks below (formerly each re-scanned the node @Query
+		// and re-faulted metadata — ~28× per render).
+		let node = moduleConfigurationNode
+		let excludedModules = node?.excludedModules ?? 0
+		return Section {
+			if isModuleSupported(.ambientlightingConfig, excludedModules: excludedModules) {
 				NavigationLink(value: SettingsNavigationState.ambientLighting) {
 					Label {
 						Text("Ambient Lighting")
@@ -263,172 +416,103 @@ struct Settings: View {
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.cannedmsgConfig) {
-				NavigationLink(value: SettingsNavigationState.cannedMessages) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Canned Messages")
-						} icon: {
-							Image(systemName: "list.bullet.rectangle.fill")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.audioConfig, excludedModules: excludedModules) {
+				expertLink(.audio, "Audio") {
+					Image(systemName: "waveform")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.detectionsensorConfig) {
-				NavigationLink(value: SettingsNavigationState.detectionSensor) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Detection Sensor")
-						} icon: {
-							Image(systemName: "sensor")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.cannedmsgConfig, excludedModules: excludedModules) {
+				expertLink(.cannedMessages, "Canned Messages") {
+					Image(systemName: "list.bullet.rectangle.fill")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.extnotifConfig) {
-				NavigationLink(value: SettingsNavigationState.externalNotification) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("External Notification")
-						} icon: {
-							Image(systemName: "megaphone")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.detectionsensorConfig, excludedModules: excludedModules) {
+				expertLink(.detectionSensor, "Detection Sensor") {
+					Image(systemName: "sensor")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.mqttConfig) {
-				NavigationLink(value: SettingsNavigationState.mqtt) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("MQTT")
-						} icon: {
-							Image(systemName: "dot.radiowaves.up.forward")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isMeshBeaconModuleSupported(node) {
+				expertLink(.meshBeacon, "Mesh Beacon") {
+					Image(systemName: "dot.radiowaves.left.and.right")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.rangetestConfig) {
-				NavigationLink(value: SettingsNavigationState.rangeTest) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Range Test")
-						} icon: {
-							Image(systemName: "point.3.connected.trianglepath.dotted")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.extnotifConfig, excludedModules: excludedModules) {
+				expertLink(.externalNotification, "External Notification") {
+					Image(systemName: "megaphone")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.paxcounterConfig) {
-				NavigationLink(value: SettingsNavigationState.paxCounter) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("PAX Counter")
-						} icon: {
-							Image(systemName: "figure.walk.motion")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.mqttConfig, excludedModules: excludedModules) {
+				expertLink(.mqtt, "MQTT") {
+					Image(systemName: "dot.radiowaves.up.forward")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.extnotifConfig) {
-				NavigationLink(value: SettingsNavigationState.ringtone) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Ringtone")
-						} icon: {
-							Image(systemName: "music.note.list")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.neighborinfoConfig, excludedModules: excludedModules) {
+				expertLink(.neighborInfo, "Neighbor Info") {
+					Image(systemName: "network")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.serialConfig) {
-				NavigationLink(value: SettingsNavigationState.serial) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Serial")
-						} icon: {
-							Image(systemName: "terminal")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.rangetestConfig, excludedModules: excludedModules) {
+				expertLink(.rangeTest, "Range Test") {
+					Image(systemName: "point.3.connected.trianglepath.dotted")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.storeforwardConfig) {
-				NavigationLink(value: SettingsNavigationState.storeAndForward) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Store & Forward")
-						} icon: {
-							Image(systemName: "envelope.arrow.triangle.branch")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.paxcounterConfig, excludedModules: excludedModules) {
+				expertLink(.paxCounter, "PAX Counter") {
+					Image(systemName: "figure.walk.motion")
 				}
 			}
 
+			if expertModeEnabled && isModuleSupported(.extnotifConfig, excludedModules: excludedModules) {
+				expertLink(.ringtone, "Ringtone") {
+					Image(systemName: "music.note.list")
+				}
+			}
+
+			if expertModeEnabled && isModuleSupported(.serialConfig, excludedModules: excludedModules) {
+				expertLink(.serial, "Serial") {
+					Image(systemName: "terminal")
+				}
+			}
+
+			if expertModeEnabled && isModuleSupported(.storeforwardConfig, excludedModules: excludedModules) {
+				expertLink(.storeAndForward, "Store & Forward") {
+					Image(systemName: "envelope.arrow.triangle.branch")
+				}
+			}
+
+			// Module Configuration → TAK routes to the combined TAK Server page
+			// (TAKServerConfig). That screen renders the firmware module config
+			// (team / role identity, via the embedded TAKIdentitySection) at
+			// the top, and the in-app TAK Server controls (Enable, channel,
+			// mTLS certificates, data package export) below it. The TAK
+			// section at the bottom of this screen links to the same view.
 			if expertModeEnabled {
-				NavigationLink(value: SettingsNavigationState.tak) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("TAK Server")
-						} icon: {
-							Image(systemName: "target")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+				expertLink(.tak, "TAK Server") {
+					Image(systemName: "target")
 				}
 			}
 
-			if expertModeEnabled && isModuleSupported(.telemetryConfig) {
-				NavigationLink(value: SettingsNavigationState.telemetry) {
-					VStack(alignment: .leading, spacing: 2) {
-						Label {
-							Text("Telemetry")
-						} icon: {
-							Image(systemName: "chart.xyaxis.line")
-						}
-						Text("Expert Mode")
-							.font(.caption2)
-							.foregroundStyle(Color.pangeaTertiary)
-					}
+			if expertModeEnabled && isModuleSupported(.telemetryConfig, excludedModules: excludedModules) {
+				expertLink(.telemetry, "Telemetry") {
+					Image(systemName: "chart.xyaxis.line")
 				}
 			}
 
-			if expertModeEnabled && !showsAnyModuleConfiguration {
+			if expertModeEnabled && isTrafficManagementModuleSupported(node) {
+				expertLink(.trafficManagement, "Traffic Management") {
+					Image(systemName: "arrow.triangle.branch")
+				}
+			}
+
+			if expertModeEnabled && !showsAnyModuleConfiguration(node: node, excludedModules: excludedModules) {
 				Text("This node does not support any configurable modules.")
 					.foregroundColor(.secondary)
 			}
@@ -437,22 +521,25 @@ struct Settings: View {
 		}
 	}
 
+	/// Android shows this only while the local radio is the target; a remote admin
+	/// session backs up nothing this phone is holding.
+	@ViewBuilder
+	var backupRestoreSection: some View {
+		// Pangea: backing up and restoring the radio's configuration is an Expert Mode tool.
+		if expertModeEnabled && (selectedNode == 0 || selectedNode == preferredNodeNum) {
+			BackupRestoreSection(isManaged: connectedNodeIsManaged)
+		}
+	}
+
+	@ViewBuilder
 	var loggingSection: some View {
-		Group {
-			if expertModeEnabled {
-				Section(header: Text("Logging")) {
-					NavigationLink(value: SettingsNavigationState.debugLogs) {
-						VStack(alignment: .leading, spacing: 2) {
-							Label {
-								Text("Logs")
-							} icon: {
-								Image(systemName: "scroll")
-							}
-							Text("Expert Mode")
-								.font(.caption2)
-								.foregroundStyle(Color.pangeaTertiary)
-						}
-					}
+		if expertModeEnabled {
+			Section(header: Text("Logging")) {
+				expertLink(.debugLogs, "Logs") {
+					Image(systemName: "scroll")
+				}
+				expertLink(.traceRoutes, "Trace Routes") {
+					Image(systemName: "point.3.connected.trianglepath.dotted")
 				}
 			}
 		}
@@ -460,6 +547,27 @@ struct Settings: View {
 
 	var developersSection: some View {
 		Section(header: Text("Developers")) {
+			NavigationLink(value: SettingsNavigationState.backupManagement) {
+				Label {
+					Text("Backup Management")
+				} icon: {
+					Image(systemName: "externaldrive")
+				}
+			}
+			NavigationLink(value: SettingsNavigationState.coreDataBrowser) {
+				Label {
+					Text("Data Browser")
+				} icon: {
+					Image(systemName: "tablecells")
+				}
+			}
+			NavigationLink(value: SettingsNavigationState.deviceLinks) {
+				Label {
+					Text("Device Links")
+				} icon: {
+					Image(systemName: "link")
+				}
+			}
 			NavigationLink(value: SettingsNavigationState.appFiles) {
 				Label {
 					Text("App Files")
@@ -467,43 +575,82 @@ struct Settings: View {
 					Image(systemName: "folder")
 				}
 			}
+			// NFC actions only, now that backup and restore live on the Settings list. The
+			// entry point was widened to "or connected" while import/export were in here,
+			// because this gate otherwise hid them entirely on iPad, Mac and the Simulator.
+			#if !targetEnvironment(macCatalyst)
 			if #available(iOS 18, *) {
-				NavigationLink(value: SettingsNavigationState.tools) {
-					Label {
-						Text("Tools")
-					} icon: {
-						Image(systemName: "hammer")
+				if NFCReader.isAvailable {
+					NavigationLink(value: SettingsNavigationState.tools) {
+						Label {
+							Text("Tools")
+						} icon: {
+							Image(systemName: "hammer")
+						}
 					}
 				}
 			}
+			#endif
 		}
 	}
 
-	var takSection: some View {
-		Section(header: Text("TAK")) {
-			NavigationLink(value: SettingsNavigationState.tak) {
-				Label {
-					Text("TAK Server")
-				} icon: {
-					Image(systemName: "target")
-				}
-			}
-		}
+	private var isSearching: Bool {
+		// Pangea: search reaches every screen, so it's only offered in Expert Mode.
+		expertModeEnabled && searchText.trimmingCharacters(in: .whitespacesAndNewlines).count
+			>= SettingsSearchEngine.minimumQueryLength
+	}
+
+	/// Recomputed per keystroke. The index is static; only availability moves.
+	private var searchResults: [SettingsSearchResult] {
+		SettingsSearchEngine.search(
+			searchText,
+			in: SettingsSearchIndex.entries,
+			availability: searchAvailability
+		)
+	}
+
+	private var searchAvailability: SettingsSearchEngine.Availability {
+		SettingsSearchEngine.Availability(
+			isConnected: accessoryManager.isConnected,
+			// The DIY tag marks a product line rather than how a unit was built, so
+			// this is a hint and not a fact. See spec 019 FR-012a.
+			isDIYHardware: connectedHardwareIsDIY,
+			isManaged: connectedNodeIsManaged,
+			// The same condition the Developers section itself renders on, so search
+			// never offers a screen this build does not show.
+			showsDeveloperSettings: showsDevelopersSection
+		)
+	}
+
+	private var connectedNodeIsManaged: Bool {
+		nodes.first(where: { $0.num == Int64(preferredNodeNum) })?.isManaged ?? false
+	}
+
+	private var connectedHardwareIsDIY: Bool {
+		guard let node = nodes.first(where: { $0.num == Int64(preferredNodeNum) }) else { return false }
+		return DIYHardware.isDIY(slug: node.hwModelSlug)
 	}
 
 	var body: some View {
 		NavigationStack(
-			path: Binding<[SettingsNavigationState]>(
-				get: {
-					[router.settingsState].compactMap { $0 }
-				},
-				set: { newPath in
-					router.settingsState = newPath.first
-				}
-			)
+			path: $router.settingsPath
 		) {
-			let node = nodes.first(where: { $0.num == preferredNodeNum })
+			let node = nodeSnapshot(for: preferredNodeNum)
 			List {
+				if isSearching {
+					// Results replace the whole list, not just the config sections.
+					// Leaving the standalone links and the node picker above them
+					// pushed results off the top of the screen and read as broken.
+					SettingsSearchResultsView(
+						results: searchResults,
+						docs: DocumentationSearch.search(searchText),
+						onSelect: { entry in
+							// The screen scrolls to the control the result named; screens
+							// that are still hand-written just open as before.
+							router.navigate(toSetting: entry.destination, focusing: entry.field)
+						}
+					)
+				} else {
 				if !expertModeEnabled {
 					MyRadioSection()
 				}
@@ -515,11 +662,24 @@ struct Settings: View {
 					}
 				}
 
+				// Pangea: the bundled guide is the mesh firmware's, with radio-level detail; standard
+				// mode points to Pangea's own documentation from About instead.
+				if expertModeEnabled {
+					expertLink(.helpDocs, "Help & Documentation") {
+						Image(systemName: "book.pages")
+					}
+				}
+
 				NavigationLink(value: SettingsNavigationState.appSettings) {
 					Label {
 						Text("App Settings")
 					} icon: {
 						Image(systemName: "gearshape")
+					}
+				}
+				if expertModeEnabled {
+					expertLink(.localMeshDiscovery, "Local Mesh Discovery") {
+						Image(systemName: "antenna.radiowaves.left.and.right")
 					}
 				}
 				NavigationLink(value: SettingsNavigationState.routes) {
@@ -547,80 +707,79 @@ struct Settings: View {
 				}
 				.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
-				if !(node?.deviceConfig?.isManaged ?? false) {
+				// A managed radio hides the configuration sections; say why instead of
+				// showing nothing (same message as Android).
+				if let node, node.isManaged, accessoryManager.isConnected {
+					Section("Configure") {
+						Label("This radio is managed and can only be changed by a remote admin.", systemImage: "lock.shield")
+							.font(.callout)
+							.foregroundStyle(.orange)
+					}
+					// The configuration sections are hidden on a managed radio, but backup and
+					// restore still belong on screen: Android shows them disabled with the
+					// reason rather than leaving the user to wonder where they went.
+					backupRestoreSection
+				}
+				if let node, !node.isManaged {
 					if accessoryManager.isConnected {
 						Section("Configure") {
-							if node?.canRemoteAdmin ?? false {
+							if node.canRemoteAdmin {
 								Picker("Node", selection: $selectedNode) {
 									if selectedNode == 0 {
 										Text("Connect to a Node").tag(0)
 									}
-									ForEach(nodes) { node in
+									ForEach(sortedNodes) { node in
 										/// Connected Node
 										if node.num == accessoryManager.activeDeviceNum ?? 0 {
 											Label {
-												Text("Connected") + Text(verbatim: ": \(node.user?.longName?.addingVariationSelectors ?? "Unknown".localized)")
+												Text("Connected") + Text(verbatim: ": \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
 											} icon: {
-												accessoryManager.activeConnection?.device.transportType.icon ?? Image("questionmark.circle")
+												accessoryManager.activeConnection?.device.transportType.icon ?? Image(systemName: "questionmark.circle")
 											}
 											.tag(Int(node.num))
-										} else if node.canRemoteAdmin && UserDefaults.enableAdministration && node.sessionPasskey != nil { /// Nodes using the new PKI system
+										} else if node.canRemoteAdmin && UserDefaults.enableAdministration && node.hasSessionPasskey { /// Nodes using the new PKI system
 											Label {
-												Text("Remote PKI Admin: \(node.user?.longName ?? "Unknown".localized)")
+												Text("Remote PKI Admin: \(node.userLongName ?? "Unknown".localized)")
 											} icon: {
 												Image(systemName: "av.remote")
 											}
 											.font(.caption2)
 											.tag(Int(node.num))
-										} else if  !UserDefaults.enableAdministration && node.metadata != nil { /// Nodes using the old admin system
+										} else if !UserDefaults.enableAdministration && node.hasMetadata { /// Nodes using the old admin system
 											Label {
-												Text("Remote Legacy Admin: \(node.user?.longName ?? "Unknown".localized)")
+												Text("Remote Legacy Admin: \(node.userLongName ?? "Unknown".localized)")
 											} icon: {
 												Image(systemName: "av.remote")
 											}
 											.tag(Int(node.num))
-										} else if UserDefaults.enableAdministration && node.user?.pkiEncrypted ?? false {
+										} else if UserDefaults.enableAdministration && node.userIsPkiEncrypted {
 											Label {
-												Text("Request PKI Admin: \(node.user?.longName?.addingVariationSelectors ?? "Unknown".localized)")
+												Text("Request PKI Admin: \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
 											} icon: {
 												Image(systemName: "rectangle.and.hand.point.up.left")
 											}
 											.tag(Int(node.num))
 										} else if !UserDefaults.enableAdministration {
 											Label {
-												Text("Request Legacy Admin: \(node.user?.longName?.addingVariationSelectors ?? "Unknown".localized)")
+												Text("Request Legacy Admin: \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
 											} icon: {
 												Image(systemName: "rectangle.and.hand.point.up.left")
 											}
 											.tag(Int(node.num))
-										}
 									}
+								}
 								}
 								.pickerStyle(.navigationLink)
 								.onChange(of: selectedNode) { _, newValue in
-									if selectedNode > 0,
-									   let destinationNode = nodes.first(where: { $0.num == newValue }),
-									   let connectedNode = nodes.first(where: { $0.num == preferredNodeNum }),
-									   let fromUser = connectedNode.user,
-									   let _ = connectedNode.myInfo,  // not sure why, but this check was present in the initial code.
-									   let toUser = destinationNode.user {
-
-										preferredNodeNum = Int(connectedNode.num)
-										Task {
-											_ = try await accessoryManager.requestDeviceMetadata(fromUser: fromUser, toUser: toUser)
-											Task { @MainActor in
-												Logger.mesh.info("Sent node metadata request from node details")
-											}
-										}
-									}
+									handleSelectedNodeChange(newValue)
 								}
 								TipView(AdminChannelTip(), arrowEdge: .top)
-									.tipViewStyle(PersistentTip())
+									.tipViewStyle(PersistentTipStyle())
 									.tipBackground(colorScheme == .dark ? Color(.systemBackground) : Color(.secondarySystemBackground))
 									.listRowSeparator(.hidden)
 							} else {
 								if accessoryManager.isConnected {
-									Text("Connected Node \(node?.user?.longName?.addingVariationSelectors ?? "Unknown".localized)")
+									Text("Connected Node \(node.userLongName?.addingVariationSelectors ?? "Unknown".localized)")
 								}
 							}
 						}
@@ -631,89 +790,125 @@ struct Settings: View {
 					}
 					deviceConfigurationSection
 					moduleConfigurationSection
+					backupRestoreSection
 					loggingSection
-#if DEBUG
-					developersSection
-#endif
+					if expertModeEnabled && showsDevelopersSection {
+						developersSection
+					}
 				}
 				if !expertModeEnabled {
 					ExpertModeHintSection()
 				}
-			}
-			.navigationDestination(for: SettingsNavigationState.self) { destination in
-				let node = nodes.first(where: { $0.num == preferredNodeNum })
-				switch destination {
-				case .about:
-					AboutMeshtastic()
-				case .appSettings:
-					AppSettings()
-				case .routes:
-					Routes()
-				case .routeRecorder:
-					RouteRecorder()
-				case .lora:
-					LoRaConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .channels:
-					if let node = node {
-						Channels(node: node)
-					} else {
-						Text("Loading...")
-					}
-				case .shareQRCode:
-					ShareChannels(node: node)
-				case .user:
-					UserConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .bluetooth:
-					BluetoothConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .device:
-					DeviceConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .display:
-					DisplayConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .network:
-					NetworkConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .position:
-					PositionConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .power:
-					PowerConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .ambientLighting:
-					AmbientLightingConfig(node: node)
-				case .cannedMessages:
-					CannedMessagesConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .detectionSensor:
-					DetectionSensorConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .externalNotification:
-					ExternalNotificationConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .mqtt:
-					MQTTConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .rangeTest:
-					RangeTestConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .paxCounter:
-					PaxCounterConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .ringtone:
-					RtttlConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .security:
-					SecurityConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .serial:
-					SerialConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .storeAndForward:
-					StoreForwardConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .telemetry:
-					TelemetryConfig(node: nodes.first(where: { $0.num == selectedNode }))
-				case .debugLogs:
-					AppLog()
-				case .appFiles:
-					AppData()
-				case .firmwareUpdates:
-					Firmware(node: node)
-				case .tools:
-					if #available(iOS 18, *) {
-						Tools()
-					}
-				case .tak:
-					TAKServerConfig()
-				case .takConfig:
-					TAKModuleConfig(node: nodes.first(where: { $0.num == selectedNode }))
 				}
+			}
+			.modifier(SettingsSearchField(isEnabled: expertModeEnabled, text: $searchText))
+			.navigationDestination(for: SettingsNavigationState.self) { destination in
+				let node = liveNode(for: preferredNodeNum)
+				let configNode = liveNode(for: selectedNode)
+				Group {
+					switch destination {
+					case .about:
+						AboutMeshtastic()
+					case .appSettings:
+						AppSettings()
+					case .routes:
+						Routes()
+					case .routeRecorder:
+						RouteRecorder()
+					case .lora:
+						LoRaConfig(node: configNode)
+					case .channels:
+						if let node = node {
+							Channels(node: node)
+						} else {
+							Text("Loading...")
+						}
+					case .shareQRCode:
+						ShareChannels(node: node)
+					case .user:
+						UserConfig(node: configNode)
+					case .bluetooth:
+						BluetoothConfig(node: configNode)
+					case .device:
+						DeviceConfig(node: configNode)
+					case .display:
+						DisplayConfig(node: configNode)
+					case .network:
+						NetworkConfig(node: configNode)
+					case .position:
+						PositionConfig(node: configNode)
+					case .power:
+						PowerConfig(node: configNode)
+					case .ambientLighting:
+						AmbientLightingConfig(node: configNode)
+					case .audio:
+						AudioConfig(node: configNode)
+					case .cannedMessages:
+						CannedMessagesConfig(node: configNode)
+					case .detectionSensor:
+						DetectionSensorConfig(node: configNode)
+					case .meshBeacon:
+						MeshBeaconConfig(node: configNode)
+					case .externalNotification:
+						ExternalNotificationConfig(node: configNode)
+					case .mqtt:
+						MQTTConfig(node: configNode)
+					case .neighborInfo:
+						NeighborInfoConfig(node: configNode)
+					case .rangeTest:
+						RangeTestConfig(node: configNode)
+					case .paxCounter:
+						PaxCounterConfig(node: configNode)
+					case .ringtone:
+						RtttlConfig(node: configNode)
+					case .security:
+						SecurityConfig(node: configNode)
+					case .serial:
+						SerialConfig(node: configNode)
+					case .storeAndForward:
+						StoreForwardConfig(node: configNode)
+					case .telemetry:
+						TelemetryConfig(node: configNode)
+					case .trafficManagement:
+						TrafficManagementConfig(node: configNode)
+					case .debugLogs:
+						AppLog()
+					case .traceRoutes:
+						AllTraceRoutesLog()
+					case .appFiles:
+						AppData()
+					case .firmwareUpdates:
+						Firmware(node: node)
+					case .deviceLinks:
+						DeviceLinkDirectory()
+					case .tools:
+						if #available(iOS 18, *) {
+							Tools()
+						}
+					case .tak:
+						TAKServerConfig()
+					case .takConfig:
+						TAKModuleConfig(node: configNode)
+					case .coreDataBrowser:
+						CoreDataBrowser()
+					case .localMeshDiscovery:
+						DiscoveryScanView()
+					case .helpDocs:
+						// Carries the settings-search query through, so a documentation
+						// result opens filtered. Empty when reached from the list row.
+						DocBrowserView(initialSearch: searchText)
+					case .backupManagement:
+						BackupManagement()
+					}
+				}
+				// Handed to the pushed screen itself: the schema-driven ones scroll to
+				// the control a search result named and take it, so going back and
+				// returning does not scroll again. Set on the destination rather than on
+				// the stack's content, which does not reliably reach a pushed screen.
+				.environment(\.settingsFieldFocus, SettingsFieldFocus(
+					target: router.settingsFieldFocus,
+					clear: { router.clearSettingsFieldFocus() }
+				))
 			}
 			.onChange(of: UserDefaults.preferredPeripheralNum ) { _, newConnectedNode in
 				// If the preferred node changes, then select the newly preferred node
@@ -729,30 +924,106 @@ struct Settings: View {
 					setSelectedNode(to: UserDefaults.preferredPeripheralNum)
 				}
 			}
+			.onChange(of: accessoryManager.activeDeviceNum) { oldDevice, newDevice in
+				if newDevice == nil {
+					// The transport dropped — often just the radio rebooting after a config
+					// save, not a real device change. preferredNodeNum tracks
+					// UserDefaults.preferredPeripheralNum (see the onChange above), which a
+					// reboot doesn't touch, so leave it alone: zeroing it here collapsed the
+					// Configure/Radio/Device/Module/Logging sections every time a save
+					// rebooted the node, even though it's still the preferred node. Only the
+					// remote-admin target is genuinely invalid without a live link.
+					selectedNode = 0
+				} else if oldDevice != newDevice {
+					// Physical connection changed — any prior remote admin session is invalid
+					preferredNodeNum = Int(newDevice!)
+					selectedNode = Int(newDevice!)
+				}
+			}
 			.onAppear {
 				// If the selection hasn't be initialized yet, try to initalize it.
 				// If we are not fully connected yet, then setSelectedNode will
 				// not select the node and it will remain 0
+				refreshNodes()
 				if self.preferredNodeNum <= 0 {
 					self.preferredNodeNum = UserDefaults.preferredPeripheralNum
 					setSelectedNode(to: UserDefaults.preferredPeripheralNum)
 				}
 			}
-			.navigationTitle("Settings")
-			.navigationBarItems(
-				leading: MeshtasticLogo().onLongPressGesture(minimumDuration: 1.0) {
+			.task(id: router.selectedTab) {
+				// Refresh the node snapshot on a gentle cadence, and only while Settings is
+				// the frontmost tab — the stale snapshot is invisible from other tabs, this
+				// task re-fires on every tab switch (so the guard comes first), and switching
+				// here restarts it for an immediate refresh.
+				guard router.selectedTab == .settings else { return }
+				refreshNodes()
+				while !Task.isCancelled {
+					do {
+						try await Task.sleep(for: .seconds(2))
+					} catch {
+						break
+					}
+					guard !Task.isCancelled else { break }
+					refreshNodes()
 				}
-			)
+			}
+			.navigationTitle("Settings")
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					MeshtasticLogo().onLongPressGesture(minimumDuration: 1.0) {
+					}
+				}
+			}
 		}
 	}
-	
+
 	func setSelectedNode(to nodeNum: Int) {
-		if nodes.count > 1 {
+		guard nodeSnapshot(for: nodeNum) != nil else {
+			selectedNode = 0
+			return
+		}
+
+		if sortedNodes.count > 1 {
 			if selectedNode == 0 {
 				self.selectedNode = Int(accessoryManager.isConnected ? nodeNum : 0)
 			}
 		} else {
 			self.selectedNode = Int(accessoryManager.isConnected ? nodeNum: 0)
+		}
+	}
+
+	private func handleSelectedNodeChange(_ newValue: Int) {
+		guard selectedNode > 0,
+			let destinationNode = liveNode(for: newValue),
+			let connectedNode = liveNode(for: preferredNodeNum),
+			let fromUser = connectedNode.user,
+			connectedNode.myInfo != nil,
+			let toUser = destinationNode.user else { return }
+
+		preferredNodeNum = Int(connectedNode.num)
+		Task {
+			_ = try await accessoryManager.requestDeviceMetadata(fromUser: fromUser, toUser: toUser)
+			Task { @MainActor in
+				Logger.mesh.info("Sent node metadata request from node details")
+			}
+		}
+	}
+}
+
+/// Pangea: the settings search field, shown only when search is offered (Expert Mode).
+private struct SettingsSearchField: ViewModifier {
+	let isEnabled: Bool
+	@Binding var text: String
+
+	func body(content: Content) -> some View {
+		if isEnabled {
+			content.searchable(
+				text: $text,
+				placement: .navigationBarDrawer(displayMode: .always),
+				prompt: "Search settings"
+			)
+		} else {
+			content
 		}
 	}
 }

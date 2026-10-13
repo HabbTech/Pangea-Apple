@@ -8,7 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -828,11 +832,11 @@ public struct Config: Sendable {
     ///
     /// struct to keep static address
     public var ipv4Config: Config.NetworkConfig.IpV4Config {
-      get {return _ipv4Config ?? Config.NetworkConfig.IpV4Config()}
+      get {_ipv4Config ?? Config.NetworkConfig.IpV4Config()}
       set {_ipv4Config = newValue}
     }
     /// Returns true if `ipv4Config` has been explicitly set.
-    public var hasIpv4Config: Bool {return self._ipv4Config != nil}
+    public var hasIpv4Config: Bool {self._ipv4Config != nil}
     /// Clears the value of `ipv4Config`. Subsequent reads from it will return its default value.
     public mutating func clearIpv4Config() {self._ipv4Config = nil}
 
@@ -976,7 +980,6 @@ public struct Config: Sendable {
     public var screenOnSecs: UInt32 = 0
 
     ///
-    /// Deprecated in 2.7.4: Unused
     /// How the GPS coordinates are formatted on the OLED screen.
     ///
     /// NOTE: This field was marked as deprecated in the .proto file.
@@ -1039,7 +1042,8 @@ public struct Config: Sendable {
     public var unknownFields = SwiftProtobuf.UnknownStorage()
 
     ///
-    /// Deprecated in 2.7.4: Unused
+    /// Unused. Kept so the deprecated gps_format field still has a type; when
+    /// firmware stopped reading that field is recorded on the field itself.
     public enum DeprecatedGpsCoordinateFormat: SwiftProtobuf.Enum, Swift.CaseIterable {
       public typealias RawValue = Int
       case unused // = 0
@@ -1136,6 +1140,10 @@ public struct Config: Sendable {
       ///
       /// Can not be auto detected but set by proto. Used for 128x128 screens
       case oledSh1107128128 // = 4
+
+      ///
+      /// Can not be auto detected but set by proto. Used for 64x128 rotated screens
+      case oledSh1107Rotated // = 5
       case UNRECOGNIZED(Int)
 
       public init() {
@@ -1149,6 +1157,7 @@ public struct Config: Sendable {
         case 2: self = .oledSh1106
         case 3: self = .oledSh1107
         case 4: self = .oledSh1107128128
+        case 5: self = .oledSh1107Rotated
         default: self = .UNRECOGNIZED(rawValue)
         }
       }
@@ -1160,6 +1169,7 @@ public struct Config: Sendable {
         case .oledSh1106: return 2
         case .oledSh1107: return 3
         case .oledSh1107128128: return 4
+        case .oledSh1107Rotated: return 5
         case .UNRECOGNIZED(let i): return i
         }
       }
@@ -1171,6 +1181,7 @@ public struct Config: Sendable {
         .oledSh1106,
         .oledSh1107,
         .oledSh1107128128,
+        .oledSh1107Rotated,
       ]
 
     }
@@ -1325,7 +1336,7 @@ public struct Config: Sendable {
     /// When enabled, the `modem_preset` fields will be adhered to, else the `bandwidth`/`spread_factor`/`coding_rate`
     /// will be taked from their respective manually defined fields
     public var usePreset: Bool {
-      get {return _storage._usePreset}
+      get {_storage._usePreset}
       set {_uniqueStorage()._usePreset = newValue}
     }
 
@@ -1336,24 +1347,26 @@ public struct Config: Sendable {
     /// This value is replaced by bandwidth/spread_factor/coding_rate.
     /// If you'd like to experiment with other options add them to MeshRadio.cpp in the device code.
     public var modemPreset: Config.LoRaConfig.ModemPreset {
-      get {return _storage._modemPreset}
+      get {_storage._modemPreset}
       set {_uniqueStorage()._modemPreset = newValue}
     }
 
     ///
-    /// Bandwidth in MHz
+    /// Bandwidth in kHz
     /// Certain bandwidth numbers are 'special' and will be converted to the
-    /// appropriate floating point value: 31 -> 31.25MHz
+    /// appropriate floating point value: 31 -> 31.25kHz
     public var bandwidth: UInt32 {
-      get {return _storage._bandwidth}
+      get {_storage._bandwidth}
       set {_uniqueStorage()._bandwidth = newValue}
     }
 
     ///
-    /// A number from 7 to 12.
+    /// A number from 5 to 12, which the firmware clamps to that range.
     /// Indicates number of chirps per symbol as 1<<spread_factor.
+    /// RF95 radios additionally reject 5 and 6; that exclusion is per hardware
+    /// and so is not expressible as a bound here.
     public var spreadFactor: UInt32 {
-      get {return _storage._spreadFactor}
+      get {_storage._spreadFactor}
       set {_uniqueStorage()._spreadFactor = newValue}
     }
 
@@ -1361,7 +1374,7 @@ public struct Config: Sendable {
     /// The denominator of the coding rate.
     /// ie for 4/5, the value is 5. 4/8 the value is 8.
     public var codingRate: UInt32 {
-      get {return _storage._codingRate}
+      get {_storage._codingRate}
       set {_uniqueStorage()._codingRate = newValue}
     }
 
@@ -1370,14 +1383,14 @@ public struct Config: Sendable {
     /// A frequency offset that is added to to the calculated band center frequency.
     /// Used to correct for crystal calibration errors.
     public var frequencyOffset: Float {
-      get {return _storage._frequencyOffset}
+      get {_storage._frequencyOffset}
       set {_uniqueStorage()._frequencyOffset = newValue}
     }
 
     ///
     /// The region code for the radio (US, CN, EU433, etc...)
     public var region: Config.LoRaConfig.RegionCode {
-      get {return _storage._region}
+      get {_storage._region}
       set {_uniqueStorage()._region = newValue}
     }
 
@@ -1386,7 +1399,7 @@ public struct Config: Sendable {
     /// Default of 3
     /// Attempting to set a value > 7 results in the default
     public var hopLimit: UInt32 {
-      get {return _storage._hopLimit}
+      get {_storage._hopLimit}
       set {_uniqueStorage()._hopLimit = newValue}
     }
 
@@ -1394,7 +1407,7 @@ public struct Config: Sendable {
     /// Disable TX from the LoRa radio. Useful for hot-swapping antennas and other tests.
     /// Defaults to false
     public var txEnabled: Bool {
-      get {return _storage._txEnabled}
+      get {_storage._txEnabled}
       set {_uniqueStorage()._txEnabled = newValue}
     }
 
@@ -1404,7 +1417,7 @@ public struct Config: Sendable {
     /// In most cases you should use zero here.
     /// Units are in dBm.
     public var txPower: Int32 {
-      get {return _storage._txPower}
+      get {_storage._txPower}
       set {_uniqueStorage()._txPower = newValue}
     }
 
@@ -1417,7 +1430,7 @@ public struct Config: Sendable {
     /// If using the hash algorithm the channel number will be: hash(channel_name) %
     /// NUM_CHANNELS (Where num channels depends on the regulatory region).
     public var channelNum: UInt32 {
-      get {return _storage._channelNum}
+      get {_storage._channelNum}
       set {_uniqueStorage()._channelNum = newValue}
     }
 
@@ -1426,14 +1439,14 @@ public struct Config: Sendable {
     /// the local regulations if you're not a HAM.
     /// Has no effect if the duty cycle of the used region is 100%.
     public var overrideDutyCycle: Bool {
-      get {return _storage._overrideDutyCycle}
+      get {_storage._overrideDutyCycle}
       set {_uniqueStorage()._overrideDutyCycle = newValue}
     }
 
     ///
     /// If true, sets RX boosted gain mode on SX126X based radios
     public var sx126XRxBoostedGain: Bool {
-      get {return _storage._sx126XRxBoostedGain}
+      get {_storage._sx126XRxBoostedGain}
       set {_uniqueStorage()._sx126XRxBoostedGain = newValue}
     }
 
@@ -1444,14 +1457,14 @@ public struct Config: Sendable {
     /// Please respect your local laws and regulations. If you are a HAM, make sure you
     /// enable HAM mode and turn off encryption.
     public var overrideFrequency: Float {
-      get {return _storage._overrideFrequency}
+      get {_storage._overrideFrequency}
       set {_uniqueStorage()._overrideFrequency = newValue}
     }
 
     ///
     /// If true, disable the build-in PA FAN using pin define in RF95_FAN_EN.
     public var paFanDisabled: Bool {
-      get {return _storage._paFanDisabled}
+      get {_storage._paFanDisabled}
       set {_uniqueStorage()._paFanDisabled = newValue}
     }
 
@@ -1460,29 +1473,36 @@ public struct Config: Sendable {
     /// particular other nodes (simulating radio out of range). All nodenums listed
     /// in ignore_incoming will have packets they send dropped on receive (by router.cpp)
     public var ignoreIncoming: [UInt32] {
-      get {return _storage._ignoreIncoming}
+      get {_storage._ignoreIncoming}
       set {_uniqueStorage()._ignoreIncoming = newValue}
     }
 
     ///
     /// If true, the device will not process any packets received via LoRa that passed via MQTT anywhere on the path towards it.
     public var ignoreMqtt: Bool {
-      get {return _storage._ignoreMqtt}
+      get {_storage._ignoreMqtt}
       set {_uniqueStorage()._ignoreMqtt = newValue}
     }
 
     ///
     /// Sets the ok_to_mqtt bit on outgoing packets
     public var configOkToMqtt: Bool {
-      get {return _storage._configOkToMqtt}
+      get {_storage._configOkToMqtt}
       set {_uniqueStorage()._configOkToMqtt = newValue}
     }
 
     ///
     /// Set where LORA FEM is enabled, disabled, or not present
     public var femLnaMode: Config.LoRaConfig.FEM_LNA_Mode {
-      get {return _storage._femLnaMode}
+      get {_storage._femLnaMode}
       set {_uniqueStorage()._femLnaMode = newValue}
+    }
+
+    ///
+    /// Don't use radiolib to initialize the radio, instead listen for a serialHal connection
+    public var serialHalOnly: Bool {
+      get {_storage._serialHalOnly}
+      set {_uniqueStorage()._serialHalOnly = newValue}
     }
 
     public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1552,6 +1572,8 @@ public struct Config: Sendable {
 
       ///
       /// Ukraine 868mhz
+      ///
+      /// NOTE: This enum value was marked as deprecated in the .proto file
       case ua868 // = 15
 
       ///
@@ -1597,6 +1619,52 @@ public struct Config: Sendable {
       ///
       /// Brazil 902MHz
       case br902 // = 26
+
+      ///
+      /// ITU Region 1 Amateur Radio 2m band (144-146 MHz)
+      case itu12M // = 27
+
+      ///
+      /// ITU Region 2 Amateur Radio 2m band (144-148 MHz)
+      case itu22M // = 28
+
+      ///
+      /// EU 866MHz band (Band no. 47b of 2006/771/EC and subsequent amendments) for Non-specific short-range devices (SRD)
+      case eu866 // = 29
+
+      ///
+      /// EU 874MHz and 917MHz bands (Band no. 1 and 4 of 2022/172/EC and subsequent amendments) for Non-specific short-range devices (SRD)
+      case eu874 // = 30
+      case eu917 // = 31
+
+      ///
+      /// EU 868MHz band, with narrow presets
+      case euN868 // = 32
+
+      ///
+      /// ITU Region 3 Amateur Radio 2m band (144-148 MHz)
+      case itu32M // = 33
+
+      ///
+      /// ITU Region 1 Amateur Radio 70cm band (430-440 MHz)
+      case itu170Cm // = 34
+
+      ///
+      /// ITU Region 2 Amateur Radio 70cm band (420-450 MHz)
+      /// Note: Some countries do not allocate 420-430 MHz or 440-450 MHz.
+      /// Check local law!
+      case itu270Cm // = 35
+
+      ///
+      /// ITU Region 3 Amateur Radio 70cm band (430-450 MHz)
+      /// Note: Some countries do not allocate 440-450 MHz. Check local law!
+      case itu370Cm // = 36
+
+      ///
+      /// ITU Region 2 Amateur Radio 1.25m '125cm' band (220-225 MHz)
+      /// Note: Some countries do not allocate 220-222 MHz (Ex: USA/Canada).
+      /// Check local law!
+      case itu2125Cm // = 37
       case UNRECOGNIZED(Int)
 
       public init() {
@@ -1632,6 +1700,17 @@ public struct Config: Sendable {
         case 24: self = .kz863
         case 25: self = .np865
         case 26: self = .br902
+        case 27: self = .itu12M
+        case 28: self = .itu22M
+        case 29: self = .eu866
+        case 30: self = .eu874
+        case 31: self = .eu917
+        case 32: self = .euN868
+        case 33: self = .itu32M
+        case 34: self = .itu170Cm
+        case 35: self = .itu270Cm
+        case 36: self = .itu370Cm
+        case 37: self = .itu2125Cm
         default: self = .UNRECOGNIZED(rawValue)
         }
       }
@@ -1665,6 +1744,17 @@ public struct Config: Sendable {
         case .kz863: return 24
         case .np865: return 25
         case .br902: return 26
+        case .itu12M: return 27
+        case .itu22M: return 28
+        case .eu866: return 29
+        case .eu874: return 30
+        case .eu917: return 31
+        case .euN868: return 32
+        case .itu32M: return 33
+        case .itu170Cm: return 34
+        case .itu270Cm: return 35
+        case .itu370Cm: return 36
+        case .itu2125Cm: return 37
         case .UNRECOGNIZED(let i): return i
         }
       }
@@ -1698,6 +1788,17 @@ public struct Config: Sendable {
         .kz863,
         .np865,
         .br902,
+        .itu12M,
+        .itu22M,
+        .eu866,
+        .eu874,
+        .eu917,
+        .euN868,
+        .itu32M,
+        .itu170Cm,
+        .itu270Cm,
+        .itu370Cm,
+        .itu2125Cm,
       ]
 
     }
@@ -1756,6 +1857,55 @@ public struct Config: Sendable {
       /// Long Range - Turbo
       /// This preset performs similarly to LongFast, but with 500Khz bandwidth.
       case longTurbo // = 9
+
+      ///
+      /// Lite Fast
+      /// Medium range preset optimized for EU 866MHz SRD band with 125kHz bandwidth.
+      /// Comparable link budget to MEDIUM_FAST but compliant with Band no. 47b of 2006/771/EC.
+      case liteFast // = 10
+
+      ///
+      /// Lite Slow
+      /// Medium-to-moderate range preset optimized for EU 866MHz SRD band with 125kHz bandwidth.
+      /// Comparable link budget to LONG_FAST but compliant with Band no. 47b of 2006/771/EC.
+      case liteSlow // = 11
+
+      ///
+      /// Narrow Fast
+      /// Medium-to-moderate range preset optimized for EU 868MHz band with 62.5kHz bandwidth.
+      /// Comparable link budget to SHORT_SLOW, but with half the data rate.
+      /// Intended to avoid interference with other devices.
+      case narrowFast // = 12
+
+      ///
+      /// Narrow Slow
+      /// Moderate range preset optimized for EU 868MHz band with 62.5kHz bandwidth.
+      /// Comparable link budget and data rate to LONG_FAST.
+      case narrowSlow // = 13
+
+      ///
+      /// Tiny Fast
+      /// Preset optimized for compliance with Amateur Radio restrictions with 20kHz bandwidth.
+      /// Many regions limit data transmission bandwidth in lower amateur bands (2 Meter).
+      /// Note: TCXO with tight tolerances (±5 ppm or better) is *absolutely required* at these narrow bandwidths.
+      /// Only compatible with SX127x and SX126x chipsets.
+      /// Comparable link budget and data rate to LONG_FAST.
+      case tinyFast // = 14
+
+      ///
+      /// Tiny Slow
+      /// Preset optimized for compliance with Amateur Radio restrictions with 20kHz bandwidth.
+      /// Many regions limit data transmission bandwidth in lower amateur bands (2 Meter).
+      /// Note: TCXO with tight tolerances (±5 ppm or better) is *absolutely required* at these narrow bandwidths.
+      /// Only compatible with SX127x and SX126x chipsets.
+      /// Comparable link budget and data rate to LONG_MODERATE.
+      case tinySlow // = 15
+
+      ///
+      /// Medium Range - Turbo
+      /// This preset performs similarly to MEDIUM_FAST, but with 500kHz bandwidth.
+      /// It is not legal to use in all regions due to this wider bandwidth.
+      case mediumTurbo // = 16
       case UNRECOGNIZED(Int)
 
       public init() {
@@ -1774,6 +1924,13 @@ public struct Config: Sendable {
         case 7: self = .longModerate
         case 8: self = .shortTurbo
         case 9: self = .longTurbo
+        case 10: self = .liteFast
+        case 11: self = .liteSlow
+        case 12: self = .narrowFast
+        case 13: self = .narrowSlow
+        case 14: self = .tinyFast
+        case 15: self = .tinySlow
+        case 16: self = .mediumTurbo
         default: self = .UNRECOGNIZED(rawValue)
         }
       }
@@ -1790,6 +1947,13 @@ public struct Config: Sendable {
         case .longModerate: return 7
         case .shortTurbo: return 8
         case .longTurbo: return 9
+        case .liteFast: return 10
+        case .liteSlow: return 11
+        case .narrowFast: return 12
+        case .narrowSlow: return 13
+        case .tinyFast: return 14
+        case .tinySlow: return 15
+        case .mediumTurbo: return 16
         case .UNRECOGNIZED(let i): return i
         }
       }
@@ -1806,6 +1970,13 @@ public struct Config: Sendable {
         .longModerate,
         .shortTurbo,
         .longTurbo,
+        .liteFast,
+        .liteSlow,
+        .narrowFast,
+        .narrowSlow,
+        .tinyFast,
+        .tinySlow,
+        .mediumTurbo,
       ]
 
     }
@@ -1968,7 +2139,63 @@ public struct Config: Sendable {
     /// Allow incoming device control over the insecure legacy admin channel.
     public var adminChannelEnabled: Bool = false
 
+    ///
+    /// Determines the packet signature policy applied to remotely received mesh packets.
+    public var packetSignaturePolicy: Config.SecurityConfig.PacketSignaturePolicy = .compatible
+
     public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+    ///
+    /// Controls how the device authenticates remotely received mesh packets.
+    public enum PacketSignaturePolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
+      public typealias RawValue = Int
+
+      ///
+      /// Accept unsigned packets for maximum compatibility while still rejecting malformed or invalid signatures.
+      /// This is the default to avoid legacy nodes dropping signed packets during rebroadcast.
+      case compatible // = 0
+
+      ///
+      /// Prefer authenticated packets while retaining compatibility with unsigned packets from nodes not known to sign.
+      /// Rejects unsigned, signable broadcasts from nodes that have previously signed.
+      case balanced // = 1
+
+      ///
+      /// Accept only packets authenticated by a verified XEdDSA signature or successful PKI decryption.
+      /// Unsigned, malformed, invalid, or unverifiable packets are ignored.
+      case strict // = 2
+      case UNRECOGNIZED(Int)
+
+      public init() {
+        self = .compatible
+      }
+
+      public init?(rawValue: Int) {
+        switch rawValue {
+        case 0: self = .compatible
+        case 1: self = .balanced
+        case 2: self = .strict
+        default: self = .UNRECOGNIZED(rawValue)
+        }
+      }
+
+      public var rawValue: Int {
+        switch self {
+        case .compatible: return 0
+        case .balanced: return 1
+        case .strict: return 2
+        case .UNRECOGNIZED(let i): return i
+        }
+      }
+
+      // The compiler won't synthesize support with the UNRECOGNIZED case.
+      public static let allCases: [Config.SecurityConfig.PacketSignaturePolicy] = [
+        .compatible,
+        .balanced,
+        .strict,
+      ]
+
+    }
 
     public init() {}
   }
@@ -2696,7 +2923,7 @@ extension Config.DisplayConfig.DisplayUnits: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension Config.DisplayConfig.OledType: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OLED_AUTO\0\u{1}OLED_SSD1306\0\u{1}OLED_SH1106\0\u{1}OLED_SH1107\0\u{1}OLED_SH1107_128_128\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OLED_AUTO\0\u{1}OLED_SSD1306\0\u{1}OLED_SH1106\0\u{1}OLED_SH1107\0\u{1}OLED_SH1107_128_128\0\u{1}OLED_SH1107_ROTATED\0")
 }
 
 extension Config.DisplayConfig.DisplayMode: SwiftProtobuf._ProtoNameProviding {
@@ -2709,7 +2936,7 @@ extension Config.DisplayConfig.CompassOrientation: SwiftProtobuf._ProtoNameProvi
 
 extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = Config.protoMessageName + ".LoRaConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}use_preset\0\u{3}modem_preset\0\u{1}bandwidth\0\u{3}spread_factor\0\u{3}coding_rate\0\u{3}frequency_offset\0\u{1}region\0\u{3}hop_limit\0\u{3}tx_enabled\0\u{3}tx_power\0\u{3}channel_num\0\u{3}override_duty_cycle\0\u{3}sx126x_rx_boosted_gain\0\u{3}override_frequency\0\u{3}pa_fan_disabled\0\u{4}X\u{1}ignore_incoming\0\u{3}ignore_mqtt\0\u{3}config_ok_to_mqtt\0\u{3}fem_lna_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}use_preset\0\u{3}modem_preset\0\u{1}bandwidth\0\u{3}spread_factor\0\u{3}coding_rate\0\u{3}frequency_offset\0\u{1}region\0\u{3}hop_limit\0\u{3}tx_enabled\0\u{3}tx_power\0\u{3}channel_num\0\u{3}override_duty_cycle\0\u{3}sx126x_rx_boosted_gain\0\u{3}override_frequency\0\u{3}pa_fan_disabled\0\u{4}X\u{1}ignore_incoming\0\u{3}ignore_mqtt\0\u{3}config_ok_to_mqtt\0\u{3}fem_lna_mode\0\u{3}serial_hal_only\0")
 
   fileprivate class _StorageClass {
     var _usePreset: Bool = false
@@ -2731,6 +2958,7 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
     var _ignoreMqtt: Bool = false
     var _configOkToMqtt: Bool = false
     var _femLnaMode: Config.LoRaConfig.FEM_LNA_Mode = .disabled
+    var _serialHalOnly: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -2760,6 +2988,7 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
       _ignoreMqtt = source._ignoreMqtt
       _configOkToMqtt = source._configOkToMqtt
       _femLnaMode = source._femLnaMode
+      _serialHalOnly = source._serialHalOnly
     }
   }
 
@@ -2797,6 +3026,7 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
         case 104: try { try decoder.decodeSingularBoolField(value: &_storage._ignoreMqtt) }()
         case 105: try { try decoder.decodeSingularBoolField(value: &_storage._configOkToMqtt) }()
         case 106: try { try decoder.decodeSingularEnumField(value: &_storage._femLnaMode) }()
+        case 107: try { try decoder.decodeSingularBoolField(value: &_storage._serialHalOnly) }()
         default: break
         }
       }
@@ -2862,6 +3092,9 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
       if _storage._femLnaMode != .disabled {
         try visitor.visitSingularEnumField(value: _storage._femLnaMode, fieldNumber: 106)
       }
+      if _storage._serialHalOnly != false {
+        try visitor.visitSingularBoolField(value: _storage._serialHalOnly, fieldNumber: 107)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2890,6 +3123,7 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
         if _storage._ignoreMqtt != rhs_storage._ignoreMqtt {return false}
         if _storage._configOkToMqtt != rhs_storage._configOkToMqtt {return false}
         if _storage._femLnaMode != rhs_storage._femLnaMode {return false}
+        if _storage._serialHalOnly != rhs_storage._serialHalOnly {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -2900,11 +3134,11 @@ extension Config.LoRaConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
 }
 
 extension Config.LoRaConfig.RegionCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSET\0\u{1}US\0\u{1}EU_433\0\u{1}EU_868\0\u{1}CN\0\u{1}JP\0\u{1}ANZ\0\u{1}KR\0\u{1}TW\0\u{1}RU\0\u{1}IN\0\u{1}NZ_865\0\u{1}TH\0\u{1}LORA_24\0\u{1}UA_433\0\u{1}UA_868\0\u{1}MY_433\0\u{1}MY_919\0\u{1}SG_923\0\u{1}PH_433\0\u{1}PH_868\0\u{1}PH_915\0\u{1}ANZ_433\0\u{1}KZ_433\0\u{1}KZ_863\0\u{1}NP_865\0\u{1}BR_902\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSET\0\u{1}US\0\u{1}EU_433\0\u{1}EU_868\0\u{1}CN\0\u{1}JP\0\u{1}ANZ\0\u{1}KR\0\u{1}TW\0\u{1}RU\0\u{1}IN\0\u{1}NZ_865\0\u{1}TH\0\u{1}LORA_24\0\u{1}UA_433\0\u{1}UA_868\0\u{1}MY_433\0\u{1}MY_919\0\u{1}SG_923\0\u{1}PH_433\0\u{1}PH_868\0\u{1}PH_915\0\u{1}ANZ_433\0\u{1}KZ_433\0\u{1}KZ_863\0\u{1}NP_865\0\u{1}BR_902\0\u{1}ITU1_2M\0\u{1}ITU2_2M\0\u{1}EU_866\0\u{1}EU_874\0\u{1}EU_917\0\u{1}EU_N_868\0\u{1}ITU3_2M\0\u{1}ITU1_70CM\0\u{1}ITU2_70CM\0\u{1}ITU3_70CM\0\u{1}ITU2_125CM\0")
 }
 
 extension Config.LoRaConfig.ModemPreset: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LONG_FAST\0\u{1}LONG_SLOW\0\u{1}VERY_LONG_SLOW\0\u{1}MEDIUM_SLOW\0\u{1}MEDIUM_FAST\0\u{1}SHORT_SLOW\0\u{1}SHORT_FAST\0\u{1}LONG_MODERATE\0\u{1}SHORT_TURBO\0\u{1}LONG_TURBO\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LONG_FAST\0\u{1}LONG_SLOW\0\u{1}VERY_LONG_SLOW\0\u{1}MEDIUM_SLOW\0\u{1}MEDIUM_FAST\0\u{1}SHORT_SLOW\0\u{1}SHORT_FAST\0\u{1}LONG_MODERATE\0\u{1}SHORT_TURBO\0\u{1}LONG_TURBO\0\u{1}LITE_FAST\0\u{1}LITE_SLOW\0\u{1}NARROW_FAST\0\u{1}NARROW_SLOW\0\u{1}TINY_FAST\0\u{1}TINY_SLOW\0\u{1}MEDIUM_TURBO\0")
 }
 
 extension Config.LoRaConfig.FEM_LNA_Mode: SwiftProtobuf._ProtoNameProviding {
@@ -2957,7 +3191,7 @@ extension Config.BluetoothConfig.PairingMode: SwiftProtobuf._ProtoNameProviding 
 
 extension Config.SecurityConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = Config.protoMessageName + ".SecurityConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}public_key\0\u{3}private_key\0\u{3}admin_key\0\u{3}is_managed\0\u{3}serial_enabled\0\u{3}debug_log_api_enabled\0\u{4}\u{2}admin_channel_enabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}public_key\0\u{3}private_key\0\u{3}admin_key\0\u{3}is_managed\0\u{3}serial_enabled\0\u{3}debug_log_api_enabled\0\u{4}\u{2}admin_channel_enabled\0\u{3}packet_signature_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2972,6 +3206,7 @@ extension Config.SecurityConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
       case 5: try { try decoder.decodeSingularBoolField(value: &self.serialEnabled) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.debugLogApiEnabled) }()
       case 8: try { try decoder.decodeSingularBoolField(value: &self.adminChannelEnabled) }()
+      case 9: try { try decoder.decodeSingularEnumField(value: &self.packetSignaturePolicy) }()
       default: break
       }
     }
@@ -2999,6 +3234,9 @@ extension Config.SecurityConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
     if self.adminChannelEnabled != false {
       try visitor.visitSingularBoolField(value: self.adminChannelEnabled, fieldNumber: 8)
     }
+    if self.packetSignaturePolicy != .compatible {
+      try visitor.visitSingularEnumField(value: self.packetSignaturePolicy, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3010,9 +3248,14 @@ extension Config.SecurityConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
     if lhs.serialEnabled != rhs.serialEnabled {return false}
     if lhs.debugLogApiEnabled != rhs.debugLogApiEnabled {return false}
     if lhs.adminChannelEnabled != rhs.adminChannelEnabled {return false}
+    if lhs.packetSignaturePolicy != rhs.packetSignaturePolicy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
+}
+
+extension Config.SecurityConfig.PacketSignaturePolicy: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PACKET_SIGNATURE_POLICY_COMPATIBLE\0\u{1}PACKET_SIGNATURE_POLICY_BALANCED\0\u{1}PACKET_SIGNATURE_POLICY_STRICT\0")
 }
 
 extension Config.SessionkeyConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

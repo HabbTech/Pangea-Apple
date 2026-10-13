@@ -22,7 +22,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import OSLog
 
@@ -147,8 +147,8 @@ enum ProfileSync {
 	/// Where the name and push waiting for the radio are kept; tests use their own.
 	static var defaults: UserDefaults = .standard
 
-	private static let pendingNameKey = "pangeaPendingRadioName"
-	private static let pushWhenBackKey = "pangeaPushCardWhenBack"
+	static let pendingNameKey = "pangeaPendingRadioName"
+	static let pushWhenBackKey = "pangeaPushCardWhenBack"
 
 	static var pendingRadioName: String? {
 		get { defaults.string(forKey: pendingNameKey) }
@@ -172,8 +172,9 @@ enum ProfileSync {
 	}
 
 	/// The radio a held push was for is gone (see `RadioPairing.clearRadioData`).
+	/// Removed, not set to false, so Clear App Data leaves the key as a new install has it.
 	static func forgetHeldPush() {
-		pushWhenBack = false
+		defaults.removeObject(forKey: pushWhenBackKey)
 	}
 
 	/// Writes a name to the radio; tests use their own.
@@ -227,17 +228,19 @@ enum ProfileSync {
 		}
 		guard myCard?.payload != nil else { return }
 		let context = accessoryManager.context
-		let request = UserEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "lastMessage > %@ AND pkiEncrypted == YES", Date().addingTimeInterval(-14 * 24 * 60 * 60) as NSDate)
-		request.sortDescriptors = [NSSortDescriptor(keyPath: \UserEntity.lastMessage, ascending: false)]
-		request.fetchBatchSize = 32
+		let since = Date().addingTimeInterval(-14 * 24 * 60 * 60)
+		let never = Date.distantPast
+		let descriptor = FetchDescriptor<UserEntity>(
+			predicate: #Predicate { ($0.lastMessage ?? never) > since && $0.pkiEncrypted == true },
+			sortBy: [SortDescriptor(\UserEntity.lastMessage, order: .reverse)]
+		)
 		let myNum = accessoryManager.activeDeviceNum
 		// lastMessage is also set by messages they send me, so check I've written to them.
 		// The 8 most recent who pass, not the 8 most recent: people who only wrote to me
 		// mustn't crowd out the ones I talk to. They can be many, so who passes is worked
 		// out once for everyone, not with queries per person.
 		let sharing = mayShareDirectly()
-		var people = Array(((try? context.fetch(request)) ?? []).lazy
+		var people = Array(((try? context.fetch(descriptor)) ?? []).lazy
 			.filter { $0.num != myNum && canReachDirectly($0) && sharing.contains($0.num) }
 			.prefix(8)
 			.map(\.num))
@@ -364,10 +367,9 @@ enum ProfileSync {
 	/// They've sent me a private message, so their app accepts my private requests.
 	private static func theyHaveMessaged(_ num: Int64) -> Bool {
 		guard let myNum = accessoryManager.activeDeviceNum else { return false }
-		let request = MessageEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "fromUser.num == %lld AND toUser.num == %lld", num, myNum)
-		request.fetchLimit = 1
-		return ((try? accessoryManager.context.count(for: request)) ?? 0) > 0
+		var descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.fromUser?.num == num && $0.toUser?.num == myNum })
+		descriptor.fetchLimit = 1
+		return ((try? accessoryManager.context.fetchCount(descriptor)) ?? 0) > 0
 	}
 
 	private static func canReachDirectly(_ user: UserEntity) -> Bool {
@@ -391,10 +393,9 @@ enum ProfileSync {
 	/// I've sent them a private message from this radio (texts and reactions both count).
 	private static func iHaveMessaged(_ num: Int64) -> Bool {
 		guard let myNum = accessoryManager.activeDeviceNum else { return false }
-		let request = MessageEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "fromUser.num == %lld AND toUser.num == %lld", myNum, num)
-		request.fetchLimit = 1
-		return ((try? accessoryManager.context.count(for: request)) ?? 0) > 0
+		var descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.fromUser?.num == myNum && $0.toUser?.num == num })
+		descriptor.fetchLimit = 1
+		return ((try? accessoryManager.context.fetchCount(descriptor)) ?? 0) > 0
 	}
 
 	/// The connected radio, or the last one while it's away, so what's said about groups
@@ -412,10 +413,9 @@ enum ProfileSync {
 		if let profile = ProfileStore.shared.profile(num), currentGroup(of: profile) != nil {
 			return true
 		}
-		let request = MessageEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "fromUser.num == %lld AND channel IN %@", num, groups.map { NSNumber(value: $0) })
-		request.fetchLimit = 1
-		return ((try? accessoryManager.context.count(for: request)) ?? 0) > 0
+		var descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.fromUser?.num == num && groups.contains($0.channel) })
+		descriptor.fetchLimit = 1
+		return ((try? accessoryManager.context.fetchCount(descriptor)) ?? 0) > 0
 	}
 
 	/// Everyone `mayShare(with:over: .direct)` lets have my card: those I've messaged, saved
@@ -423,12 +423,9 @@ enum ProfileSync {
 	private static func mayShareDirectly() -> Set<Int64> {
 		guard let myNum = accessoryManager.activeDeviceNum else { return [] }
 		let context = accessoryManager.context
-		func people(_ predicate: NSPredicate) -> Set<Int64> {
-			let request = UserEntity.fetchRequest()
-			request.predicate = predicate
-			return Set(((try? context.fetch(request)) ?? []).map(\.num))
-		}
-		var allowed = people(NSPredicate(format: "SUBQUERY(receivedMessages, $m, $m.fromUser.num == %lld).@count > 0", myNum))
+		// Everyone I've sent a private message to.
+		let mine = FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.fromUser?.num == myNum && $0.toUser != nil })
+		var allowed = Set(((try? context.fetch(mine)) ?? []).compactMap { $0.toUser?.num })
 		allowed.formUnion(ProfileStore.shared.contacts.filter { $0.value.isContact }.keys)
 		guard let myInfo = getNodeInfo(id: myNum, context: context)?.myInfo else { return allowed }
 		let groups = GroupChats.groups(in: myInfo).filter(GroupChats.isPrivateGroup).map(\.index)
@@ -443,7 +440,9 @@ enum ProfileSync {
 				allowed.insert(num)
 			}
 		}
-		allowed.formUnion(people(NSPredicate(format: "SUBQUERY(sentMessages, $m, $m.channel IN %@).@count > 0", groups.map { NSNumber(value: $0) })))
+		// Everyone who has posted in one of them.
+		let posted = FetchDescriptor<MessageEntity>(predicate: #Predicate { groups.contains($0.channel) })
+		allowed.formUnion(((try? context.fetch(posted)) ?? []).compactMap { $0.fromUser?.num })
 		return allowed
 	}
 
@@ -452,7 +451,7 @@ enum ProfileSync {
 	/// slot and name.
 	private static func groupKey(_ index: Int32) -> String? {
 		guard index > 0, let num = myNumOrLast,
-			  let channel = (getNodeInfo(id: num, context: accessoryManager.context)?.myInfo?.channels?.array as? [ChannelEntity])?
+			  let channel = getNodeInfo(id: num, context: accessoryManager.context)?.myInfo?.sortedChannels
 				.first(where: { $0.index == index }),
 			  GroupChats.isPrivateGroup(channel) else { return nil }
 		return "\(index):\(channel.name ?? ""):\(PangeaWire.hash(channel.psk ?? Data()))"

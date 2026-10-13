@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import OSLog
 
 struct MapDataFiles: View {
-	@Environment(\.managedObjectContext) var context
+	@Environment(\.modelContext) private var context
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@ObservedObject private var mapDataManager = MapDataManager.shared
 
@@ -33,7 +33,7 @@ struct MapDataFiles: View {
 					}
 					.frame(maxWidth: .infinity)
 					.padding()
-					.background(Color.accentColor)
+					.background(Color.accentFill)
 					.foregroundColor(.white)
 					.cornerRadius(10)
 				}
@@ -197,11 +197,20 @@ struct MapDataFileRow: View {
 						.padding(.vertical, 2)
 						.background(Color.secondary.opacity(0.2))
 						.cornerRadius(4)
+					if file.source == .sitePlanner {
+						Text("Site Planner")
+							.font(.caption2)
+							.fixedSize()
+							.padding(.horizontal, 8)
+							.padding(.vertical, 2)
+							.background(Color.accentColor.opacity(0.2))
+							.cornerRadius(4)
+					}
 					Text("\(file.overlayCount) features")
 						.font(.caption2)
 						.foregroundColor(.secondary)
 					Spacer()
-					Text(file.uploadDate.formatted())
+					Text(file.uploadDate.formatted(date: .numeric, time: .shortened))
 						.font(.caption2)
 						.foregroundColor(.secondary)
 				}

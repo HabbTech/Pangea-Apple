@@ -8,7 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -140,12 +144,12 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
   case rak11310 // = 26
 
   ///
-  /// Makerfabs SenseLoRA Receiver (RP2040 + RFM96)
-  case senseloraRp2040 // = 27
+  /// Makerfabs Tracker Reserved
+  case makerfabsTracker // = 27
 
   ///
-  /// Makerfabs SenseLoRA Industrial Monitor (ESP32-S3 + RFM96)
-  case senseloraS3 // = 28
+  /// Makerfabs Reserved
+  case makerfabsReserved // = 28
 
   ///
   /// Canary Radio Company - CanaryOne: https://canaryradio.io/products/canaryone
@@ -563,8 +567,84 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
   /// Heltec Mesh Node T096 board features an nRF52840 CPU and a TFT screen.
   case heltecMeshNodeT096 // = 127
 
-  /// Seeed studio T1000-E Pro tracker card. NRF52840 w/ LR2021 radio, GPS, button, buzzer, and sensors. 
-  case trackerT1000EPro // = 128
+  ///
+  /// Seeed studio Mesh Tracker X1card. NRF52840 w/ LR2021 radio,
+  /// GPS, button, buzzer, and sensors.
+  case meshTrackerX1 // = 128
+
+  ///
+  /// Elecrow ThinkNode M7, M8 and M9
+  case thinknodeM7 // = 129
+  case thinknodeM8 // = 130
+  case thinknodeM9 // = 131
+
+  ///
+  /// The Heltec-V4-R8 uses an ESP32S3R8 chip, plus an SX1262.
+  case heltecV4R8 // = 132
+
+  ///
+  /// The HELTEC_MESH_NODE_T1 uses an NRF52840 chip, plus an SX1262.
+  case heltecMeshNodeT1 // = 133
+
+  ///
+  /// B&Q Consulting Station G3: TBD
+  case stationG3 // = 134
+
+  ///
+  /// Lilygo T-Impulse-Plus
+  case tImpulsePlus // = 135
+
+  ///
+  /// Lilygo T-Echo Card
+  case tEchoCard // = 136
+
+  ///
+  /// Seeed Tracker L2
+  case seeedWioTrackerL2 // = 137
+
+  ///
+  /// Elecrow CrowPanel Advance P4 models, ESP32-P4 and TFT with SX1262 radio plugin
+  case crowpanelP4 // = 138
+
+  ///
+  /// Heltec Mesh Tower V2
+  case heltecMeshTowerV2 // = 139
+
+  ///
+  /// Meshnology W10
+  case meshnologyW10 // = 140
+
+  ///
+  /// Heltec ESP32S3 + SX1262
+  case heltecRc32 // = 141
+
+  ///
+  /// Heltec NRF52840 + SX1262
+  case heltecRc52 // = 142
+
+  ///
+  /// Heltec ESP32C6 + SX1262
+  case heltecRcc6 // = 143
+
+  ///
+  /// Seeed Wio Tracker L1 Pro 1W, nRF52840 + SX1262 with 1 W external PA
+  case seeedWioTrackerL1Pro1W // = 144
+
+  ///
+  /// Meshnology W12
+  case meshnologyW12 // = 145
+
+  ///
+  /// Seeed Studio MeshPager X2
+  case meshpagerX2 // = 146
+
+  ///
+  /// Lilygo T-CONNECT PRO
+  case tConnectPro // = 147
+
+  ///
+  /// Axiometa Axiometa Genesis Mini
+  case axiometaGenesisMini // = 148
 
   ///
   /// ------------------------------------------------------------------------------------------------------------------------------------------
@@ -606,8 +686,8 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 24: self = .heltecWirelessBridge
     case 25: self = .stationG1
     case 26: self = .rak11310
-    case 27: self = .senseloraRp2040
-    case 28: self = .senseloraS3
+    case 27: self = .makerfabsTracker
+    case 28: self = .makerfabsReserved
     case 29: self = .canaryone
     case 30: self = .rp2040Lora
     case 31: self = .stationG2
@@ -707,7 +787,27 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 125: self = .miniEpaperS3
     case 126: self = .tdisplayS3Pro
     case 127: self = .heltecMeshNodeT096
-    case 128: self = .trackerT1000EPro
+    case 128: self = .meshTrackerX1
+    case 129: self = .thinknodeM7
+    case 130: self = .thinknodeM8
+    case 131: self = .thinknodeM9
+    case 132: self = .heltecV4R8
+    case 133: self = .heltecMeshNodeT1
+    case 134: self = .stationG3
+    case 135: self = .tImpulsePlus
+    case 136: self = .tEchoCard
+    case 137: self = .seeedWioTrackerL2
+    case 138: self = .crowpanelP4
+    case 139: self = .heltecMeshTowerV2
+    case 140: self = .meshnologyW10
+    case 141: self = .heltecRc32
+    case 142: self = .heltecRc52
+    case 143: self = .heltecRcc6
+    case 144: self = .seeedWioTrackerL1Pro1W
+    case 145: self = .meshnologyW12
+    case 146: self = .meshpagerX2
+    case 147: self = .tConnectPro
+    case 148: self = .axiometaGenesisMini
     case 255: self = .privateHw
     default: self = .UNRECOGNIZED(rawValue)
     }
@@ -742,8 +842,8 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .heltecWirelessBridge: return 24
     case .stationG1: return 25
     case .rak11310: return 26
-    case .senseloraRp2040: return 27
-    case .senseloraS3: return 28
+    case .makerfabsTracker: return 27
+    case .makerfabsReserved: return 28
     case .canaryone: return 29
     case .rp2040Lora: return 30
     case .stationG2: return 31
@@ -843,7 +943,27 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .miniEpaperS3: return 125
     case .tdisplayS3Pro: return 126
     case .heltecMeshNodeT096: return 127
-    case .trackerT1000EPro: return 128
+    case .meshTrackerX1: return 128
+    case .thinknodeM7: return 129
+    case .thinknodeM8: return 130
+    case .thinknodeM9: return 131
+    case .heltecV4R8: return 132
+    case .heltecMeshNodeT1: return 133
+    case .stationG3: return 134
+    case .tImpulsePlus: return 135
+    case .tEchoCard: return 136
+    case .seeedWioTrackerL2: return 137
+    case .crowpanelP4: return 138
+    case .heltecMeshTowerV2: return 139
+    case .meshnologyW10: return 140
+    case .heltecRc32: return 141
+    case .heltecRc52: return 142
+    case .heltecRcc6: return 143
+    case .seeedWioTrackerL1Pro1W: return 144
+    case .meshnologyW12: return 145
+    case .meshpagerX2: return 146
+    case .tConnectPro: return 147
+    case .axiometaGenesisMini: return 148
     case .privateHw: return 255
     case .UNRECOGNIZED(let i): return i
     }
@@ -878,8 +998,8 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     .heltecWirelessBridge,
     .stationG1,
     .rak11310,
-    .senseloraRp2040,
-    .senseloraS3,
+    .makerfabsTracker,
+    .makerfabsReserved,
     .canaryone,
     .rp2040Lora,
     .stationG2,
@@ -979,7 +1099,27 @@ public enum HardwareModel: SwiftProtobuf.Enum, Swift.CaseIterable {
     .miniEpaperS3,
     .tdisplayS3Pro,
     .heltecMeshNodeT096,
-    .trackerT1000EPro,
+    .meshTrackerX1,
+    .thinknodeM7,
+    .thinknodeM8,
+    .thinknodeM9,
+    .heltecV4R8,
+    .heltecMeshNodeT1,
+    .stationG3,
+    .tImpulsePlus,
+    .tEchoCard,
+    .seeedWioTrackerL2,
+    .crowpanelP4,
+    .heltecMeshTowerV2,
+    .meshnologyW10,
+    .heltecRc32,
+    .heltecRc52,
+    .heltecRcc6,
+    .seeedWioTrackerL1Pro1W,
+    .meshnologyW12,
+    .meshpagerX2,
+    .tConnectPro,
+    .axiometaGenesisMini,
     .privateHw,
   ]
 
@@ -1195,6 +1335,18 @@ public enum FirmwareEdition: SwiftProtobuf.Enum, Swift.CaseIterable {
   case hamvention // = 19
 
   ///
+  /// FAB, the international Fab Lab digital fabrication conference
+  case fab // = 20
+
+  ///
+  /// Dragon Con, the yearly pop culture convention in Atlanta, GA
+  case dragonCon // = 21
+
+  ///
+  /// Chaos Communication Congress, the hacker conference held yearly in Germany
+  case ccc // = 22
+
+  ///
   /// Placeholder for DIY and unofficial events
   case diyEdition // = 127
   case UNRECOGNIZED(Int)
@@ -1211,6 +1363,9 @@ public enum FirmwareEdition: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 17: self = .defcon
     case 18: self = .burningMan
     case 19: self = .hamvention
+    case 20: self = .fab
+    case 21: self = .dragonCon
+    case 22: self = .ccc
     case 127: self = .diyEdition
     default: self = .UNRECOGNIZED(rawValue)
     }
@@ -1224,6 +1379,9 @@ public enum FirmwareEdition: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .defcon: return 17
     case .burningMan: return 18
     case .hamvention: return 19
+    case .fab: return 20
+    case .dragonCon: return 21
+    case .ccc: return 22
     case .diyEdition: return 127
     case .UNRECOGNIZED(let i): return i
     }
@@ -1237,6 +1395,9 @@ public enum FirmwareEdition: SwiftProtobuf.Enum, Swift.CaseIterable {
     .defcon,
     .burningMan,
     .hamvention,
+    .fab,
+    .dragonCon,
+    .ccc,
     .diyEdition,
   ]
 
@@ -1312,6 +1473,22 @@ public enum ExcludedModules: SwiftProtobuf.Enum, Swift.CaseIterable {
   ///
   /// Network config (not technically a module, but used to indicate network capabilities)
   case networkConfig // = 16384
+
+  ///
+  /// Status Message module
+  case statusmessageConfig // = 32768
+
+  ///
+  /// Traffic Management module
+  case trafficmanagementConfig // = 65536
+
+  ///
+  /// TAK module
+  case takConfig // = 131072
+
+  ///
+  /// Mesh Beacon module
+  case meshbeaconConfig // = 262144
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -1336,6 +1513,10 @@ public enum ExcludedModules: SwiftProtobuf.Enum, Swift.CaseIterable {
     case 4096: self = .paxcounterConfig
     case 8192: self = .bluetoothConfig
     case 16384: self = .networkConfig
+    case 32768: self = .statusmessageConfig
+    case 65536: self = .trafficmanagementConfig
+    case 131072: self = .takConfig
+    case 262144: self = .meshbeaconConfig
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -1358,6 +1539,10 @@ public enum ExcludedModules: SwiftProtobuf.Enum, Swift.CaseIterable {
     case .paxcounterConfig: return 4096
     case .bluetoothConfig: return 8192
     case .networkConfig: return 16384
+    case .statusmessageConfig: return 32768
+    case .trafficmanagementConfig: return 65536
+    case .takConfig: return 131072
+    case .meshbeaconConfig: return 262144
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -1380,6 +1565,10 @@ public enum ExcludedModules: SwiftProtobuf.Enum, Swift.CaseIterable {
     .paxcounterConfig,
     .bluetoothConfig,
     .networkConfig,
+    .statusmessageConfig,
+    .trafficmanagementConfig,
+    .takConfig,
+    .meshbeaconConfig,
   ]
 
 }
@@ -1395,33 +1584,33 @@ public struct Position: @unchecked Sendable {
   /// The new preferred location encoding, multiply by 1e-7 to get degrees
   /// in floating point
   public var latitudeI: Int32 {
-    get {return _storage._latitudeI ?? 0}
+    get {_storage._latitudeI ?? 0}
     set {_uniqueStorage()._latitudeI = newValue}
   }
   /// Returns true if `latitudeI` has been explicitly set.
-  public var hasLatitudeI: Bool {return _storage._latitudeI != nil}
+  public var hasLatitudeI: Bool {_storage._latitudeI != nil}
   /// Clears the value of `latitudeI`. Subsequent reads from it will return its default value.
   public mutating func clearLatitudeI() {_uniqueStorage()._latitudeI = nil}
 
   ///
   /// TODO: REPLACE
   public var longitudeI: Int32 {
-    get {return _storage._longitudeI ?? 0}
+    get {_storage._longitudeI ?? 0}
     set {_uniqueStorage()._longitudeI = newValue}
   }
   /// Returns true if `longitudeI` has been explicitly set.
-  public var hasLongitudeI: Bool {return _storage._longitudeI != nil}
+  public var hasLongitudeI: Bool {_storage._longitudeI != nil}
   /// Clears the value of `longitudeI`. Subsequent reads from it will return its default value.
   public mutating func clearLongitudeI() {_uniqueStorage()._longitudeI = nil}
 
   ///
   /// In meters above MSL (but see issue #359)
   public var altitude: Int32 {
-    get {return _storage._altitude ?? 0}
+    get {_storage._altitude ?? 0}
     set {_uniqueStorage()._altitude = newValue}
   }
   /// Returns true if `altitude` has been explicitly set.
-  public var hasAltitude: Bool {return _storage._altitude != nil}
+  public var hasAltitude: Bool {_storage._altitude != nil}
   /// Clears the value of `altitude`. Subsequent reads from it will return its default value.
   public mutating func clearAltitude() {_uniqueStorage()._altitude = nil}
 
@@ -1431,57 +1620,57 @@ public struct Position: @unchecked Sendable {
   /// the mesh (because there are devices on the mesh without GPS or RTC).
   /// seconds since 1970
   public var time: UInt32 {
-    get {return _storage._time}
+    get {_storage._time}
     set {_uniqueStorage()._time = newValue}
   }
 
   ///
   /// TODO: REPLACE
   public var locationSource: Position.LocSource {
-    get {return _storage._locationSource}
+    get {_storage._locationSource}
     set {_uniqueStorage()._locationSource = newValue}
   }
 
   ///
   /// TODO: REPLACE
   public var altitudeSource: Position.AltSource {
-    get {return _storage._altitudeSource}
+    get {_storage._altitudeSource}
     set {_uniqueStorage()._altitudeSource = newValue}
   }
 
   ///
   /// Positional timestamp (actual timestamp of GPS solution) in integer epoch seconds
   public var timestamp: UInt32 {
-    get {return _storage._timestamp}
+    get {_storage._timestamp}
     set {_uniqueStorage()._timestamp = newValue}
   }
 
   ///
   /// Pos. timestamp milliseconds adjustment (rarely available or required)
   public var timestampMillisAdjust: Int32 {
-    get {return _storage._timestampMillisAdjust}
+    get {_storage._timestampMillisAdjust}
     set {_uniqueStorage()._timestampMillisAdjust = newValue}
   }
 
   ///
   /// HAE altitude in meters - can be used instead of MSL altitude
   public var altitudeHae: Int32 {
-    get {return _storage._altitudeHae ?? 0}
+    get {_storage._altitudeHae ?? 0}
     set {_uniqueStorage()._altitudeHae = newValue}
   }
   /// Returns true if `altitudeHae` has been explicitly set.
-  public var hasAltitudeHae: Bool {return _storage._altitudeHae != nil}
+  public var hasAltitudeHae: Bool {_storage._altitudeHae != nil}
   /// Clears the value of `altitudeHae`. Subsequent reads from it will return its default value.
   public mutating func clearAltitudeHae() {_uniqueStorage()._altitudeHae = nil}
 
   ///
   /// Geoidal separation in meters
   public var altitudeGeoidalSeparation: Int32 {
-    get {return _storage._altitudeGeoidalSeparation ?? 0}
+    get {_storage._altitudeGeoidalSeparation ?? 0}
     set {_uniqueStorage()._altitudeGeoidalSeparation = newValue}
   }
   /// Returns true if `altitudeGeoidalSeparation` has been explicitly set.
-  public var hasAltitudeGeoidalSeparation: Bool {return _storage._altitudeGeoidalSeparation != nil}
+  public var hasAltitudeGeoidalSeparation: Bool {_storage._altitudeGeoidalSeparation != nil}
   /// Clears the value of `altitudeGeoidalSeparation`. Subsequent reads from it will return its default value.
   public mutating func clearAltitudeGeoidalSeparation() {_uniqueStorage()._altitudeGeoidalSeparation = nil}
 
@@ -1492,21 +1681,21 @@ public struct Position: @unchecked Sendable {
   ///   in which case PDOP becomes redundant (PDOP=sqrt(HDOP^2 + VDOP^2))
   /// TODO: REMOVE/INTEGRATE
   public var pdop: UInt32 {
-    get {return _storage._pdop}
+    get {_storage._pdop}
     set {_uniqueStorage()._pdop = newValue}
   }
 
   ///
   /// TODO: REPLACE
   public var hdop: UInt32 {
-    get {return _storage._hdop}
+    get {_storage._hdop}
     set {_uniqueStorage()._hdop = newValue}
   }
 
   ///
   /// TODO: REPLACE
   public var vdop: UInt32 {
-    get {return _storage._vdop}
+    get {_storage._vdop}
     set {_uniqueStorage()._vdop = newValue}
   }
 
@@ -1515,62 +1704,62 @@ public struct Position: @unchecked Sendable {
   ///   multiplied with DOP to calculate positional accuracy
   /// Default: "'bout three meters-ish" :)
   public var gpsAccuracy: UInt32 {
-    get {return _storage._gpsAccuracy}
+    get {_storage._gpsAccuracy}
     set {_uniqueStorage()._gpsAccuracy = newValue}
   }
 
   ///
-  /// Ground speed in m/s and True North TRACK in 1/100 degrees
+  /// Ground speed in km/h and True North TRACK in 1/100 degrees
   /// Clarification of terms:
   /// - "track" is the direction of motion (measured in horizontal plane)
   /// - "heading" is where the fuselage points (measured in horizontal plane)
   /// - "yaw" indicates a relative rotation about the vertical axis
   /// TODO: REMOVE/INTEGRATE
   public var groundSpeed: UInt32 {
-    get {return _storage._groundSpeed ?? 0}
+    get {_storage._groundSpeed ?? 0}
     set {_uniqueStorage()._groundSpeed = newValue}
   }
   /// Returns true if `groundSpeed` has been explicitly set.
-  public var hasGroundSpeed: Bool {return _storage._groundSpeed != nil}
+  public var hasGroundSpeed: Bool {_storage._groundSpeed != nil}
   /// Clears the value of `groundSpeed`. Subsequent reads from it will return its default value.
   public mutating func clearGroundSpeed() {_uniqueStorage()._groundSpeed = nil}
 
   ///
   /// TODO: REPLACE
   public var groundTrack: UInt32 {
-    get {return _storage._groundTrack ?? 0}
+    get {_storage._groundTrack ?? 0}
     set {_uniqueStorage()._groundTrack = newValue}
   }
   /// Returns true if `groundTrack` has been explicitly set.
-  public var hasGroundTrack: Bool {return _storage._groundTrack != nil}
+  public var hasGroundTrack: Bool {_storage._groundTrack != nil}
   /// Clears the value of `groundTrack`. Subsequent reads from it will return its default value.
   public mutating func clearGroundTrack() {_uniqueStorage()._groundTrack = nil}
 
   ///
   /// GPS fix quality (from NMEA GxGGA statement or similar)
   public var fixQuality: UInt32 {
-    get {return _storage._fixQuality}
+    get {_storage._fixQuality}
     set {_uniqueStorage()._fixQuality = newValue}
   }
 
   ///
   /// GPS fix type 2D/3D (from NMEA GxGSA statement)
   public var fixType: UInt32 {
-    get {return _storage._fixType}
+    get {_storage._fixType}
     set {_uniqueStorage()._fixType = newValue}
   }
 
   ///
   /// GPS "Satellites in View" number
   public var satsInView: UInt32 {
-    get {return _storage._satsInView}
+    get {_storage._satsInView}
     set {_uniqueStorage()._satsInView = newValue}
   }
 
   ///
   /// Sensor ID - in case multiple positioning sensors are being used
   public var sensorID: UInt32 {
-    get {return _storage._sensorID}
+    get {_storage._sensorID}
     set {_uniqueStorage()._sensorID = newValue}
   }
 
@@ -1580,7 +1769,7 @@ public struct Position: @unchecked Sendable {
   /// - if we update at dynamic intervals (based on relative movement etc),
   ///   but "AT LEAST every Y seconds", use Y
   public var nextUpdate: UInt32 {
-    get {return _storage._nextUpdate}
+    get {_storage._nextUpdate}
     set {_uniqueStorage()._nextUpdate = newValue}
   }
 
@@ -1588,14 +1777,14 @@ public struct Position: @unchecked Sendable {
   /// A sequence number, incremented with each Position message to help
   ///   detect lost updates if needed
   public var seqNumber: UInt32 {
-    get {return _storage._seqNumber}
+    get {_storage._seqNumber}
     set {_uniqueStorage()._seqNumber = newValue}
   }
 
   ///
   /// Indicates the bits of precision set by the sending node
   public var precisionBits: UInt32 {
-    get {return _storage._precisionBits}
+    get {_storage._precisionBits}
     set {_uniqueStorage()._precisionBits = newValue}
   }
 
@@ -1761,6 +1950,9 @@ public struct User: Sendable {
 
   ///
   /// A full name for this user, i.e. "Kevin Hester"
+  /// Limited to 24 bytes of UTF-8: longer names are accepted from senders
+  /// built against the older 39-byte limit, but devices truncate them before
+  /// storing or rebroadcasting. Clients should enforce 24 bytes in their UI.
   public var longName: String = String()
 
   ///
@@ -1801,11 +1993,11 @@ public struct User: Sendable {
   ///
   /// Whether or not the node can be messaged
   public var isUnmessagable: Bool {
-    get {return _isUnmessagable ?? false}
+    get {_isUnmessagable ?? false}
     set {_isUnmessagable = newValue}
   }
   /// Returns true if `isUnmessagable` has been explicitly set.
-  public var hasIsUnmessagable: Bool {return self._isUnmessagable != nil}
+  public var hasIsUnmessagable: Bool {self._isUnmessagable != nil}
   /// Clears the value of `isUnmessagable`. Subsequent reads from it will return its default value.
   public mutating func clearIsUnmessagable() {self._isUnmessagable = nil}
 
@@ -1883,6 +2075,33 @@ public struct Routing: Sendable {
     }
     set {variant = .errorReason(newValue)}
   }
+
+  ///
+  /// Optional proof that this ack/nak was produced by the node that actually received the packet
+  /// identified by Data.request_id, rather than by anyone holding the channel key.
+  ///
+  /// Explicit acks are usually sent on the channel, and channel traffic is encrypted but not
+  /// authenticated, so such an ack can be forged by any listener holding the PSK. When the
+  /// acknowledged packet WAS PKI encrypted, the two endpoints already share a Curve25519 secret, so
+  /// the receiver can prove receipt cheaply rather than signing the ack:
+  ///
+  ///   ack_proof = HMAC-SHA256(shared_key,
+  ///                           "ack" | LE32(from) | LE32(to) | LE32(request_id) | routing)[0..8)
+  ///
+  /// where shared_key is the same SHA256(X25519(sender_private, receiver_public)) used for PKI
+  /// packet encryption, and `routing` is this encoded Routing message without the ack_proof field.
+  ///
+  /// Each input is load-bearing. request_id stops a captured proof being replayed against a
+  /// different outstanding packet. The Routing bytes stop a bit-flip turning a proven success into a
+  /// failure: an ack and a nak for one packet otherwise share every other input, and channel
+  /// encryption is CTR with no integrity check. Integers are little-endian so the value is a
+  /// property of the protocol rather than of the host that computed it.
+  ///
+  /// Unset when no pairwise key is available, including the PKI_UNKNOWN_PUBKEY and NO_CHANNEL naks,
+  /// which are emitted precisely because the packet could not be decrypted. Receivers that do not
+  /// understand this field ignore it. It does not replace xeddsa_signature, which remains the only
+  /// option for traffic with no pairwise key and the only proof a third party can check.
+  public var ackProof: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2116,13 +2335,17 @@ public struct DataMessage: Sendable {
   ///
   /// Bitfield for extra flags. First use is to indicate that user approves the packet being uploaded to MQTT.
   public var bitfield: UInt32 {
-    get {return _bitfield ?? 0}
+    get {_bitfield ?? 0}
     set {_bitfield = newValue}
   }
   /// Returns true if `bitfield` has been explicitly set.
-  public var hasBitfield: Bool {return self._bitfield != nil}
+  public var hasBitfield: Bool {self._bitfield != nil}
   /// Clears the value of `bitfield`. Subsequent reads from it will return its default value.
   public mutating func clearBitfield() {self._bitfield = nil}
+
+  ///
+  /// XEdDSA signature for the payload
+  public var xeddsaSignature: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2279,6 +2502,174 @@ public struct StoreForwardPlusPlus: Sendable {
 }
 
 ///
+/// The actual over-the-mesh message doing RemoteShell
+public struct RemoteShell: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  ///
+  /// Structured frame operation.
+  public var op: RemoteShell.OpCode = .opUnset
+
+  ///
+  /// Logical PTY session identifier.
+  public var sessionID: UInt32 = 0
+
+  ///
+  /// Monotonic sequence number for this frame.
+  public var seq: UInt32 = 0
+
+  ///
+  /// Cumulative ack sequence number.
+  public var ackSeq: UInt32 = 0
+
+  ///
+  /// Opaque bytes payload for INPUT/OUTPUT/ERROR and other frame bodies.
+  public var payload: Data = Data()
+
+  ///
+  /// Terminal size columns used for OPEN/RESIZE signaling.
+  public var cols: UInt32 = 0
+
+  ///
+  /// Terminal size rows used for OPEN/RESIZE signaling.
+  public var rows: UInt32 = 0
+
+  ///
+  /// Bit flags for protocol extensions.
+  public var flags: UInt32 = 0
+
+  ///
+  /// The last sequence number TX'd.
+  public var lastTxSeq: UInt32 = 0
+
+  ///
+  /// The last sequence number RX'd.
+  public var lastRxSeq: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  ///
+  /// Frame op code for PTY session control and stream transport.
+  ///
+  /// Values 1-63 are client->server requests.
+  /// Values 64-127 are server->client responses/events.
+  public enum OpCode: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+    case opUnset // = 0
+
+    /// Client -> server
+    case `open` // = 1
+    case input // = 2
+    case resize // = 3
+    case close // = 4
+    case ping // = 5
+    case ack // = 6
+
+    /// Server -> client
+    case openOk // = 64
+    case output // = 65
+    case closed // = 66
+    case error // = 67
+    case pong // = 68
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .opUnset
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .opUnset
+      case 1: self = .open
+      case 2: self = .input
+      case 3: self = .resize
+      case 4: self = .close
+      case 5: self = .ping
+      case 6: self = .ack
+      case 64: self = .openOk
+      case 65: self = .output
+      case 66: self = .closed
+      case 67: self = .error
+      case 68: self = .pong
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .opUnset: return 0
+      case .open: return 1
+      case .input: return 2
+      case .resize: return 3
+      case .close: return 4
+      case .ping: return 5
+      case .ack: return 6
+      case .openOk: return 64
+      case .output: return 65
+      case .closed: return 66
+      case .error: return 67
+      case .pong: return 68
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [RemoteShell.OpCode] = [
+      .opUnset,
+      .open,
+      .input,
+      .resize,
+      .close,
+      .ping,
+      .ack,
+      .openOk,
+      .output,
+      .closed,
+      .error,
+      .pong,
+    ]
+
+  }
+
+  public init() {}
+}
+
+///
+/// A rectangular, axis-aligned geographic bounding box.
+/// Used to define a rectangular geofence region for a Waypoint.
+/// Fields are ordered west, south, east, north to match the standard bounding box
+/// convention used by GeoJSON and PMTiles (min longitude, min latitude, max longitude, max latitude),
+/// so the box can drive an offline map extract directly.
+/// All coordinates are in degrees scaled by 1e-7 (same convention as Position and Waypoint).
+public struct BoundingBox: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  ///
+  /// Western edge of the box - minimum longitude (south-west corner)
+  public var longitudeWestI: Int32 = 0
+
+  ///
+  /// Southern edge of the box - minimum latitude (south-west corner)
+  public var latitudeSouthI: Int32 = 0
+
+  ///
+  /// Eastern edge of the box - maximum longitude (north-east corner)
+  public var longitudeEastI: Int32 = 0
+
+  ///
+  /// Northern edge of the box - maximum latitude (north-east corner)
+  public var latitudeNorthI: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+///
 /// Waypoint message, used to share arbitrary locations across the mesh
 public struct Waypoint: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2292,22 +2683,22 @@ public struct Waypoint: Sendable {
   ///
   /// latitude_i
   public var latitudeI: Int32 {
-    get {return _latitudeI ?? 0}
+    get {_latitudeI ?? 0}
     set {_latitudeI = newValue}
   }
   /// Returns true if `latitudeI` has been explicitly set.
-  public var hasLatitudeI: Bool {return self._latitudeI != nil}
+  public var hasLatitudeI: Bool {self._latitudeI != nil}
   /// Clears the value of `latitudeI`. Subsequent reads from it will return its default value.
   public mutating func clearLatitudeI() {self._latitudeI = nil}
 
   ///
   /// longitude_i
   public var longitudeI: Int32 {
-    get {return _longitudeI ?? 0}
+    get {_longitudeI ?? 0}
     set {_longitudeI = newValue}
   }
   /// Returns true if `longitudeI` has been explicitly set.
-  public var hasLongitudeI: Bool {return self._longitudeI != nil}
+  public var hasLongitudeI: Bool {self._longitudeI != nil}
   /// Clears the value of `longitudeI`. Subsequent reads from it will return its default value.
   public mutating func clearLongitudeI() {self._longitudeI = nil}
 
@@ -2332,12 +2723,48 @@ public struct Waypoint: Sendable {
   /// Designator icon for the waypoint in the form of a unicode emoji
   public var icon: UInt32 = 0
 
+  ///
+  /// If greater than zero, defines a circular geofence centred on this waypoint's
+  /// location (latitude_i / longitude_i) with this radius in meters.
+  /// Zero means the waypoint has no circular geofence.
+  public var geofenceRadius: UInt32 = 0
+
+  ///
+  /// Optional rectangular geofence region for this waypoint.
+  /// May be used instead of, or in addition to, geofence_radius.
+  public var boundingBox: BoundingBox {
+    get {_boundingBox ?? BoundingBox()}
+    set {_boundingBox = newValue}
+  }
+  /// Returns true if `boundingBox` has been explicitly set.
+  public var hasBoundingBox: Bool {self._boundingBox != nil}
+  /// Clears the value of `boundingBox`. Subsequent reads from it will return its default value.
+  public mutating func clearBoundingBox() {self._boundingBox = nil}
+
+  ///
+  /// If true, a notification should be raised when a tracked node enters this
+  /// waypoint's geofence (the circular radius and/or the bounding box).
+  public var notifyOnEnter: Bool = false
+
+  ///
+  /// If true, a notification should be raised when a tracked node exits this
+  /// waypoint's geofence (the circular radius and/or the bounding box).
+  public var notifyOnExit: Bool = false
+
+  ///
+  /// If true, only raise geofence enter/exit notifications for nodes that are
+  /// marked as favorites on the receiving device. Applies to both notify_on_enter
+  /// and notify_on_exit. Favorite status is resolved locally per receiver, so the
+  /// same waypoint alerts each node only for its own favorites.
+  public var notifyFavoritesOnly: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _latitudeI: Int32? = nil
   fileprivate var _longitudeI: Int32? = nil
+  fileprivate var _boundingBox: BoundingBox? = nil
 }
 
 ///
@@ -2424,7 +2851,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// Note: Our crypto implementation uses this field as well.
   /// See [crypto](/docs/overview/encryption) for details.
   public var from: UInt32 {
-    get {return _storage._from}
+    get {_storage._from}
     set {_uniqueStorage()._from = newValue}
   }
 
@@ -2435,7 +2862,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// If the value is another, this indicates that the packet was destined for a specific
   /// node (i.e. a kind of "Direct Message" to this node) and not broadcast on a channel.
   public var to: UInt32 {
-    get {return _storage._to}
+    get {_storage._to}
     set {_uniqueStorage()._to = newValue}
   }
 
@@ -2448,7 +2875,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// contains the 'channel hash' instead of the index.
   /// This 'trick' is only used while the payload_variant is an 'encrypted'.
   public var channel: UInt32 {
-    get {return _storage._channel}
+    get {_storage._channel}
     set {_uniqueStorage()._channel = newValue}
   }
 
@@ -2487,7 +2914,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// Note: Our crypto implementation uses this id as well.
   /// See [crypto](/docs/overview/encryption) for details.
   public var id: UInt32 {
-    get {return _storage._id}
+    get {_storage._id}
     set {_uniqueStorage()._id = newValue}
   }
 
@@ -2496,17 +2923,27 @@ public struct MeshPacket: @unchecked Sendable {
   /// Note: this field is _never_ sent on the radio link itself (to save space) Times
   /// are typically not sent over the mesh, but they will be added to any Packet
   /// (chain of SubPacket) sent to the phone (so the phone can know exact time of reception)
+  /// Explicit presence: firmware cannot always attach a trustworthy wall-clock timestamp at the
+  /// moment of reception - a node with no GPS and no phone connected yet has no time source at
+  /// all. has_rx_time disambiguates that state from a genuine (if coincidental) 1970-01-01
+  /// reading. A packet delivered with this field absent may still be re-timestamped once a valid
+  /// clock becomes available, before the phone ever sees it - "absent" is not guaranteed
+  /// permanent, only "not yet known at last observation".
   public var rxTime: UInt32 {
-    get {return _storage._rxTime}
+    get {_storage._rxTime ?? 0}
     set {_uniqueStorage()._rxTime = newValue}
   }
+  /// Returns true if `rxTime` has been explicitly set.
+  public var hasRxTime: Bool {_storage._rxTime != nil}
+  /// Clears the value of `rxTime`. Subsequent reads from it will return its default value.
+  public mutating func clearRxTime() {_uniqueStorage()._rxTime = nil}
 
   ///
   /// *Never* sent over the radio links.
   /// Set during reception to indicate the SNR of this packet.
   /// Used to collect statistics on current link quality.
   public var rxSnr: Float {
-    get {return _storage._rxSnr}
+    get {_storage._rxSnr}
     set {_uniqueStorage()._rxSnr = newValue}
   }
 
@@ -2516,7 +2953,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// For our usecase real world topologies probably have a max of about 3.
   /// This field is normally placed into a few of bits in the header.
   public var hopLimit: UInt32 {
-    get {return _storage._hopLimit}
+    get {_storage._hopLimit}
     set {_uniqueStorage()._hopLimit = newValue}
   }
 
@@ -2531,7 +2968,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// If after some time we don't hear anyone rebroadcast our packet, we will timeout and retransmit, using the regular resend logic.
   /// Note: This flag is normally sent in a flag bit in the header when sent over the wire
   public var wantAck: Bool {
-    get {return _storage._wantAck}
+    get {_storage._wantAck}
     set {_uniqueStorage()._wantAck = newValue}
   }
 
@@ -2539,52 +2976,63 @@ public struct MeshPacket: @unchecked Sendable {
   /// The priority of this message for sending.
   /// See MeshPacket.Priority description for more details.
   public var priority: MeshPacket.Priority {
-    get {return _storage._priority}
+    get {_storage._priority}
     set {_uniqueStorage()._priority = newValue}
   }
 
   ///
   /// rssi of received packet. Only sent to phone for dispay purposes.
+  /// Explicit presence: rssi 0 is a legitimate reading on some radios (SX126x can report exactly
+  /// 0 dBm; SX127x's formula can even go positive). has_rx_rssi disambiguates; a replayed packet
+  /// built from history should leave this field absent rather than emitting 0.
   public var rxRssi: Int32 {
-    get {return _storage._rxRssi}
+    get {_storage._rxRssi ?? 0}
     set {_uniqueStorage()._rxRssi = newValue}
   }
+  /// Returns true if `rxRssi` has been explicitly set.
+  public var hasRxRssi: Bool {_storage._rxRssi != nil}
+  /// Clears the value of `rxRssi`. Subsequent reads from it will return its default value.
+  public mutating func clearRxRssi() {_uniqueStorage()._rxRssi = nil}
 
   ///
   /// Describe if this message is delayed
   ///
   /// NOTE: This field was marked as deprecated in the .proto file.
   public var delayed: MeshPacket.Delayed {
-    get {return _storage._delayed}
+    get {_storage._delayed}
     set {_uniqueStorage()._delayed = newValue}
   }
 
   ///
   /// Describes whether this packet passed via MQTT somewhere along the path it currently took.
   public var viaMqtt: Bool {
-    get {return _storage._viaMqtt}
+    get {_storage._viaMqtt}
     set {_uniqueStorage()._viaMqtt = newValue}
   }
 
   ///
   /// Hop limit with which the original packet started. Sent via LoRa using three bits in the unencrypted header.
   /// When receiving a packet, the difference between hop_start and hop_limit gives how many hops it traveled.
+  /// hop_start == 0 does not necessarily mean a direct (0-hop) neighbor: firmware prior to 2.3.0
+  /// never populated this field, so a receiver can only trust hop_start == 0 as genuine once it has
+  /// decoded the packet and confirmed the sender's bitfield is present (added in 2.5.0). Until then,
+  /// or for a sender that never sets that bitfield, treat hop_start == 0 as unknown, not direct.
   public var hopStart: UInt32 {
-    get {return _storage._hopStart}
+    get {_storage._hopStart}
     set {_uniqueStorage()._hopStart = newValue}
   }
 
   ///
   /// Records the public key the packet was encrypted with, if applicable.
   public var publicKey: Data {
-    get {return _storage._publicKey}
+    get {_storage._publicKey}
     set {_uniqueStorage()._publicKey = newValue}
   }
 
   ///
   /// Indicates whether the packet was en/decrypted using PKI
   public var pkiEncrypted: Bool {
-    get {return _storage._pkiEncrypted}
+    get {_storage._pkiEncrypted}
     set {_uniqueStorage()._pkiEncrypted = newValue}
   }
 
@@ -2592,7 +3040,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// Last byte of the node number of the node that should be used as the next hop in routing.
   /// Set by the firmware internally, clients are not supposed to set this.
   public var nextHop: UInt32 {
-    get {return _storage._nextHop}
+    get {_storage._nextHop}
     set {_uniqueStorage()._nextHop = newValue}
   }
 
@@ -2600,7 +3048,7 @@ public struct MeshPacket: @unchecked Sendable {
   /// Last byte of the node number of the node that will relay/relayed this packet.
   /// Set by the firmware internally, clients are not supposed to set this.
   public var relayNode: UInt32 {
-    get {return _storage._relayNode}
+    get {_storage._relayNode}
     set {_uniqueStorage()._relayNode = newValue}
   }
 
@@ -2609,15 +3057,37 @@ public struct MeshPacket: @unchecked Sendable {
   /// Timestamp after which this packet may be sent.
   /// Set by the firmware internally, clients are not supposed to set this.
   public var txAfter: UInt32 {
-    get {return _storage._txAfter}
+    get {_storage._txAfter}
     set {_uniqueStorage()._txAfter = newValue}
   }
 
   ///
   /// Indicates which transport mechanism this packet arrived over
   public var transportMechanism: MeshPacket.TransportMechanism {
-    get {return _storage._transportMechanism}
+    get {_storage._transportMechanism}
     set {_uniqueStorage()._transportMechanism = newValue}
+  }
+
+  ///
+  /// Indicates whether the packet has a valid signature
+  public var xeddsaSigned: Bool {
+    get {_storage._xeddsaSigned}
+    set {_uniqueStorage()._xeddsaSigned = newValue}
+  }
+
+  ///
+  /// *Never* sent over the radio links.
+  /// Set by the firmware on a received ack or nak, reporting whether its Routing.ack_proof proved
+  /// that the node we addressed is the one acknowledging. Clients are not supposed to set this, and
+  /// the firmware clears whatever arrives here before evaluating a packet - an inbound value is
+  /// attacker-controlled, since MQTT and the client API both carry whole MeshPacket protobufs.
+  ///
+  /// Distinct from xeddsa_signed, which is an identity signature any holder of the sender's public
+  /// key can check. This is a pairwise MAC that only the original sender can check, and it attests
+  /// to delivery rather than to authorship.
+  public var ackProofStatus: MeshPacket.AckProofStatus {
+    get {_storage._ackProofStatus}
+    set {_uniqueStorage()._ackProofStatus = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2836,6 +3306,10 @@ public struct MeshPacket: @unchecked Sendable {
     ///
     /// Arrived via API connection
     case transportApi // = 7
+
+    ///
+    /// Arrived via Unicast UDP
+    case transportUnicastUdp // = 8
     case UNRECOGNIZED(Int)
 
     public init() {
@@ -2852,6 +3326,7 @@ public struct MeshPacket: @unchecked Sendable {
       case 5: self = .transportMqtt
       case 6: self = .transportMulticastUdp
       case 7: self = .transportApi
+      case 8: self = .transportUnicastUdp
       default: self = .UNRECOGNIZED(rawValue)
       }
     }
@@ -2866,6 +3341,7 @@ public struct MeshPacket: @unchecked Sendable {
       case .transportMqtt: return 5
       case .transportMulticastUdp: return 6
       case .transportApi: return 7
+      case .transportUnicastUdp: return 8
       case .UNRECOGNIZED(let i): return i
       }
     }
@@ -2880,6 +3356,82 @@ public struct MeshPacket: @unchecked Sendable {
       .transportMqtt,
       .transportMulticastUdp,
       .transportApi,
+      .transportUnicastUdp,
+    ]
+
+  }
+
+  ///
+  /// Outcome of checking Routing.ack_proof on a received ack or nak.
+  ///
+  /// Reported, never enforced: an ack without a usable proof is acted on exactly as it was before
+  /// proofs existed. The value exists so a client can tell a proven delivery receipt from an
+  /// unproven one, and can tell "nobody proved this" from "somebody tried and failed".
+  public enum AckProofStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    ///
+    /// No verdict. The default, and what every ack from firmware predating Routing.ack_proof looks
+    /// like, so an absent field and an absent proof read the same.
+    ///
+    /// Also reported when a proof was carried but not checked: the ack came from a node other than
+    /// the one the packet was addressed to (a nak from an intermediate, for example), the packet was
+    /// no longer awaiting an ack, or the proof was malformed. A build without PKI never checks one.
+    /// A proof is only checked while the packet it acknowledges is still pending, so on a multi-hop
+    /// path an overheard relay can settle the packet first and leave a genuine receipt reading ABSENT.
+    case ackProofAbsent // = 0
+
+    ///
+    /// A proof was carried and verified against the public key of the node the acknowledged packet
+    /// was addressed to. The only value that means "the recipient received it".
+    ///
+    /// Verifying against the key of whoever the ack claims to be from is NOT sufficient: the proof
+    /// only shows its author holds a pairwise secret with us, and every keyed peer holds one, so
+    /// any of them could otherwise mint a receipt for a packet addressed to someone else.
+    case ackProofValid // = 1
+
+    ///
+    /// A proof was carried and did not verify. Someone produced an ack for an outstanding packet
+    /// without holding the pairwise secret, so this is an attempted forgery rather than a quiet
+    /// absence, and is worth surfacing differently from ACK_PROOF_ABSENT.
+    case ackProofInvalid // = 2
+
+    ///
+    /// A proof was carried but no authoritative public key was available to check it against, so
+    /// the ack is neither proven nor disproven.
+    case ackProofNoKey // = 3
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .ackProofAbsent
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .ackProofAbsent
+      case 1: self = .ackProofValid
+      case 2: self = .ackProofInvalid
+      case 3: self = .ackProofNoKey
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .ackProofAbsent: return 0
+      case .ackProofValid: return 1
+      case .ackProofInvalid: return 2
+      case .ackProofNoKey: return 3
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [MeshPacket.AckProofStatus] = [
+      .ackProofAbsent,
+      .ackProofValid,
+      .ackProofInvalid,
+      .ackProofNoKey,
     ]
 
   }
@@ -2914,18 +3466,18 @@ public struct NodeInfo: @unchecked Sendable {
   ///
   /// The node number
   public var num: UInt32 {
-    get {return _storage._num}
+    get {_storage._num}
     set {_uniqueStorage()._num = newValue}
   }
 
   ///
   /// The user info for this node
   public var user: User {
-    get {return _storage._user ?? User()}
+    get {_storage._user ?? User()}
     set {_uniqueStorage()._user = newValue}
   }
   /// Returns true if `user` has been explicitly set.
-  public var hasUser: Bool {return _storage._user != nil}
+  public var hasUser: Bool {_storage._user != nil}
   /// Clears the value of `user`. Subsequent reads from it will return its default value.
   public mutating func clearUser() {_uniqueStorage()._user = nil}
 
@@ -2933,11 +3485,11 @@ public struct NodeInfo: @unchecked Sendable {
   /// This position data. Note: before 1.2.14 we would also store the last time we've heard from this node in position.time, that is no longer true.
   /// Position.time now indicates the last time we received a POSITION from that node.
   public var position: Position {
-    get {return _storage._position ?? Position()}
+    get {_storage._position ?? Position()}
     set {_uniqueStorage()._position = newValue}
   }
   /// Returns true if `position` has been explicitly set.
-  public var hasPosition: Bool {return _storage._position != nil}
+  public var hasPosition: Bool {_storage._position != nil}
   /// Clears the value of `position`. Subsequent reads from it will return its default value.
   public mutating func clearPosition() {_uniqueStorage()._position = nil}
 
@@ -2945,50 +3497,50 @@ public struct NodeInfo: @unchecked Sendable {
   /// Returns the Signal-to-noise ratio (SNR) of the last received message,
   /// as measured by the receiver. Return SNR of the last received message in dB
   public var snr: Float {
-    get {return _storage._snr}
+    get {_storage._snr}
     set {_uniqueStorage()._snr = newValue}
   }
 
   ///
   /// Set to indicate the last time we received a packet from this node
   public var lastHeard: UInt32 {
-    get {return _storage._lastHeard}
+    get {_storage._lastHeard}
     set {_uniqueStorage()._lastHeard = newValue}
   }
 
   ///
   /// The latest device metrics for the node.
   public var deviceMetrics: DeviceMetrics {
-    get {return _storage._deviceMetrics ?? DeviceMetrics()}
+    get {_storage._deviceMetrics ?? DeviceMetrics()}
     set {_uniqueStorage()._deviceMetrics = newValue}
   }
   /// Returns true if `deviceMetrics` has been explicitly set.
-  public var hasDeviceMetrics: Bool {return _storage._deviceMetrics != nil}
+  public var hasDeviceMetrics: Bool {_storage._deviceMetrics != nil}
   /// Clears the value of `deviceMetrics`. Subsequent reads from it will return its default value.
   public mutating func clearDeviceMetrics() {_uniqueStorage()._deviceMetrics = nil}
 
   ///
   /// local channel index we heard that node on. Only populated if its not the default channel.
   public var channel: UInt32 {
-    get {return _storage._channel}
+    get {_storage._channel}
     set {_uniqueStorage()._channel = newValue}
   }
 
   ///
   /// True if we witnessed the node over MQTT instead of LoRA transport
   public var viaMqtt: Bool {
-    get {return _storage._viaMqtt}
+    get {_storage._viaMqtt}
     set {_uniqueStorage()._viaMqtt = newValue}
   }
 
   ///
   /// Number of hops away from us this node is (0 if direct neighbor)
   public var hopsAway: UInt32 {
-    get {return _storage._hopsAway ?? 0}
+    get {_storage._hopsAway ?? 0}
     set {_uniqueStorage()._hopsAway = newValue}
   }
   /// Returns true if `hopsAway` has been explicitly set.
-  public var hasHopsAway: Bool {return _storage._hopsAway != nil}
+  public var hasHopsAway: Bool {_storage._hopsAway != nil}
   /// Clears the value of `hopsAway`. Subsequent reads from it will return its default value.
   public mutating func clearHopsAway() {_uniqueStorage()._hopsAway = nil}
 
@@ -2996,7 +3548,7 @@ public struct NodeInfo: @unchecked Sendable {
   /// True if node is in our favorites list
   /// Persists between NodeDB internal clean ups
   public var isFavorite: Bool {
-    get {return _storage._isFavorite}
+    get {_storage._isFavorite}
     set {_uniqueStorage()._isFavorite = newValue}
   }
 
@@ -3004,7 +3556,7 @@ public struct NodeInfo: @unchecked Sendable {
   /// True if node is in our ignored list
   /// Persists between NodeDB internal clean ups
   public var isIgnored: Bool {
-    get {return _storage._isIgnored}
+    get {_storage._isIgnored}
     set {_uniqueStorage()._isIgnored = newValue}
   }
 
@@ -3013,7 +3565,7 @@ public struct NodeInfo: @unchecked Sendable {
   /// Persists between NodeDB internal clean ups
   /// LSB 0 of the bitfield
   public var isKeyManuallyVerified: Bool {
-    get {return _storage._isKeyManuallyVerified}
+    get {_storage._isKeyManuallyVerified}
     set {_uniqueStorage()._isKeyManuallyVerified = newValue}
   }
 
@@ -3021,8 +3573,37 @@ public struct NodeInfo: @unchecked Sendable {
   /// True if node has been muted
   /// Persistes between NodeDB internal clean ups
   public var isMuted: Bool {
-    get {return _storage._isMuted}
+    get {_storage._isMuted}
     set {_uniqueStorage()._isMuted = newValue}
+  }
+
+  ///
+  /// True if node is signing its packets via XEdDSA
+  /// Persists between NodeDB internal clean ups
+  /// LSB 1 of the bitfield
+  public var hasXeddsaSigned_p: Bool {
+    get {_storage._hasXeddsaSigned_p}
+    set {_uniqueStorage()._hasXeddsaSigned_p = newValue}
+  }
+
+  ///
+  /// True if we have heard this node over RF on the LoRa configuration the
+  /// radio is using right now. Derived on the device rather than stored: each
+  /// node records the frequency slot it was last heard on, and this reports
+  /// whether that slot matches the one the radio is currently committed to.
+  /// The slot covers the region, modem preset (or the custom bandwidth/spread
+  /// factor/coding rate when use_preset is false), override_frequency,
+  /// channel_num and the primary channel name.
+  /// Because it is derived, leaving a configuration and returning to it
+  /// restores the previous answers, so a client sweeping through presets to
+  /// listen for traffic does not disturb them.
+  /// Not set for nodes heard only over MQTT, which reach us over the internet
+  /// rather than over our own radio - see via_mqtt - nor for nodes added as a
+  /// shared contact, which have never been heard over RF at all.
+  /// Derived from LSB 11 and bits 12..23 of NodeInfoLite.bitfield.
+  public var heardOnCurrentLora: Bool {
+    get {_storage._heardOnCurrentLora}
+    set {_uniqueStorage()._heardOnCurrentLora = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -3214,7 +3795,7 @@ public struct QueueStatus: Sendable {
 /// It will support READ and NOTIFY. When a new packet arrives the device will BLE notify?
 /// It will sit in that descriptor until consumed by the phone,
 /// at which point the next item in the FIFO will be populated.
-public struct FromRadio: Sendable {
+public struct FromRadio: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3222,20 +3803,26 @@ public struct FromRadio: Sendable {
   ///
   /// The packet id, used to allow the phone to request missing read packets from the FIFO,
   /// see our bluetooth docs
-  public var id: UInt32 = 0
+  public var id: UInt32 {
+    get {_storage._id}
+    set {_uniqueStorage()._id = newValue}
+  }
 
   ///
   /// Log levels, chosen to match python logging conventions.
-  public var payloadVariant: FromRadio.OneOf_PayloadVariant? = nil
+  public var payloadVariant: OneOf_PayloadVariant? {
+    get {return _storage._payloadVariant}
+    set {_uniqueStorage()._payloadVariant = newValue}
+  }
 
   ///
   /// Log levels, chosen to match python logging conventions.
   public var packet: MeshPacket {
     get {
-      if case .packet(let v)? = payloadVariant {return v}
+      if case .packet(let v)? = _storage._payloadVariant {return v}
       return MeshPacket()
     }
-    set {payloadVariant = .packet(newValue)}
+    set {_uniqueStorage()._payloadVariant = .packet(newValue)}
   }
 
   ///
@@ -3243,10 +3830,10 @@ public struct FromRadio: Sendable {
   /// NOTE: This ID must not change - to keep (minimal) compatibility with <1.2 version of android apps.
   public var myInfo: MyNodeInfo {
     get {
-      if case .myInfo(let v)? = payloadVariant {return v}
+      if case .myInfo(let v)? = _storage._payloadVariant {return v}
       return MyNodeInfo()
     }
-    set {payloadVariant = .myInfo(newValue)}
+    set {_uniqueStorage()._payloadVariant = .myInfo(newValue)}
   }
 
   ///
@@ -3254,30 +3841,30 @@ public struct FromRadio: Sendable {
   /// starts over with the first node in our DB
   public var nodeInfo: NodeInfo {
     get {
-      if case .nodeInfo(let v)? = payloadVariant {return v}
+      if case .nodeInfo(let v)? = _storage._payloadVariant {return v}
       return NodeInfo()
     }
-    set {payloadVariant = .nodeInfo(newValue)}
+    set {_uniqueStorage()._payloadVariant = .nodeInfo(newValue)}
   }
 
   ///
   /// Include a part of the config (was: RadioConfig radio)
   public var config: Config {
     get {
-      if case .config(let v)? = payloadVariant {return v}
+      if case .config(let v)? = _storage._payloadVariant {return v}
       return Config()
     }
-    set {payloadVariant = .config(newValue)}
+    set {_uniqueStorage()._payloadVariant = .config(newValue)}
   }
 
   ///
   /// Set to send debug console output over our protobuf stream
   public var logRecord: LogRecord {
     get {
-      if case .logRecord(let v)? = payloadVariant {return v}
+      if case .logRecord(let v)? = _storage._payloadVariant {return v}
       return LogRecord()
     }
-    set {payloadVariant = .logRecord(newValue)}
+    set {_uniqueStorage()._payloadVariant = .logRecord(newValue)}
   }
 
   ///
@@ -3287,10 +3874,10 @@ public struct FromRadio: Sendable {
   /// NOTE: This ID must not change - to keep (minimal) compatibility with <1.2 version of android apps.
   public var configCompleteID: UInt32 {
     get {
-      if case .configCompleteID(let v)? = payloadVariant {return v}
+      if case .configCompleteID(let v)? = _storage._payloadVariant {return v}
       return 0
     }
-    set {payloadVariant = .configCompleteID(newValue)}
+    set {_uniqueStorage()._payloadVariant = .configCompleteID(newValue)}
   }
 
   ///
@@ -3300,100 +3887,128 @@ public struct FromRadio: Sendable {
   /// NOTE: This ID must not change - to keep (minimal) compatibility with <1.2 version of android apps.
   public var rebooted: Bool {
     get {
-      if case .rebooted(let v)? = payloadVariant {return v}
+      if case .rebooted(let v)? = _storage._payloadVariant {return v}
       return false
     }
-    set {payloadVariant = .rebooted(newValue)}
+    set {_uniqueStorage()._payloadVariant = .rebooted(newValue)}
   }
 
   ///
   /// Include module config
   public var moduleConfig: ModuleConfig {
     get {
-      if case .moduleConfig(let v)? = payloadVariant {return v}
+      if case .moduleConfig(let v)? = _storage._payloadVariant {return v}
       return ModuleConfig()
     }
-    set {payloadVariant = .moduleConfig(newValue)}
+    set {_uniqueStorage()._payloadVariant = .moduleConfig(newValue)}
   }
 
   ///
   /// One packet is sent for each channel
   public var channel: Channel {
     get {
-      if case .channel(let v)? = payloadVariant {return v}
+      if case .channel(let v)? = _storage._payloadVariant {return v}
       return Channel()
     }
-    set {payloadVariant = .channel(newValue)}
+    set {_uniqueStorage()._payloadVariant = .channel(newValue)}
   }
 
   ///
   /// Queue status info
   public var queueStatus: QueueStatus {
     get {
-      if case .queueStatus(let v)? = payloadVariant {return v}
+      if case .queueStatus(let v)? = _storage._payloadVariant {return v}
       return QueueStatus()
     }
-    set {payloadVariant = .queueStatus(newValue)}
+    set {_uniqueStorage()._payloadVariant = .queueStatus(newValue)}
   }
 
   ///
   /// File Transfer Chunk
   public var xmodemPacket: XModem {
     get {
-      if case .xmodemPacket(let v)? = payloadVariant {return v}
+      if case .xmodemPacket(let v)? = _storage._payloadVariant {return v}
       return XModem()
     }
-    set {payloadVariant = .xmodemPacket(newValue)}
+    set {_uniqueStorage()._payloadVariant = .xmodemPacket(newValue)}
   }
 
   ///
   /// Device metadata message
   public var metadata: DeviceMetadata {
     get {
-      if case .metadata(let v)? = payloadVariant {return v}
+      if case .metadata(let v)? = _storage._payloadVariant {return v}
       return DeviceMetadata()
     }
-    set {payloadVariant = .metadata(newValue)}
+    set {_uniqueStorage()._payloadVariant = .metadata(newValue)}
   }
 
   ///
   /// MQTT Client Proxy Message (device sending to client / phone for publishing to MQTT)
   public var mqttClientProxyMessage: MqttClientProxyMessage {
     get {
-      if case .mqttClientProxyMessage(let v)? = payloadVariant {return v}
+      if case .mqttClientProxyMessage(let v)? = _storage._payloadVariant {return v}
       return MqttClientProxyMessage()
     }
-    set {payloadVariant = .mqttClientProxyMessage(newValue)}
+    set {_uniqueStorage()._payloadVariant = .mqttClientProxyMessage(newValue)}
   }
 
   ///
   /// File system manifest messages
   public var fileInfo: FileInfo {
     get {
-      if case .fileInfo(let v)? = payloadVariant {return v}
+      if case .fileInfo(let v)? = _storage._payloadVariant {return v}
       return FileInfo()
     }
-    set {payloadVariant = .fileInfo(newValue)}
+    set {_uniqueStorage()._payloadVariant = .fileInfo(newValue)}
   }
 
   ///
   /// Notification message to the client
   public var clientNotification: ClientNotification {
     get {
-      if case .clientNotification(let v)? = payloadVariant {return v}
+      if case .clientNotification(let v)? = _storage._payloadVariant {return v}
       return ClientNotification()
     }
-    set {payloadVariant = .clientNotification(newValue)}
+    set {_uniqueStorage()._payloadVariant = .clientNotification(newValue)}
   }
 
   ///
   /// Persistent data for device-ui
   public var deviceuiConfig: DeviceUIConfig {
     get {
-      if case .deviceuiConfig(let v)? = payloadVariant {return v}
+      if case .deviceuiConfig(let v)? = _storage._payloadVariant {return v}
       return DeviceUIConfig()
     }
-    set {payloadVariant = .deviceuiConfig(newValue)}
+    set {_uniqueStorage()._payloadVariant = .deviceuiConfig(newValue)}
+  }
+
+  ///
+  /// Lockdown state notification for hardened firmware builds.
+  /// Sent post-config (so unauthorized clients learn they must
+  /// provision/unlock) and after each LockdownAuth admin command
+  /// to report success or failure. Replaces the earlier scheme of
+  /// encoding state as magic-string prefixes inside ClientNotification.
+  public var lockdownStatus: LockdownStatus {
+    get {
+      if case .lockdownStatus(let v)? = _storage._payloadVariant {return v}
+      return LockdownStatus()
+    }
+    set {_uniqueStorage()._payloadVariant = .lockdownStatus(newValue)}
+  }
+
+  ///
+  /// Map of which modem presets are legal in each LoRa region. Sent once
+  /// during the want_config handshake (right after `metadata`, before the
+  /// first `channel`) so client UIs can prevent the user from selecting an
+  /// illegal region+preset combination. A region that does not appear in
+  /// any group carries no constraint info and should not be restricted.
+  public var regionPresets: LoRaRegionPresetMap {
+    get {
+      if case .regionPresets(let v)? = _storage._payloadVariant {return v}
+      return LoRaRegionPresetMap()
+    }
+    set {_uniqueStorage()._payloadVariant = .regionPresets(newValue)}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -3457,6 +4072,149 @@ public struct FromRadio: Sendable {
     ///
     /// Persistent data for device-ui
     case deviceuiConfig(DeviceUIConfig)
+    ///
+    /// Lockdown state notification for hardened firmware builds.
+    /// Sent post-config (so unauthorized clients learn they must
+    /// provision/unlock) and after each LockdownAuth admin command
+    /// to report success or failure. Replaces the earlier scheme of
+    /// encoding state as magic-string prefixes inside ClientNotification.
+    case lockdownStatus(LockdownStatus)
+    ///
+    /// Map of which modem presets are legal in each LoRa region. Sent once
+    /// during the want_config handshake (right after `metadata`, before the
+    /// first `channel`) so client UIs can prevent the user from selecting an
+    /// illegal region+preset combination. A region that does not appear in
+    /// any group carries no constraint info and should not be restricted.
+    case regionPresets(LoRaRegionPresetMap)
+
+  }
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+///
+/// Lockdown state report from firmware to client (for hardened builds
+/// with MESHTASTIC_LOCKDOWN). Sent immediately after config_complete_id
+/// to inform a freshly-connected unauthorized client what it must do,
+/// and again in response to each LockdownAuth admin command.
+public struct LockdownStatus: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Current lockdown state being reported. 
+  public var state: LockdownStatus.State = .unspecified
+
+  ///
+  /// For LOCKED: machine-readable reason. Known values:
+  ///   "needs_auth"        - storage already unlocked, client must auth
+  ///   "token_missing"     - no boot token on flash
+  ///   "token_expired"     - boot token wall-clock TTL elapsed
+  ///   "token_boots_zero"  - boot token boot-count TTL exhausted
+  ///   "token_hmac_fail"   - token tampered or wrong device
+  ///   "token_dek_fail"    - token DEK decrypt failed
+  ///   "token_wrong_size"  - token file corrupted
+  ///   "token_bad_magic"   - token file corrupted
+  ///   "not_provisioned"   - should generally use NEEDS_PROVISION state instead
+  /// Other values may be added; clients should treat unknown values as
+  /// "locked, ask for passphrase".
+  public var lockReason: String = String()
+
+  ///
+  /// For UNLOCKED: remaining boots on the issued session token.
+  /// Decrements by 1 on each subsequent boot.
+  public var bootsRemaining: UInt32 = 0
+
+  ///
+  /// For UNLOCKED: wall-clock expiry of the issued session token,
+  /// absolute Unix-epoch seconds. 0 = no time limit.
+  public var validUntilEpoch: UInt32 = 0
+
+  ///
+  /// For UNLOCK_FAILED: seconds the client must wait before another
+  /// passphrase attempt will be accepted. 0 = wrong passphrase, no
+  /// backoff (immediate retry allowed but advisable to prompt user).
+  public var backoffSeconds: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public enum State: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    /// Default; should not be sent. 
+    case unspecified // = 0
+
+    ///
+    /// No passphrase has ever been provisioned on this device.
+    /// Client should prompt the operator to set one.
+    case needsProvision // = 1
+
+    ///
+    /// Storage is locked or this client has not authenticated yet.
+    /// lock_reason carries a machine-readable detail string.
+    /// Client should present (or auto-replay) a passphrase via
+    /// AdminMessage.lockdown_auth.
+    case locked // = 2
+
+    ///
+    /// Passphrase accepted; client is now authorized for this connection.
+    /// boots_remaining and valid_until_epoch describe the active session
+    /// token's TTL.
+    case unlocked // = 3
+
+    ///
+    /// Passphrase rejected. backoff_seconds is non-zero when rate-limited.
+    case unlockFailed // = 4
+
+    ///
+    /// Lockdown is supported by this firmware but not currently active
+    /// (no passphrase has been provisioned, or it was disabled via
+    /// AdminMessage.lockdown_auth.disable). The device is operating in
+    /// normal, non-encrypted mode. Clients render the lockdown-mode
+    /// toggle as OFF on receiving this. Distinct from NEEDS_PROVISION,
+    /// which is only used during an in-progress enable flow.
+    case disabled // = 5
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .needsProvision
+      case 2: self = .locked
+      case 3: self = .unlocked
+      case 4: self = .unlockFailed
+      case 5: self = .disabled
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .needsProvision: return 1
+      case .locked: return 2
+      case .unlocked: return 3
+      case .unlockFailed: return 4
+      case .disabled: return 5
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [LockdownStatus.State] = [
+      .unspecified,
+      .needsProvision,
+      .locked,
+      .unlocked,
+      .unlockFailed,
+      .disabled,
+    ]
 
   }
 
@@ -3476,11 +4234,11 @@ public struct ClientNotification: Sendable {
   ///
   /// The id of the packet we're notifying in response to
   public var replyID: UInt32 {
-    get {return _replyID ?? 0}
+    get {_replyID ?? 0}
     set {_replyID = newValue}
   }
   /// Returns true if `replyID` has been explicitly set.
-  public var hasReplyID: Bool {return self._replyID != nil}
+  public var hasReplyID: Bool {self._replyID != nil}
   /// Clears the value of `replyID`. Subsequent reads from it will return its default value.
   public mutating func clearReplyID() {self._replyID = nil}
 
@@ -3891,6 +4649,93 @@ public struct DeviceMetadata: Sendable {
   /// (bitwise OR of ExcludedModules)
   public var excludedModules: UInt32 = 0
 
+  ///
+  /// Indicates whether this firmware build includes XEdDSA packet signature verification.
+  /// This is a read-only capability and must be false when XEdDSA is not compiled in.
+  public var hasXeddsa_p: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+///
+/// A distinct set of legal modem presets shared by one or more LoRa regions.
+/// Regions that have an identical preset list / default / licensing reference
+/// the same group (by index) via LoRaRegionPresetMap.region_groups. This keeps
+/// the whole map small enough to fit in a single FromRadio packet, since most
+/// regions share the one standard preset list.
+public struct LoRaPresetGroup: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  ///
+  /// The modem presets that are legal for every region referencing this group.
+  public var presets: [Config.LoRaConfig.ModemPreset] = []
+
+  ///
+  /// The firmware's default modem preset for regions in this group.
+  /// Always one of `presets`. Clients should select this when switching to one
+  /// of these regions, or when the current preset is not legal in the new region.
+  public var defaultPreset: Config.LoRaConfig.ModemPreset = .longFast
+
+  ///
+  /// True if regions referencing this group are for licensed operators only
+  /// (e.g. amateur / ham radio bands). Clients should warn or gate accordingly.
+  public var licensedOnly: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+///
+/// Associates a single LoRa region with its preset group.
+public struct LoRaRegionPresets: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  ///
+  /// The LoRa region this entry describes.
+  public var region: Config.LoRaConfig.RegionCode = .unset
+
+  ///
+  /// Index into LoRaRegionPresetMap.groups for the preset list that is legal
+  /// in `region`.
+  public var groupIndex: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+///
+/// Map describing which modem presets are valid for each LoRa region. Sent by
+/// the firmware during the want_config handshake (as FromRadio.region_presets)
+/// so that client UIs can prevent illegal region+preset selections.
+///
+/// Delivery is grouped to save space: `groups` holds each distinct preset list,
+/// and `region_groups` maps every known region to one of those groups by index.
+/// A region that does NOT appear in `region_groups` carries no constraint
+/// information and should not be restricted by the client (e.g. firmware that
+/// predates this message, or a region with no firmware table entry). Clients
+/// must also tolerate this whole message being absent.
+public struct LoRaRegionPresetMap: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  ///
+  /// One entry per distinct (preset-list, default, licensing) combination.
+  /// Referenced by index from `region_groups`.
+  public var groups: [LoRaPresetGroup] = []
+
+  ///
+  /// One entry per known LoRa region, pointing at its preset group.
+  public var regionGroups: [LoRaRegionPresets] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3927,11 +4772,11 @@ public struct NodeRemoteHardwarePin: Sendable {
   ///
   /// The the available gpio pin for usage with RemoteHardware module
   public var pin: RemoteHardwarePin {
-    get {return _pin ?? RemoteHardwarePin()}
+    get {_pin ?? RemoteHardwarePin()}
     set {_pin = newValue}
   }
   /// Returns true if `pin` has been explicitly set.
-  public var hasPin: Bool {return self._pin != nil}
+  public var hasPin: Bool {self._pin != nil}
   /// Clears the value of `pin`. Subsequent reads from it will return its default value.
   public mutating func clearPin() {self._pin = nil}
 
@@ -4048,7 +4893,7 @@ public struct ChunkedPayloadResponse: Sendable {
 fileprivate let _protobuf_package = "meshtastic"
 
 extension HardwareModel: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSET\0\u{1}TLORA_V2\0\u{1}TLORA_V1\0\u{1}TLORA_V2_1_1P6\0\u{1}TBEAM\0\u{1}HELTEC_V2_0\0\u{1}TBEAM_V0P7\0\u{1}T_ECHO\0\u{1}TLORA_V1_1P3\0\u{1}RAK4631\0\u{1}HELTEC_V2_1\0\u{1}HELTEC_V1\0\u{1}LILYGO_TBEAM_S3_CORE\0\u{1}RAK11200\0\u{1}NANO_G1\0\u{1}TLORA_V2_1_1P8\0\u{1}TLORA_T3_S3\0\u{1}NANO_G1_EXPLORER\0\u{1}NANO_G2_ULTRA\0\u{1}LORA_TYPE\0\u{1}WIPHONE\0\u{1}WIO_WM1110\0\u{1}RAK2560\0\u{1}HELTEC_HRU_3601\0\u{1}HELTEC_WIRELESS_BRIDGE\0\u{1}STATION_G1\0\u{1}RAK11310\0\u{1}SENSELORA_RP2040\0\u{1}SENSELORA_S3\0\u{1}CANARYONE\0\u{1}RP2040_LORA\0\u{1}STATION_G2\0\u{1}LORA_RELAY_V1\0\u{1}T_ECHO_PLUS\0\u{1}PPR\0\u{1}GENIEBLOCKS\0\u{1}NRF52_UNKNOWN\0\u{1}PORTDUINO\0\u{1}ANDROID_SIM\0\u{1}DIY_V1\0\u{1}NRF52840_PCA10059\0\u{1}DR_DEV\0\u{1}M5STACK\0\u{1}HELTEC_V3\0\u{1}HELTEC_WSL_V3\0\u{1}BETAFPV_2400_TX\0\u{1}BETAFPV_900_NANO_TX\0\u{1}RPI_PICO\0\u{1}HELTEC_WIRELESS_TRACKER\0\u{1}HELTEC_WIRELESS_PAPER\0\u{1}T_DECK\0\u{1}T_WATCH_S3\0\u{1}PICOMPUTER_S3\0\u{1}HELTEC_HT62\0\u{1}EBYTE_ESP32_S3\0\u{1}ESP32_S3_PICO\0\u{1}CHATTER_2\0\u{1}HELTEC_WIRELESS_PAPER_V1_0\0\u{1}HELTEC_WIRELESS_TRACKER_V1_0\0\u{1}UNPHONE\0\u{1}TD_LORAC\0\u{1}CDEBYTE_EORA_S3\0\u{1}TWC_MESH_V4\0\u{1}NRF52_PROMICRO_DIY\0\u{1}RADIOMASTER_900_BANDIT_NANO\0\u{1}HELTEC_CAPSULE_SENSOR_V3\0\u{1}HELTEC_VISION_MASTER_T190\0\u{1}HELTEC_VISION_MASTER_E213\0\u{1}HELTEC_VISION_MASTER_E290\0\u{1}HELTEC_MESH_NODE_T114\0\u{1}SENSECAP_INDICATOR\0\u{1}TRACKER_T1000_E\0\u{1}RAK3172\0\u{1}WIO_E5\0\u{1}RADIOMASTER_900_BANDIT\0\u{1}ME25LS01_4Y10TD\0\u{1}RP2040_FEATHER_RFM95\0\u{1}M5STACK_COREBASIC\0\u{1}M5STACK_CORE2\0\u{1}RPI_PICO2\0\u{1}M5STACK_CORES3\0\u{1}SEEED_XIAO_S3\0\u{1}MS24SF1\0\u{1}TLORA_C6\0\u{1}WISMESH_TAP\0\u{1}ROUTASTIC\0\u{1}MESH_TAB\0\u{1}MESHLINK\0\u{1}XIAO_NRF52_KIT\0\u{1}THINKNODE_M1\0\u{1}THINKNODE_M2\0\u{1}T_ETH_ELITE\0\u{1}HELTEC_SENSOR_HUB\0\u{1}MUZI_BASE\0\u{1}HELTEC_MESH_POCKET\0\u{1}SEEED_SOLAR_NODE\0\u{1}NOMADSTAR_METEOR_PRO\0\u{1}CROWPANEL\0\u{1}LINK_32\0\u{1}SEEED_WIO_TRACKER_L1\0\u{1}SEEED_WIO_TRACKER_L1_EINK\0\u{1}MUZI_R1_NEO\0\u{1}T_DECK_PRO\0\u{1}T_LORA_PAGER\0\u{1}M5STACK_RESERVED\0\u{1}WISMESH_TAG\0\u{1}RAK3312\0\u{1}THINKNODE_M5\0\u{1}HELTEC_MESH_SOLAR\0\u{1}T_ECHO_LITE\0\u{1}HELTEC_V4\0\u{1}M5STACK_C6L\0\u{1}M5STACK_CARDPUTER_ADV\0\u{1}HELTEC_WIRELESS_TRACKER_V2\0\u{1}T_WATCH_ULTRA\0\u{1}THINKNODE_M3\0\u{1}WISMESH_TAP_V2\0\u{1}RAK3401\0\u{1}RAK6421\0\u{1}THINKNODE_M4\0\u{1}THINKNODE_M6\0\u{1}MESHSTICK_1262\0\u{1}TBEAM_1_WATT\0\u{1}T5_S3_EPAPER_PRO\0\u{1}TBEAM_BPF\0\u{1}MINI_EPAPER_S3\0\u{1}TDISPLAY_S3_PRO\0\u{1}HELTEC_MESH_NODE_T096\0\u{1}TRACKER_T1000_E_PRO\0\u{2}\u{7f}\u{1}PRIVATE_HW\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSET\0\u{1}TLORA_V2\0\u{1}TLORA_V1\0\u{1}TLORA_V2_1_1P6\0\u{1}TBEAM\0\u{1}HELTEC_V2_0\0\u{1}TBEAM_V0P7\0\u{1}T_ECHO\0\u{1}TLORA_V1_1P3\0\u{1}RAK4631\0\u{1}HELTEC_V2_1\0\u{1}HELTEC_V1\0\u{1}LILYGO_TBEAM_S3_CORE\0\u{1}RAK11200\0\u{1}NANO_G1\0\u{1}TLORA_V2_1_1P8\0\u{1}TLORA_T3_S3\0\u{1}NANO_G1_EXPLORER\0\u{1}NANO_G2_ULTRA\0\u{1}LORA_TYPE\0\u{1}WIPHONE\0\u{1}WIO_WM1110\0\u{1}RAK2560\0\u{1}HELTEC_HRU_3601\0\u{1}HELTEC_WIRELESS_BRIDGE\0\u{1}STATION_G1\0\u{1}RAK11310\0\u{1}MAKERFABS_TRACKER\0\u{1}MAKERFABS_RESERVED\0\u{1}CANARYONE\0\u{1}RP2040_LORA\0\u{1}STATION_G2\0\u{1}LORA_RELAY_V1\0\u{1}T_ECHO_PLUS\0\u{1}PPR\0\u{1}GENIEBLOCKS\0\u{1}NRF52_UNKNOWN\0\u{1}PORTDUINO\0\u{1}ANDROID_SIM\0\u{1}DIY_V1\0\u{1}NRF52840_PCA10059\0\u{1}DR_DEV\0\u{1}M5STACK\0\u{1}HELTEC_V3\0\u{1}HELTEC_WSL_V3\0\u{1}BETAFPV_2400_TX\0\u{1}BETAFPV_900_NANO_TX\0\u{1}RPI_PICO\0\u{1}HELTEC_WIRELESS_TRACKER\0\u{1}HELTEC_WIRELESS_PAPER\0\u{1}T_DECK\0\u{1}T_WATCH_S3\0\u{1}PICOMPUTER_S3\0\u{1}HELTEC_HT62\0\u{1}EBYTE_ESP32_S3\0\u{1}ESP32_S3_PICO\0\u{1}CHATTER_2\0\u{1}HELTEC_WIRELESS_PAPER_V1_0\0\u{1}HELTEC_WIRELESS_TRACKER_V1_0\0\u{1}UNPHONE\0\u{1}TD_LORAC\0\u{1}CDEBYTE_EORA_S3\0\u{1}TWC_MESH_V4\0\u{1}NRF52_PROMICRO_DIY\0\u{1}RADIOMASTER_900_BANDIT_NANO\0\u{1}HELTEC_CAPSULE_SENSOR_V3\0\u{1}HELTEC_VISION_MASTER_T190\0\u{1}HELTEC_VISION_MASTER_E213\0\u{1}HELTEC_VISION_MASTER_E290\0\u{1}HELTEC_MESH_NODE_T114\0\u{1}SENSECAP_INDICATOR\0\u{1}TRACKER_T1000_E\0\u{1}RAK3172\0\u{1}WIO_E5\0\u{1}RADIOMASTER_900_BANDIT\0\u{1}ME25LS01_4Y10TD\0\u{1}RP2040_FEATHER_RFM95\0\u{1}M5STACK_COREBASIC\0\u{1}M5STACK_CORE2\0\u{1}RPI_PICO2\0\u{1}M5STACK_CORES3\0\u{1}SEEED_XIAO_S3\0\u{1}MS24SF1\0\u{1}TLORA_C6\0\u{1}WISMESH_TAP\0\u{1}ROUTASTIC\0\u{1}MESH_TAB\0\u{1}MESHLINK\0\u{1}XIAO_NRF52_KIT\0\u{1}THINKNODE_M1\0\u{1}THINKNODE_M2\0\u{1}T_ETH_ELITE\0\u{1}HELTEC_SENSOR_HUB\0\u{1}MUZI_BASE\0\u{1}HELTEC_MESH_POCKET\0\u{1}SEEED_SOLAR_NODE\0\u{1}NOMADSTAR_METEOR_PRO\0\u{1}CROWPANEL\0\u{1}LINK_32\0\u{1}SEEED_WIO_TRACKER_L1\0\u{1}SEEED_WIO_TRACKER_L1_EINK\0\u{1}MUZI_R1_NEO\0\u{1}T_DECK_PRO\0\u{1}T_LORA_PAGER\0\u{1}M5STACK_RESERVED\0\u{1}WISMESH_TAG\0\u{1}RAK3312\0\u{1}THINKNODE_M5\0\u{1}HELTEC_MESH_SOLAR\0\u{1}T_ECHO_LITE\0\u{1}HELTEC_V4\0\u{1}M5STACK_C6L\0\u{1}M5STACK_CARDPUTER_ADV\0\u{1}HELTEC_WIRELESS_TRACKER_V2\0\u{1}T_WATCH_ULTRA\0\u{1}THINKNODE_M3\0\u{1}WISMESH_TAP_V2\0\u{1}RAK3401\0\u{1}RAK6421\0\u{1}THINKNODE_M4\0\u{1}THINKNODE_M6\0\u{1}MESHSTICK_1262\0\u{1}TBEAM_1_WATT\0\u{1}T5_S3_EPAPER_PRO\0\u{1}TBEAM_BPF\0\u{1}MINI_EPAPER_S3\0\u{1}TDISPLAY_S3_PRO\0\u{1}HELTEC_MESH_NODE_T096\0\u{1}MESH_TRACKER_X1\0\u{1}THINKNODE_M7\0\u{1}THINKNODE_M8\0\u{1}THINKNODE_M9\0\u{1}HELTEC_V4_R8\0\u{1}HELTEC_MESH_NODE_T1\0\u{1}STATION_G3\0\u{1}T_IMPULSE_PLUS\0\u{1}T_ECHO_CARD\0\u{1}SEEED_WIO_TRACKER_L2\0\u{1}CROWPANEL_P4\0\u{1}HELTEC_MESH_TOWER_V2\0\u{1}MESHNOLOGY_W10\0\u{1}HELTEC_RC32\0\u{1}HELTEC_RC52\0\u{1}HELTEC_RCC6\0\u{1}SEEED_WIO_TRACKER_L1_PRO_1W\0\u{1}MESHNOLOGY_W12\0\u{1}MESHPAGER_X2\0\u{1}T_CONNECT_PRO\0\u{1}AXIOMETA_GENESIS_MINI\0\u{2}k\u{1}PRIVATE_HW\0")
 }
 
 extension Constants: SwiftProtobuf._ProtoNameProviding {
@@ -4060,11 +4905,11 @@ extension CriticalErrorCode: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension FirmwareEdition: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VANILLA\0\u{1}SMART_CITIZEN\0\u{2}\u{f}OPEN_SAUCE\0\u{1}DEFCON\0\u{1}BURNING_MAN\0\u{1}HAMVENTION\0\u{2}l\u{1}DIY_EDITION\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0VANILLA\0\u{1}SMART_CITIZEN\0\u{2}\u{f}OPEN_SAUCE\0\u{1}DEFCON\0\u{1}BURNING_MAN\0\u{1}HAMVENTION\0\u{1}FAB\0\u{1}DRAGON_CON\0\u{1}CCC\0\u{2}i\u{1}DIY_EDITION\0")
 }
 
 extension ExcludedModules: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EXCLUDED_NONE\0\u{1}MQTT_CONFIG\0\u{1}SERIAL_CONFIG\0\u{2}\u{2}EXTNOTIF_CONFIG\0\u{2}\u{4}STOREFORWARD_CONFIG\0\u{2}\u{8}RANGETEST_CONFIG\0\u{2}\u{10}TELEMETRY_CONFIG\0\u{2} CANNEDMSG_CONFIG\0\u{2}@\u{1}AUDIO_CONFIG\0\u{2}@\u{2}REMOTEHARDWARE_CONFIG\0\u{2}@\u{4}NEIGHBORINFO_CONFIG\0\u{2}@\u{8}AMBIENTLIGHTING_CONFIG\0\u{2}@\u{10}DETECTIONSENSOR_CONFIG\0\u{2}@ PAXCOUNTER_CONFIG\0\u{2}@@\u{1}BLUETOOTH_CONFIG\0\u{2}@@\u{2}NETWORK_CONFIG\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EXCLUDED_NONE\0\u{1}MQTT_CONFIG\0\u{1}SERIAL_CONFIG\0\u{2}\u{2}EXTNOTIF_CONFIG\0\u{2}\u{4}STOREFORWARD_CONFIG\0\u{2}\u{8}RANGETEST_CONFIG\0\u{2}\u{10}TELEMETRY_CONFIG\0\u{2} CANNEDMSG_CONFIG\0\u{2}@\u{1}AUDIO_CONFIG\0\u{2}@\u{2}REMOTEHARDWARE_CONFIG\0\u{2}@\u{4}NEIGHBORINFO_CONFIG\0\u{2}@\u{8}AMBIENTLIGHTING_CONFIG\0\u{2}@\u{10}DETECTIONSENSOR_CONFIG\0\u{2}@ PAXCOUNTER_CONFIG\0\u{2}@@\u{1}BLUETOOTH_CONFIG\0\u{2}@@\u{2}NETWORK_CONFIG\0\u{2}@@\u{4}STATUSMESSAGE_CONFIG\0\u{2}@@\u{8}TRAFFICMANAGEMENT_CONFIG\0\u{2}@@\u{10}TAK_CONFIG\0\u{2}@@ MESHBEACON_CONFIG\0")
 }
 
 extension Position: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -4420,7 +5265,7 @@ extension RouteDiscovery: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
 
 extension Routing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Routing"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}route_request\0\u{3}route_reply\0\u{3}error_reason\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}route_request\0\u{3}route_reply\0\u{3}error_reason\0\u{3}ack_proof\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4462,6 +5307,7 @@ extension Routing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBa
           self.variant = .errorReason(v)
         }
       }()
+      case 4: try { try decoder.decodeSingularBytesField(value: &self.ackProof) }()
       default: break
       }
     }
@@ -4487,11 +5333,15 @@ extension Routing: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBa
     }()
     case nil: break
     }
+    if !self.ackProof.isEmpty {
+      try visitor.visitSingularBytesField(value: self.ackProof, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Routing, rhs: Routing) -> Bool {
     if lhs.variant != rhs.variant {return false}
+    if lhs.ackProof != rhs.ackProof {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4503,7 +5353,7 @@ extension Routing.Error: SwiftProtobuf._ProtoNameProviding {
 
 extension DataMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Data"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}portnum\0\u{1}payload\0\u{3}want_response\0\u{1}dest\0\u{1}source\0\u{3}request_id\0\u{3}reply_id\0\u{1}emoji\0\u{1}bitfield\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}portnum\0\u{1}payload\0\u{3}want_response\0\u{1}dest\0\u{1}source\0\u{3}request_id\0\u{3}reply_id\0\u{1}emoji\0\u{1}bitfield\0\u{3}xeddsa_signature\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4520,6 +5370,7 @@ extension DataMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementati
       case 7: try { try decoder.decodeSingularFixed32Field(value: &self.replyID) }()
       case 8: try { try decoder.decodeSingularFixed32Field(value: &self.emoji) }()
       case 9: try { try decoder.decodeSingularUInt32Field(value: &self._bitfield) }()
+      case 10: try { try decoder.decodeSingularBytesField(value: &self.xeddsaSignature) }()
       default: break
       }
     }
@@ -4557,6 +5408,9 @@ extension DataMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementati
     try { if let v = self._bitfield {
       try visitor.visitSingularUInt32Field(value: v, fieldNumber: 9)
     } }()
+    if !self.xeddsaSignature.isEmpty {
+      try visitor.visitSingularBytesField(value: self.xeddsaSignature, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4570,6 +5424,7 @@ extension DataMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementati
     if lhs.replyID != rhs.replyID {return false}
     if lhs.emoji != rhs.emoji {return false}
     if lhs._bitfield != rhs._bitfield {return false}
+    if lhs.xeddsaSignature != rhs.xeddsaSignature {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4694,9 +5549,133 @@ extension StoreForwardPlusPlus.SFPP_message_type: SwiftProtobuf._ProtoNameProvid
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CANON_ANNOUNCE\0\u{1}CHAIN_QUERY\0\u{2}\u{2}LINK_REQUEST\0\u{1}LINK_PROVIDE\0\u{1}LINK_PROVIDE_FIRSTHALF\0\u{1}LINK_PROVIDE_SECONDHALF\0")
 }
 
+extension RemoteShell: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoteShell"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}op\0\u{3}session_id\0\u{1}seq\0\u{3}ack_seq\0\u{1}payload\0\u{1}cols\0\u{1}rows\0\u{1}flags\0\u{3}last_tx_seq\0\u{3}last_rx_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.op) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.seq) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.ackSeq) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.payload) }()
+      case 6: try { try decoder.decodeSingularUInt32Field(value: &self.cols) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.rows) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.flags) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.lastTxSeq) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.lastRxSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.op != .opUnset {
+      try visitor.visitSingularEnumField(value: self.op, fieldNumber: 1)
+    }
+    if self.sessionID != 0 {
+      try visitor.visitSingularUInt32Field(value: self.sessionID, fieldNumber: 2)
+    }
+    if self.seq != 0 {
+      try visitor.visitSingularUInt32Field(value: self.seq, fieldNumber: 3)
+    }
+    if self.ackSeq != 0 {
+      try visitor.visitSingularUInt32Field(value: self.ackSeq, fieldNumber: 4)
+    }
+    if !self.payload.isEmpty {
+      try visitor.visitSingularBytesField(value: self.payload, fieldNumber: 5)
+    }
+    if self.cols != 0 {
+      try visitor.visitSingularUInt32Field(value: self.cols, fieldNumber: 6)
+    }
+    if self.rows != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rows, fieldNumber: 7)
+    }
+    if self.flags != 0 {
+      try visitor.visitSingularUInt32Field(value: self.flags, fieldNumber: 8)
+    }
+    if self.lastTxSeq != 0 {
+      try visitor.visitSingularUInt32Field(value: self.lastTxSeq, fieldNumber: 9)
+    }
+    if self.lastRxSeq != 0 {
+      try visitor.visitSingularUInt32Field(value: self.lastRxSeq, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: RemoteShell, rhs: RemoteShell) -> Bool {
+    if lhs.op != rhs.op {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.seq != rhs.seq {return false}
+    if lhs.ackSeq != rhs.ackSeq {return false}
+    if lhs.payload != rhs.payload {return false}
+    if lhs.cols != rhs.cols {return false}
+    if lhs.rows != rhs.rows {return false}
+    if lhs.flags != rhs.flags {return false}
+    if lhs.lastTxSeq != rhs.lastTxSeq {return false}
+    if lhs.lastRxSeq != rhs.lastRxSeq {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension RemoteShell.OpCode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OP_UNSET\0\u{1}OPEN\0\u{1}INPUT\0\u{1}RESIZE\0\u{1}CLOSE\0\u{1}PING\0\u{1}ACK\0\u{2}:OPEN_OK\0\u{1}OUTPUT\0\u{1}CLOSED\0\u{1}ERROR\0\u{1}PONG\0")
+}
+
+extension BoundingBox: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BoundingBox"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}longitude_west_i\0\u{3}latitude_south_i\0\u{3}longitude_east_i\0\u{3}latitude_north_i\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularSFixed32Field(value: &self.longitudeWestI) }()
+      case 2: try { try decoder.decodeSingularSFixed32Field(value: &self.latitudeSouthI) }()
+      case 3: try { try decoder.decodeSingularSFixed32Field(value: &self.longitudeEastI) }()
+      case 4: try { try decoder.decodeSingularSFixed32Field(value: &self.latitudeNorthI) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.longitudeWestI != 0 {
+      try visitor.visitSingularSFixed32Field(value: self.longitudeWestI, fieldNumber: 1)
+    }
+    if self.latitudeSouthI != 0 {
+      try visitor.visitSingularSFixed32Field(value: self.latitudeSouthI, fieldNumber: 2)
+    }
+    if self.longitudeEastI != 0 {
+      try visitor.visitSingularSFixed32Field(value: self.longitudeEastI, fieldNumber: 3)
+    }
+    if self.latitudeNorthI != 0 {
+      try visitor.visitSingularSFixed32Field(value: self.latitudeNorthI, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: BoundingBox, rhs: BoundingBox) -> Bool {
+    if lhs.longitudeWestI != rhs.longitudeWestI {return false}
+    if lhs.latitudeSouthI != rhs.latitudeSouthI {return false}
+    if lhs.longitudeEastI != rhs.longitudeEastI {return false}
+    if lhs.latitudeNorthI != rhs.latitudeNorthI {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Waypoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Waypoint"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}latitude_i\0\u{3}longitude_i\0\u{1}expire\0\u{3}locked_to\0\u{1}name\0\u{1}description\0\u{1}icon\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}latitude_i\0\u{3}longitude_i\0\u{1}expire\0\u{3}locked_to\0\u{1}name\0\u{1}description\0\u{1}icon\0\u{3}geofence_radius\0\u{3}bounding_box\0\u{3}notify_on_enter\0\u{3}notify_on_exit\0\u{3}notify_favorites_only\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4712,6 +5691,11 @@ extension Waypoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
       case 6: try { try decoder.decodeSingularStringField(value: &self.name) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.description_p) }()
       case 8: try { try decoder.decodeSingularFixed32Field(value: &self.icon) }()
+      case 9: try { try decoder.decodeSingularUInt32Field(value: &self.geofenceRadius) }()
+      case 10: try { try decoder.decodeSingularMessageField(value: &self._boundingBox) }()
+      case 11: try { try decoder.decodeSingularBoolField(value: &self.notifyOnEnter) }()
+      case 12: try { try decoder.decodeSingularBoolField(value: &self.notifyOnExit) }()
+      case 13: try { try decoder.decodeSingularBoolField(value: &self.notifyFavoritesOnly) }()
       default: break
       }
     }
@@ -4746,6 +5730,21 @@ extension Waypoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
     if self.icon != 0 {
       try visitor.visitSingularFixed32Field(value: self.icon, fieldNumber: 8)
     }
+    if self.geofenceRadius != 0 {
+      try visitor.visitSingularUInt32Field(value: self.geofenceRadius, fieldNumber: 9)
+    }
+    try { if let v = self._boundingBox {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+    } }()
+    if self.notifyOnEnter != false {
+      try visitor.visitSingularBoolField(value: self.notifyOnEnter, fieldNumber: 11)
+    }
+    if self.notifyOnExit != false {
+      try visitor.visitSingularBoolField(value: self.notifyOnExit, fieldNumber: 12)
+    }
+    if self.notifyFavoritesOnly != false {
+      try visitor.visitSingularBoolField(value: self.notifyFavoritesOnly, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4758,6 +5757,11 @@ extension Waypoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
     if lhs.name != rhs.name {return false}
     if lhs.description_p != rhs.description_p {return false}
     if lhs.icon != rhs.icon {return false}
+    if lhs.geofenceRadius != rhs.geofenceRadius {return false}
+    if lhs._boundingBox != rhs._boundingBox {return false}
+    if lhs.notifyOnEnter != rhs.notifyOnEnter {return false}
+    if lhs.notifyOnExit != rhs.notifyOnExit {return false}
+    if lhs.notifyFavoritesOnly != rhs.notifyFavoritesOnly {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4862,7 +5866,7 @@ extension MqttClientProxyMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageI
 
 extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MeshPacket"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}from\0\u{1}to\0\u{1}channel\0\u{1}decoded\0\u{1}encrypted\0\u{1}id\0\u{3}rx_time\0\u{3}rx_snr\0\u{3}hop_limit\0\u{3}want_ack\0\u{1}priority\0\u{3}rx_rssi\0\u{1}delayed\0\u{3}via_mqtt\0\u{3}hop_start\0\u{3}public_key\0\u{3}pki_encrypted\0\u{3}next_hop\0\u{3}relay_node\0\u{3}tx_after\0\u{3}transport_mechanism\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}from\0\u{1}to\0\u{1}channel\0\u{1}decoded\0\u{1}encrypted\0\u{1}id\0\u{3}rx_time\0\u{3}rx_snr\0\u{3}hop_limit\0\u{3}want_ack\0\u{1}priority\0\u{3}rx_rssi\0\u{1}delayed\0\u{3}via_mqtt\0\u{3}hop_start\0\u{3}public_key\0\u{3}pki_encrypted\0\u{3}next_hop\0\u{3}relay_node\0\u{3}tx_after\0\u{3}transport_mechanism\0\u{3}xeddsa_signed\0\u{3}ack_proof_status\0")
 
   fileprivate class _StorageClass {
     var _from: UInt32 = 0
@@ -4870,12 +5874,12 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
     var _channel: UInt32 = 0
     var _payloadVariant: MeshPacket.OneOf_PayloadVariant?
     var _id: UInt32 = 0
-    var _rxTime: UInt32 = 0
+    var _rxTime: UInt32? = nil
     var _rxSnr: Float = 0
     var _hopLimit: UInt32 = 0
     var _wantAck: Bool = false
     var _priority: MeshPacket.Priority = .unset
-    var _rxRssi: Int32 = 0
+    var _rxRssi: Int32? = nil
     var _delayed: MeshPacket.Delayed = .noDelay
     var _viaMqtt: Bool = false
     var _hopStart: UInt32 = 0
@@ -4885,6 +5889,8 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
     var _relayNode: UInt32 = 0
     var _txAfter: UInt32 = 0
     var _transportMechanism: MeshPacket.TransportMechanism = .transportInternal
+    var _xeddsaSigned: Bool = false
+    var _ackProofStatus: MeshPacket.AckProofStatus = .ackProofAbsent
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -4915,6 +5921,8 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
       _relayNode = source._relayNode
       _txAfter = source._txAfter
       _transportMechanism = source._transportMechanism
+      _xeddsaSigned = source._xeddsaSigned
+      _ackProofStatus = source._ackProofStatus
     }
   }
 
@@ -4973,6 +5981,8 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
         case 19: try { try decoder.decodeSingularUInt32Field(value: &_storage._relayNode) }()
         case 20: try { try decoder.decodeSingularUInt32Field(value: &_storage._txAfter) }()
         case 21: try { try decoder.decodeSingularEnumField(value: &_storage._transportMechanism) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._xeddsaSigned) }()
+        case 23: try { try decoder.decodeSingularEnumField(value: &_storage._ackProofStatus) }()
         default: break
         }
       }
@@ -5008,9 +6018,9 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
       if _storage._id != 0 {
         try visitor.visitSingularFixed32Field(value: _storage._id, fieldNumber: 6)
       }
-      if _storage._rxTime != 0 {
-        try visitor.visitSingularFixed32Field(value: _storage._rxTime, fieldNumber: 7)
-      }
+      try { if let v = _storage._rxTime {
+        try visitor.visitSingularFixed32Field(value: v, fieldNumber: 7)
+      } }()
       if _storage._rxSnr.bitPattern != 0 {
         try visitor.visitSingularFloatField(value: _storage._rxSnr, fieldNumber: 8)
       }
@@ -5023,9 +6033,9 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
       if _storage._priority != .unset {
         try visitor.visitSingularEnumField(value: _storage._priority, fieldNumber: 11)
       }
-      if _storage._rxRssi != 0 {
-        try visitor.visitSingularInt32Field(value: _storage._rxRssi, fieldNumber: 12)
-      }
+      try { if let v = _storage._rxRssi {
+        try visitor.visitSingularInt32Field(value: v, fieldNumber: 12)
+      } }()
       if _storage._delayed != .noDelay {
         try visitor.visitSingularEnumField(value: _storage._delayed, fieldNumber: 13)
       }
@@ -5052,6 +6062,12 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
       }
       if _storage._transportMechanism != .transportInternal {
         try visitor.visitSingularEnumField(value: _storage._transportMechanism, fieldNumber: 21)
+      }
+      if _storage._xeddsaSigned != false {
+        try visitor.visitSingularBoolField(value: _storage._xeddsaSigned, fieldNumber: 22)
+      }
+      if _storage._ackProofStatus != .ackProofAbsent {
+        try visitor.visitSingularEnumField(value: _storage._ackProofStatus, fieldNumber: 23)
       }
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -5082,6 +6098,8 @@ extension MeshPacket: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementatio
         if _storage._relayNode != rhs_storage._relayNode {return false}
         if _storage._txAfter != rhs_storage._txAfter {return false}
         if _storage._transportMechanism != rhs_storage._transportMechanism {return false}
+        if _storage._xeddsaSigned != rhs_storage._xeddsaSigned {return false}
+        if _storage._ackProofStatus != rhs_storage._ackProofStatus {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -5100,12 +6118,16 @@ extension MeshPacket.Delayed: SwiftProtobuf._ProtoNameProviding {
 }
 
 extension MeshPacket.TransportMechanism: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TRANSPORT_INTERNAL\0\u{1}TRANSPORT_LORA\0\u{1}TRANSPORT_LORA_ALT1\0\u{1}TRANSPORT_LORA_ALT2\0\u{1}TRANSPORT_LORA_ALT3\0\u{1}TRANSPORT_MQTT\0\u{1}TRANSPORT_MULTICAST_UDP\0\u{1}TRANSPORT_API\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TRANSPORT_INTERNAL\0\u{1}TRANSPORT_LORA\0\u{1}TRANSPORT_LORA_ALT1\0\u{1}TRANSPORT_LORA_ALT2\0\u{1}TRANSPORT_LORA_ALT3\0\u{1}TRANSPORT_MQTT\0\u{1}TRANSPORT_MULTICAST_UDP\0\u{1}TRANSPORT_API\0\u{1}TRANSPORT_UNICAST_UDP\0")
+}
+
+extension MeshPacket.AckProofStatus: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACK_PROOF_ABSENT\0\u{1}ACK_PROOF_VALID\0\u{1}ACK_PROOF_INVALID\0\u{1}ACK_PROOF_NO_KEY\0")
 }
 
 extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".NodeInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}num\0\u{1}user\0\u{1}position\0\u{1}snr\0\u{3}last_heard\0\u{3}device_metrics\0\u{1}channel\0\u{3}via_mqtt\0\u{3}hops_away\0\u{3}is_favorite\0\u{3}is_ignored\0\u{3}is_key_manually_verified\0\u{3}is_muted\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}num\0\u{1}user\0\u{1}position\0\u{1}snr\0\u{3}last_heard\0\u{3}device_metrics\0\u{1}channel\0\u{3}via_mqtt\0\u{3}hops_away\0\u{3}is_favorite\0\u{3}is_ignored\0\u{3}is_key_manually_verified\0\u{3}is_muted\0\u{3}has_xeddsa_signed\0\u{3}heard_on_current_lora\0")
 
   fileprivate class _StorageClass {
     var _num: UInt32 = 0
@@ -5121,6 +6143,8 @@ extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
     var _isIgnored: Bool = false
     var _isKeyManuallyVerified: Bool = false
     var _isMuted: Bool = false
+    var _hasXeddsaSigned_p: Bool = false
+    var _heardOnCurrentLora: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -5144,6 +6168,8 @@ extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
       _isIgnored = source._isIgnored
       _isKeyManuallyVerified = source._isKeyManuallyVerified
       _isMuted = source._isMuted
+      _hasXeddsaSigned_p = source._hasXeddsaSigned_p
+      _heardOnCurrentLora = source._heardOnCurrentLora
     }
   }
 
@@ -5175,6 +6201,8 @@ extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
         case 11: try { try decoder.decodeSingularBoolField(value: &_storage._isIgnored) }()
         case 12: try { try decoder.decodeSingularBoolField(value: &_storage._isKeyManuallyVerified) }()
         case 13: try { try decoder.decodeSingularBoolField(value: &_storage._isMuted) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._hasXeddsaSigned_p) }()
+        case 15: try { try decoder.decodeSingularBoolField(value: &_storage._heardOnCurrentLora) }()
         default: break
         }
       }
@@ -5226,6 +6254,12 @@ extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
       if _storage._isMuted != false {
         try visitor.visitSingularBoolField(value: _storage._isMuted, fieldNumber: 13)
       }
+      if _storage._hasXeddsaSigned_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasXeddsaSigned_p, fieldNumber: 14)
+      }
+      if _storage._heardOnCurrentLora != false {
+        try visitor.visitSingularBoolField(value: _storage._heardOnCurrentLora, fieldNumber: 15)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -5248,6 +6282,8 @@ extension NodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
         if _storage._isIgnored != rhs_storage._isIgnored {return false}
         if _storage._isKeyManuallyVerified != rhs_storage._isKeyManuallyVerified {return false}
         if _storage._isMuted != rhs_storage._isMuted {return false}
+        if _storage._hasXeddsaSigned_p != rhs_storage._hasXeddsaSigned_p {return false}
+        if _storage._heardOnCurrentLora != rhs_storage._heardOnCurrentLora {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -5413,7 +6449,379 @@ extension QueueStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementati
 
 extension FromRadio: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".FromRadio"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}packet\0\u{3}my_info\0\u{3}node_info\0\u{1}config\0\u{3}log_record\0\u{3}config_complete_id\0\u{1}rebooted\0\u{1}moduleConfig\0\u{1}channel\0\u{1}queueStatus\0\u{1}xmodemPacket\0\u{1}metadata\0\u{1}mqttClientProxyMessage\0\u{1}fileInfo\0\u{1}clientNotification\0\u{1}deviceuiConfig\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}packet\0\u{3}my_info\0\u{3}node_info\0\u{1}config\0\u{3}log_record\0\u{3}config_complete_id\0\u{1}rebooted\0\u{1}moduleConfig\0\u{1}channel\0\u{1}queueStatus\0\u{1}xmodemPacket\0\u{1}metadata\0\u{1}mqttClientProxyMessage\0\u{1}fileInfo\0\u{1}clientNotification\0\u{1}deviceuiConfig\0\u{3}lockdown_status\0\u{3}region_presets\0")
+
+  fileprivate class _StorageClass {
+    var _id: UInt32 = 0
+    var _payloadVariant: FromRadio.OneOf_PayloadVariant?
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _id = source._id
+      _payloadVariant = source._payloadVariant
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularUInt32Field(value: &_storage._id) }()
+        case 2: try {
+          var v: MeshPacket?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .packet(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .packet(v)
+          }
+        }()
+        case 3: try {
+          var v: MyNodeInfo?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .myInfo(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .myInfo(v)
+          }
+        }()
+        case 4: try {
+          var v: NodeInfo?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .nodeInfo(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .nodeInfo(v)
+          }
+        }()
+        case 5: try {
+          var v: Config?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .config(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .config(v)
+          }
+        }()
+        case 6: try {
+          var v: LogRecord?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .logRecord(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .logRecord(v)
+          }
+        }()
+        case 7: try {
+          var v: UInt32?
+          try decoder.decodeSingularUInt32Field(value: &v)
+          if let v = v {
+            if _storage._payloadVariant != nil {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .configCompleteID(v)
+          }
+        }()
+        case 8: try {
+          var v: Bool?
+          try decoder.decodeSingularBoolField(value: &v)
+          if let v = v {
+            if _storage._payloadVariant != nil {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .rebooted(v)
+          }
+        }()
+        case 9: try {
+          var v: ModuleConfig?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .moduleConfig(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .moduleConfig(v)
+          }
+        }()
+        case 10: try {
+          var v: Channel?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .channel(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .channel(v)
+          }
+        }()
+        case 11: try {
+          var v: QueueStatus?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .queueStatus(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .queueStatus(v)
+          }
+        }()
+        case 12: try {
+          var v: XModem?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .xmodemPacket(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .xmodemPacket(v)
+          }
+        }()
+        case 13: try {
+          var v: DeviceMetadata?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .metadata(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .metadata(v)
+          }
+        }()
+        case 14: try {
+          var v: MqttClientProxyMessage?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .mqttClientProxyMessage(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .mqttClientProxyMessage(v)
+          }
+        }()
+        case 15: try {
+          var v: FileInfo?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .fileInfo(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .fileInfo(v)
+          }
+        }()
+        case 16: try {
+          var v: ClientNotification?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .clientNotification(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .clientNotification(v)
+          }
+        }()
+        case 17: try {
+          var v: DeviceUIConfig?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .deviceuiConfig(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .deviceuiConfig(v)
+          }
+        }()
+        case 18: try {
+          var v: LockdownStatus?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .lockdownStatus(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .lockdownStatus(v)
+          }
+        }()
+        case 19: try {
+          var v: LoRaRegionPresetMap?
+          var hadOneofValue = false
+          if let current = _storage._payloadVariant {
+            hadOneofValue = true
+            if case .regionPresets(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payloadVariant = .regionPresets(v)
+          }
+        }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._id != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._id, fieldNumber: 1)
+      }
+      switch _storage._payloadVariant {
+      case .packet?: try {
+        guard case .packet(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      }()
+      case .myInfo?: try {
+        guard case .myInfo(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+      }()
+      case .nodeInfo?: try {
+        guard case .nodeInfo(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+      }()
+      case .config?: try {
+        guard case .config(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+      }()
+      case .logRecord?: try {
+        guard case .logRecord(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+      }()
+      case .configCompleteID?: try {
+        guard case .configCompleteID(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularUInt32Field(value: v, fieldNumber: 7)
+      }()
+      case .rebooted?: try {
+        guard case .rebooted(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 8)
+      }()
+      case .moduleConfig?: try {
+        guard case .moduleConfig(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+      }()
+      case .channel?: try {
+        guard case .channel(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+      }()
+      case .queueStatus?: try {
+        guard case .queueStatus(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+      }()
+      case .xmodemPacket?: try {
+        guard case .xmodemPacket(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+      }()
+      case .metadata?: try {
+        guard case .metadata(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+      }()
+      case .mqttClientProxyMessage?: try {
+        guard case .mqttClientProxyMessage(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+      }()
+      case .fileInfo?: try {
+        guard case .fileInfo(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+      }()
+      case .clientNotification?: try {
+        guard case .clientNotification(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+      }()
+      case .deviceuiConfig?: try {
+        guard case .deviceuiConfig(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
+      }()
+      case .lockdownStatus?: try {
+        guard case .lockdownStatus(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 18)
+      }()
+      case .regionPresets?: try {
+        guard case .regionPresets(let v)? = _storage._payloadVariant else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 19)
+      }()
+      case nil: break
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: FromRadio, rhs: FromRadio) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._id != rhs_storage._id {return false}
+        if _storage._payloadVariant != rhs_storage._payloadVariant {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension LockdownStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LockdownStatus"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{3}lock_reason\0\u{3}boots_remaining\0\u{3}valid_until_epoch\0\u{3}backoff_seconds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5421,294 +6829,48 @@ extension FromRadio: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementation
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.id) }()
-      case 2: try {
-        var v: MeshPacket?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .packet(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .packet(v)
-        }
-      }()
-      case 3: try {
-        var v: MyNodeInfo?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .myInfo(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .myInfo(v)
-        }
-      }()
-      case 4: try {
-        var v: NodeInfo?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .nodeInfo(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .nodeInfo(v)
-        }
-      }()
-      case 5: try {
-        var v: Config?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .config(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .config(v)
-        }
-      }()
-      case 6: try {
-        var v: LogRecord?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .logRecord(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .logRecord(v)
-        }
-      }()
-      case 7: try {
-        var v: UInt32?
-        try decoder.decodeSingularUInt32Field(value: &v)
-        if let v = v {
-          if self.payloadVariant != nil {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .configCompleteID(v)
-        }
-      }()
-      case 8: try {
-        var v: Bool?
-        try decoder.decodeSingularBoolField(value: &v)
-        if let v = v {
-          if self.payloadVariant != nil {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .rebooted(v)
-        }
-      }()
-      case 9: try {
-        var v: ModuleConfig?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .moduleConfig(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .moduleConfig(v)
-        }
-      }()
-      case 10: try {
-        var v: Channel?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .channel(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .channel(v)
-        }
-      }()
-      case 11: try {
-        var v: QueueStatus?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .queueStatus(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .queueStatus(v)
-        }
-      }()
-      case 12: try {
-        var v: XModem?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .xmodemPacket(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .xmodemPacket(v)
-        }
-      }()
-      case 13: try {
-        var v: DeviceMetadata?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .metadata(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .metadata(v)
-        }
-      }()
-      case 14: try {
-        var v: MqttClientProxyMessage?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .mqttClientProxyMessage(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .mqttClientProxyMessage(v)
-        }
-      }()
-      case 15: try {
-        var v: FileInfo?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .fileInfo(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .fileInfo(v)
-        }
-      }()
-      case 16: try {
-        var v: ClientNotification?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .clientNotification(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .clientNotification(v)
-        }
-      }()
-      case 17: try {
-        var v: DeviceUIConfig?
-        var hadOneofValue = false
-        if let current = self.payloadVariant {
-          hadOneofValue = true
-          if case .deviceuiConfig(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payloadVariant = .deviceuiConfig(v)
-        }
-      }()
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.state) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.lockReason) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.bootsRemaining) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.validUntilEpoch) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.backoffSeconds) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.id != 0 {
-      try visitor.visitSingularUInt32Field(value: self.id, fieldNumber: 1)
+    if self.state != .unspecified {
+      try visitor.visitSingularEnumField(value: self.state, fieldNumber: 1)
     }
-    switch self.payloadVariant {
-    case .packet?: try {
-      guard case .packet(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-    }()
-    case .myInfo?: try {
-      guard case .myInfo(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
-    }()
-    case .nodeInfo?: try {
-      guard case .nodeInfo(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
-    }()
-    case .config?: try {
-      guard case .config(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
-    }()
-    case .logRecord?: try {
-      guard case .logRecord(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
-    }()
-    case .configCompleteID?: try {
-      guard case .configCompleteID(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularUInt32Field(value: v, fieldNumber: 7)
-    }()
-    case .rebooted?: try {
-      guard case .rebooted(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularBoolField(value: v, fieldNumber: 8)
-    }()
-    case .moduleConfig?: try {
-      guard case .moduleConfig(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
-    }()
-    case .channel?: try {
-      guard case .channel(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
-    }()
-    case .queueStatus?: try {
-      guard case .queueStatus(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
-    }()
-    case .xmodemPacket?: try {
-      guard case .xmodemPacket(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
-    }()
-    case .metadata?: try {
-      guard case .metadata(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
-    }()
-    case .mqttClientProxyMessage?: try {
-      guard case .mqttClientProxyMessage(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
-    }()
-    case .fileInfo?: try {
-      guard case .fileInfo(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
-    }()
-    case .clientNotification?: try {
-      guard case .clientNotification(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
-    }()
-    case .deviceuiConfig?: try {
-      guard case .deviceuiConfig(let v)? = self.payloadVariant else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
-    }()
-    case nil: break
+    if !self.lockReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.lockReason, fieldNumber: 2)
+    }
+    if self.bootsRemaining != 0 {
+      try visitor.visitSingularUInt32Field(value: self.bootsRemaining, fieldNumber: 3)
+    }
+    if self.validUntilEpoch != 0 {
+      try visitor.visitSingularUInt32Field(value: self.validUntilEpoch, fieldNumber: 4)
+    }
+    if self.backoffSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.backoffSeconds, fieldNumber: 5)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
-  public static func ==(lhs: FromRadio, rhs: FromRadio) -> Bool {
-    if lhs.id != rhs.id {return false}
-    if lhs.payloadVariant != rhs.payloadVariant {return false}
+  public static func ==(lhs: LockdownStatus, rhs: LockdownStatus) -> Bool {
+    if lhs.state != rhs.state {return false}
+    if lhs.lockReason != rhs.lockReason {return false}
+    if lhs.bootsRemaining != rhs.bootsRemaining {return false}
+    if lhs.validUntilEpoch != rhs.validUntilEpoch {return false}
+    if lhs.backoffSeconds != rhs.backoffSeconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
+}
+
+extension LockdownStatus.State: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STATE_UNSPECIFIED\0\u{1}NEEDS_PROVISION\0\u{1}LOCKED\0\u{1}UNLOCKED\0\u{1}UNLOCK_FAILED\0\u{1}DISABLED\0")
 }
 
 extension ClientNotification: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -6294,7 +7456,7 @@ extension Neighbor: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationB
 
 extension DeviceMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DeviceMetadata"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}firmware_version\0\u{3}device_state_version\0\u{1}canShutdown\0\u{1}hasWifi\0\u{1}hasBluetooth\0\u{1}hasEthernet\0\u{1}role\0\u{3}position_flags\0\u{3}hw_model\0\u{1}hasRemoteHardware\0\u{1}hasPKC\0\u{3}excluded_modules\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}firmware_version\0\u{3}device_state_version\0\u{1}canShutdown\0\u{1}hasWifi\0\u{1}hasBluetooth\0\u{1}hasEthernet\0\u{1}role\0\u{3}position_flags\0\u{3}hw_model\0\u{1}hasRemoteHardware\0\u{1}hasPKC\0\u{3}excluded_modules\0\u{4}\u{2}has_xeddsa\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6314,6 +7476,7 @@ extension DeviceMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
       case 10: try { try decoder.decodeSingularBoolField(value: &self.hasRemoteHardware_p) }()
       case 11: try { try decoder.decodeSingularBoolField(value: &self.hasPkc_p) }()
       case 12: try { try decoder.decodeSingularUInt32Field(value: &self.excludedModules) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self.hasXeddsa_p) }()
       default: break
       }
     }
@@ -6356,6 +7519,9 @@ extension DeviceMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
     if self.excludedModules != 0 {
       try visitor.visitSingularUInt32Field(value: self.excludedModules, fieldNumber: 12)
     }
+    if self.hasXeddsa_p != false {
+      try visitor.visitSingularBoolField(value: self.hasXeddsa_p, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6372,6 +7538,117 @@ extension DeviceMetadata: SwiftProtobuf.Message, SwiftProtobuf._MessageImplement
     if lhs.hasRemoteHardware_p != rhs.hasRemoteHardware_p {return false}
     if lhs.hasPkc_p != rhs.hasPkc_p {return false}
     if lhs.excludedModules != rhs.excludedModules {return false}
+    if lhs.hasXeddsa_p != rhs.hasXeddsa_p {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension LoRaPresetGroup: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LoRaPresetGroup"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}presets\0\u{3}default_preset\0\u{3}licensed_only\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedEnumField(value: &self.presets) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.defaultPreset) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.licensedOnly) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.presets.isEmpty {
+      try visitor.visitPackedEnumField(value: self.presets, fieldNumber: 1)
+    }
+    if self.defaultPreset != .longFast {
+      try visitor.visitSingularEnumField(value: self.defaultPreset, fieldNumber: 2)
+    }
+    if self.licensedOnly != false {
+      try visitor.visitSingularBoolField(value: self.licensedOnly, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: LoRaPresetGroup, rhs: LoRaPresetGroup) -> Bool {
+    if lhs.presets != rhs.presets {return false}
+    if lhs.defaultPreset != rhs.defaultPreset {return false}
+    if lhs.licensedOnly != rhs.licensedOnly {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension LoRaRegionPresets: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LoRaRegionPresets"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}region\0\u{3}group_index\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.region) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.groupIndex) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.region != .unset {
+      try visitor.visitSingularEnumField(value: self.region, fieldNumber: 1)
+    }
+    if self.groupIndex != 0 {
+      try visitor.visitSingularUInt32Field(value: self.groupIndex, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: LoRaRegionPresets, rhs: LoRaRegionPresets) -> Bool {
+    if lhs.region != rhs.region {return false}
+    if lhs.groupIndex != rhs.groupIndex {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension LoRaRegionPresetMap: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".LoRaRegionPresetMap"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}groups\0\u{3}region_groups\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.groups) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.regionGroups) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.groups.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.groups, fieldNumber: 1)
+    }
+    if !self.regionGroups.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.regionGroups, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: LoRaRegionPresetMap, rhs: LoRaRegionPresetMap) -> Bool {
+    if lhs.groups != rhs.groups {return false}
+    if lhs.regionGroups != rhs.regionGroups {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

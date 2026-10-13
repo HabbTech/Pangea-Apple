@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import OSLog
 import UserNotifications
@@ -225,6 +225,13 @@ enum GroupChats {
 		expertMode
 	}
 
+	/// Whether an @mention of this radio notifies past the bell, the notification setting and
+	/// the channel's mute, as upstream does. Expert Mode only: anyone on the public channel can
+	/// type a node's @!hex, so in standard mode a stranger could make the phone notify.
+	nonisolated static func mentionOverridesMutes(expertMode: Bool = UserDefaults.expertModeEnabled) -> Bool {
+		expertMode
+	}
+
 	/// Primary channel is the public mesh everyone with default settings shares.
 	static func isEveryone(_ channel: ChannelEntity) -> Bool {
 		channel.index == 0
@@ -246,14 +253,14 @@ enum GroupChats {
 	}
 
 	static func groups(in myInfo: MyInfoEntity) -> [ChannelEntity] {
-		(myInfo.channels?.array as? [ChannelEntity] ?? []).filter { isChat($0) && !isEveryone($0) }
+		myInfo.sortedChannels.filter { isChat($0) && !isEveryone($0) }
 	}
 
 	/// Matched on key and the name's exact bytes: the radio hears a channel by a hash of
 	/// both, so the same key under any other name, even one a space longer or the same
 	/// letters encoded another way, is a different group.
 	static func existing(_ invite: GroupInvite, in myInfo: MyInfoEntity) -> ChannelEntity? {
-		(myInfo.channels?.array as? [ChannelEntity])?.first {
+		myInfo.sortedChannels.first {
 			$0.index > 0 && $0.role > 0 && $0.psk == invite.psk && ($0.name ?? "").utf8.elementsEqual(invite.name.utf8)
 		}
 	}
@@ -279,14 +286,22 @@ enum GroupChats {
 			GroupInviteStore.shared.remove(invite: invite)
 			return channel.index
 		}
-		let index = try freeSlot(in: myInfo.channels?.array as? [ChannelEntity] ?? [])
+		let index = try freeSlot(in: myInfo.sortedChannels)
 
 		var channel = Channel()
 		channel.index = index
 		channel.role = .secondary
 		channel.settings = invite.settings
 		_ = try await accessoryManager.saveChannel(channel: channel, fromUser: user, toUser: user)
-		await MeshPackets.shared.channelPacket(channel: channel, fromNum: user.num)
+		// Mirrored on the main context, where the channel lists read it. The radio already has
+		// the group, so a local save error isn't a failed join: the next connect lists it anyway.
+		do {
+			try accessoryManager.applyLocalChannelMutation(channel, fromNum: user.num)
+		} catch {
+			Logger.services.error("👥 [Groups] Joined, but couldn't save the group locally: \(error.localizedDescription, privacy: .public)")
+		}
+		// The Messages extension shares groups from its own copy; rebuilt from the row just saved.
+		MeshShareSnapshotBuilder.refresh(nodeNum: user.num, context: accessoryManager.context)
 		Logger.services.info("👥 [Groups] Joined group in slot \(index)")
 		GroupInviteStore.shared.remove(invite: invite)
 		return index
@@ -330,9 +345,9 @@ enum GroupChats {
 		let (user, _) = try connectedUser(accessoryManager)
 		// Read before the radio write: once another leave has deleted it, the channel reads
 		// index 0, and its messages would be Everyone Nearby's.
-		guard !channel.isDeleted, channel.managedObjectContext != nil else { return }
+		guard !channel.isDeleted, channel.modelContext != nil else { return }
 		let index = channel.index
-		let id = channel.objectID
+		let id = channel.persistentModelID
 		guard index > 0, leaving.insert(index).inserted else { return }
 		defer { leaving.remove(index) }
 		var disabled = Channel()
@@ -341,7 +356,15 @@ enum GroupChats {
 		_ = try await accessoryManager.saveChannel(channel: disabled, fromUser: user, toUser: user)
 
 		let context = accessoryManager.context
-		guard removeLocally(id, index: index, context: context) else { return }
+		// The Messages extension shares groups from its own copy, which still holds this
+		// group's key: rebuilt once the row is gone, whichever way this ends.
+		defer { MeshShareSnapshotBuilder.refresh(nodeNum: user.num, context: context) }
+		if !removeLocally(id, index: index, context: context) {
+			// A reconnect during the radio write can drop the row first (the radio now reports
+			// the slot disabled). The leave still happened, so the slot's messages go too, or the
+			// next group in it would show them. Not when another group already holds the slot.
+			guard !slotHoldsGroup(index, context: context), removeMessages(inSlot: index, context: context) else { return }
+		}
 		// A notification for this slot would otherwise open whatever group joins it next.
 		ChatsView.removeNotifications(opening: .group(index: index))
 		if let appState = accessoryManager.appState {
@@ -352,16 +375,14 @@ enum GroupChats {
 	/// Deletes the group and its messages, found by the slot read before the radio write.
 	/// False when the channel is already gone or the slot now holds another group.
 	@discardableResult
-	static func removeLocally(_ id: NSManagedObjectID, index: Int32, context: NSManagedObjectContext) -> Bool {
+	static func removeLocally(_ id: PersistentIdentifier, index: Int32, context: ModelContext) -> Bool {
+		// Fetched rather than looked up, so a channel already deleted is simply not found.
+		var byId = FetchDescriptor<ChannelEntity>(predicate: #Predicate { $0.persistentModelID == id })
+		byId.fetchLimit = 1
 		guard index > 0,
-			  let channel = try? context.existingObject(with: id) as? ChannelEntity,
+			  let channel = try? context.fetch(byId).first,
 			  !channel.isDeleted, channel.index == index else { return false }
-		let request = MessageEntity.fetchRequest()
-		// The same messages as `messagePredicate`, without reading the channel again.
-		request.predicate = NSPredicate(format: "channel == %ld AND toUser == nil AND isEmoji == false", index)
-		for message in (try? context.fetch(request)) ?? [] {
-			context.delete(message)
-		}
+		deleteMessages(inSlot: index, context: context)
 		context.delete(channel)
 		do {
 			try context.save()
@@ -371,6 +392,38 @@ enum GroupChats {
 			return false
 		}
 		return true
+	}
+
+	/// Whether any channel row is using this slot.
+	static func slotHoldsGroup(_ index: Int32, context: ModelContext) -> Bool {
+		var descriptor = FetchDescriptor<ChannelEntity>(predicate: #Predicate { $0.index == index && $0.role > 0 })
+		descriptor.fetchLimit = 1
+		return ((try? context.fetchCount(descriptor)) ?? 1) > 0
+	}
+
+	/// Deletes and saves a left group's messages when its row is already gone.
+	@discardableResult
+	static func removeMessages(inSlot index: Int32, context: ModelContext) -> Bool {
+		guard index > 0 else { return false }
+		deleteMessages(inSlot: index, context: context)
+		do {
+			try context.save()
+		} catch {
+			context.rollback()
+			Logger.data.error("👥 [Groups] Failed to remove a left group's messages: \(error.localizedDescription, privacy: .public)")
+			return false
+		}
+		return true
+	}
+
+	/// The slot's own messages, without reading the channel again.
+	private static func deleteMessages(inSlot index: Int32, context: ModelContext) {
+		let descriptor = FetchDescriptor<MessageEntity>(predicate: #Predicate {
+			$0.channel == index && $0.toUser == nil && $0.isEmoji == false
+		})
+		for message in (try? context.fetch(descriptor)) ?? [] {
+			context.delete(message)
+		}
 	}
 
 	// MARK: Invite over DM
@@ -681,10 +734,7 @@ final class GroupInviteStore: ObservableObject {
 			UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "pangea.invite.more", content: content, trigger: nil))
 			return
 		}
-		let request = UserEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "num == %lld", num)
-		request.fetchLimit = 1
-		let sender = (try? PersistenceController.shared.container.viewContext.fetch(request).first)?.longName ?? PangeaCode.code(for: num)
+		let sender = existingUser(num: num, context: PersistenceController.shared.context)?.longName ?? PangeaCode.code(for: num)
 
 		let content = UNMutableNotificationContent()
 		content.title = String(localized: "Group Invite")
@@ -718,4 +768,12 @@ extension CodingUserInfoKey {
 	static let pangeaInviteWall = CodingUserInfoKey(rawValue: "pangeaInviteWall")!
 	/// A `DecodeLoss` set when an invite saved by an earlier version was read.
 	static let pangeaInviteLegacy = CodingUserInfoKey(rawValue: "pangeaInviteLegacy")!
+}
+
+extension MyInfoEntity {
+	/// Pangea: the radio's channels in slot order, one per slot. SwiftData keeps the list
+	/// unordered, and an older app version could leave a second row for a slot.
+	var sortedChannels: [ChannelEntity] {
+		canonicalValidUniqueChannels(from: channels.filter { !$0.isDeleted })
+	}
 }

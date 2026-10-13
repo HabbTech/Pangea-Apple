@@ -23,6 +23,10 @@ struct PairRadioView: View {
 	@State private var didFinish = false
 	/// Why the last pick didn't get as far as connecting.
 	@State private var pickError: String?
+	/// A pick is under way: disconnecting, waiting for the radio, clearing the old radio's
+	/// chats, or connecting. `lastConnectionError` until then is the old radio's, cleared only
+	/// once the connect starts, so it mustn't bring the list (and a second pick) back meanwhile.
+	@State private var isPicking = false
 
 	/// The radio already in use, shown above the list when opened from Settings.
 	private var currentRadio: Device? {
@@ -41,7 +45,7 @@ struct PairRadioView: View {
 	}
 
 	private var isWorking: Bool {
-		selectedDevice != nil && accessoryManager.lastConnectionError == nil && accessoryManager.state != .subscribed
+		selectedDevice != nil && (isPicking || accessoryManager.lastConnectionError == nil) && accessoryManager.state != .subscribed
 	}
 
 	var body: some View {
@@ -166,7 +170,7 @@ struct PairRadioView: View {
 		HStack(spacing: 16) {
 			Image(systemName: RadioAutoConfig.isPangeaRadio(device) ? "checkmark.seal.fill" : "dot.radiowaves.up.forward")
 				.font(.title2)
-				.foregroundStyle(RadioAutoConfig.isPangeaRadio(device) ? Color.accentColor : .secondary)
+				.foregroundStyle(RadioAutoConfig.isPangeaRadio(device) ? Color.accentColor : Color(.secondaryLabel))
 				.frame(width: 36)
 			VStack(alignment: .leading, spacing: 2) {
 				if let serial = RadioAutoConfig.pangeaSerial(device) {
@@ -261,6 +265,7 @@ struct PairRadioView: View {
 	// MARK: Actions
 
 	private func select(_ device: Device) {
+		guard !isPicking else { return }
 		let preferred = UserDefaults.preferredPeripheralId
 		if !preferred.isEmpty && preferred != device.id.uuidString {
 			pendingSwitch = device
@@ -268,7 +273,9 @@ struct PairRadioView: View {
 		}
 		selectedDevice = device
 		pickError = nil
+		isPicking = true
 		Task {
+			defer { isPicking = false }
 			guard let found = await readyToConnect(device) else { return }
 			try? await accessoryManager.connect(to: found)
 		}
@@ -277,11 +284,24 @@ struct PairRadioView: View {
 	/// Nothing about the current radio changes (its preference, its chats) until it has
 	/// let go and the new one has been heard again.
 	private func switchAndConnect(to device: Device) async {
+		guard !isPicking else { return }
 		selectedDevice = device
 		pickError = nil
+		isPicking = true
+		defer { isPicking = false }
 		guard let found = await readyToConnect(device) else { return }
 		UserDefaults.preferredPeripheralId = found.id.uuidString
 		UserDefaults.preferredPeripheralNum = 0
+		// As in upstream's node switch: auto-connect would otherwise find the new preferred
+		// radio while the old one's chats are still being cleared, and its node download would
+		// land in a half-cleared store. This connect is the only one.
+		accessoryManager.isSwitchingDevices = true
+		defer {
+			accessoryManager.isSwitchingDevices = false
+			if !accessoryManager.isConnected {
+				accessoryManager.startDiscovery()
+			}
+		}
 		await RadioPairing.clearRadioData()
 		try? await accessoryManager.connect(to: found)
 	}

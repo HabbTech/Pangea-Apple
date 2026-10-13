@@ -27,54 +27,97 @@ enum RoutingError: Int, CaseIterable, Identifiable {
 	case adminBadSessionKey = 36
 	case adminPublicKeyUnauthorized = 37
 	case rateLimitExceeded = 38
+	case pkiSendFailPublicKey = 39
 
 	var id: Int { self.rawValue }
 	var display: String {
 		switch self {
 
 		case .none:
-			return "Acknowledged".localized
+			return String(localized: "Delivered to recipient", comment: "RoutingError.display")
 		case .noRoute:
-			return "No Route".localized
+			return String(localized: "Failed to deliver to mesh", comment: "RoutingError.display")
 		case .gotNak:
-			return "Received a negative acknowledgment".localized
+			return String(localized: "Failed to deliver to mesh", comment: "RoutingError.display")
 		case .timeout:
-			return "Timeout".localized
+			return String(localized: "Failed to deliver to mesh", comment: "RoutingError.display")
 		case .noInterface:
-			return "No Interface".localized
+			return String(localized: "No radio interface", comment: "RoutingError.display")
 		case .maxRetransmit:
-			return "Max Retransmission Reached".localized
+			return String(localized: "Failed to deliver to mesh", comment: "RoutingError.display")
 		case .noChannel:
-			return "No Channel".localized
+			return String(localized: "Channel/key mismatch", comment: "RoutingError.display")
 		case .tooLarge:
-			return "The packet is too large".localized
+			return String(localized: "Message is too large to send", comment: "RoutingError.display")
 		case .noResponse:
-			return "No Response".localized
+			return String(localized: "No app response", comment: "RoutingError.display")
 		case .dutyCycleLimit:
-			return "Regional Duty Cycle Limit Reached".localized
+			return String(localized: "Duty cycle limit", comment: "RoutingError.display")
 		case .badRequest:
-			return "Bad Request".localized
+			return String(localized: "Invalid request", comment: "RoutingError.display")
 		case .notAuthorized:
-			return "Not Authorized".localized
+			return String(localized: "Not authorized", comment: "RoutingError.display")
 		case .pkiFailed:
-			return "Encrypted Send Failed".localized
+			return String(localized: "Could not send encrypted message", comment: "RoutingError.display")
 		case .pkiUnknownPubkey:
-			return "Unknown public key".localized
+			return String(localized: "Recipient needs your key", comment: "RoutingError.display")
 		case .adminBadSessionKey:
-			return "Bad admin session key".localized
+			return String(localized: "Admin session expired", comment: "RoutingError.display")
 		case .adminPublicKeyUnauthorized:
-			return "Unauthorized admin public key".localized
+			return String(localized: "Admin key not authorized", comment: "RoutingError.display")
 		case .rateLimitExceeded:
-			return "Rate Limit Exceeded".localized
+			return String(localized: "Rate limited", comment: "RoutingError.display")
+		case .pkiSendFailPublicKey:
+			return String(localized: "Recipient key unavailable", comment: "RoutingError.display")
+		}
+	}
+	var description: String {
+		switch self {
+		case .none:
+			return String(localized: "The recipient confirmed this message.", comment: "RoutingError.description")
+		case .noRoute:
+			return String(localized: "No route to the destination node was found in the mesh. Try again when more nodes are reachable.", comment: "RoutingError.description")
+		case .gotNak:
+			return String(localized: "A node rejected this message. Try again when the route changes.", comment: "RoutingError.description")
+		case .timeout:
+			return String(localized: "No acknowledgment was received in time. Try again when you have better signal or more mesh coverage.", comment: "RoutingError.description")
+		case .noInterface:
+			return String(localized: "The sender has no usable radio interface for this message.", comment: "RoutingError.description")
+		case .maxRetransmit:
+			return String(localized: "No node confirmed this message. Try again when you have better signal or more mesh coverage.", comment: "RoutingError.description")
+		case .noChannel:
+			return String(localized: "The sender or recipient could not use a matching channel/key for this message.", comment: "RoutingError.description")
+		case .tooLarge:
+			return String(localized: "Shorten the message and send it again.", comment: "RoutingError.description")
+		case .noResponse:
+			return String(localized: "The destination received the request, but no app or module responded. Try again when the recipient is reachable.", comment: "RoutingError.description")
+		case .dutyCycleLimit:
+			return String(localized: "Local airtime limits are temporarily blocking sends. Wait before trying again.", comment: "RoutingError.description")
+		case .badRequest:
+			return String(localized: "The destination rejected this request as invalid.", comment: "RoutingError.description")
+		case .notAuthorized:
+			return String(localized: "The destination refused this request because it is not authorized.", comment: "RoutingError.description")
+		case .pkiFailed:
+			return String(localized: "The encrypted send path could not be used. Wait for node info or keys to sync, then try again.", comment: "RoutingError.description")
+		case .pkiUnknownPubkey:
+			return String(localized: "The recipient does not know your public key yet. Your node may share its info automatically; try again after it syncs.", comment: "RoutingError.description")
+		case .adminBadSessionKey:
+			return String(localized: "The admin session key is missing, expired, or invalid. Request a new session before trying again.", comment: "RoutingError.description")
+		case .adminPublicKeyUnauthorized:
+			return String(localized: "The remote node does not authorize your admin key.", comment: "RoutingError.description")
+		case .rateLimitExceeded:
+			return String(localized: "Messages are being sent too quickly. Wait before trying again.", comment: "RoutingError.description")
+		case .pkiSendFailPublicKey:
+			return String(localized: "Your node does not have the recipient's public key yet. Wait for node info to sync, then try again.", comment: "RoutingError.description")
 		}
 	}
 	var color: Color {
 		if self == .none {
-			return Color.secondary
+			return Color(uiColor: .secondaryLabel)
 		} else if self.canRetry {
-			return Color.orange
+			return Color(uiColor: .systemOrange)
 		} else {
-			return Color.red
+			return Color(uiColor: .systemRed)
 		}
 	}
 	var canRetry: Bool {
@@ -92,7 +135,7 @@ enum RoutingError: Int, CaseIterable, Identifiable {
 		case .maxRetransmit:
 			return true
 		case .noChannel:
-			return true
+			return false
 		case .tooLarge:
 			return false
 		case .noResponse:
@@ -100,9 +143,9 @@ enum RoutingError: Int, CaseIterable, Identifiable {
 		case .dutyCycleLimit:
 			return true
 		case .badRequest:
-			return true
+			return false
 		case .notAuthorized:
-			return true
+			return false
 		case .pkiFailed:
 			return true
 		case .pkiUnknownPubkey:
@@ -110,8 +153,10 @@ enum RoutingError: Int, CaseIterable, Identifiable {
 		case .adminBadSessionKey:
 			return true
 		case .adminPublicKeyUnauthorized:
-			return true
+			return false
 		case .rateLimitExceeded:
+			return true
+		case .pkiSendFailPublicKey:
 			return true
 		}
 	}
@@ -153,6 +198,8 @@ enum RoutingError: Int, CaseIterable, Identifiable {
 			return Routing.Error.adminPublicKeyUnauthorized
 		case .rateLimitExceeded:
 			return Routing.Error.rateLimitExceeded
+		case .pkiSendFailPublicKey:
+			return Routing.Error.pkiSendFailPublicKey
 		}
 	}
 }

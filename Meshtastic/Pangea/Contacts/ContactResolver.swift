@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import CoreData
+import SwiftData
 import MeshtasticProtobufs
 import OSLog
 
@@ -110,11 +110,12 @@ final class ContactResolver: ObservableObject {
 		state = .unreachable(code: invite.code)
 	}
 
-	private func hasKey(_ nodeNum: Int64, context: NSManagedObjectContext) -> Bool {
-		let request = UserEntity.fetchRequest()
-		request.predicate = NSPredicate(format: "num == %lld", nodeNum)
-		request.fetchLimit = 1
-		return Self.hasKey(try? context.fetch(request).first)
+	/// Read on a fresh context: their key is saved by the packet handler's own context, and the
+	/// main context can still hold the user as it was before the key arrived.
+	private func hasKey(_ nodeNum: Int64, context: ModelContext) -> Bool {
+		var descriptor = FetchDescriptor<UserEntity>(predicate: #Predicate { $0.num == nodeNum })
+		descriptor.fetchLimit = 1
+		return Self.hasKey(try? ModelContext(context.container).fetch(descriptor).first)
 	}
 
 	/// A DM to them goes privately (PKI). Without their key it would go out on the public channel.

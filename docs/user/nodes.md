@@ -1,0 +1,245 @@
+---
+title: Nodes List
+parent: User Guide
+nav_order: 4
+---
+
+# Nodes List
+
+The Nodes tab shows every device your radio has heard on the mesh. Tap any node for details.
+
+## Node Status
+
+| Element | Meaning |
+|---------|---------|
+| ![Node circle](../assets/screenshots/circleTextDefault.png) | **Short Name & Long Name** — each node has a short name (up to 4 bytes) shown in the colored circle and a long name displayed next to it. The circle color is derived from the node number. The short name can be an emoji or initials. |
+| ![Online](../assets/screenshots/nodeOnline.png) | **Online** — the node has been heard recently and is considered online. |
+| ![Idle / Sleeping](../assets/screenshots/nodeIdle.png) | **Idle / Sleeping** — the node has not been heard from recently and may be asleep or out of range. |
+| ![Hops Away](../assets/screenshots/hopsAway.png) | **Hops Away** — the number of intermediate nodes relaying messages between you and this node. No hops means direct communication. |
+
+## Encryption
+
+| Icon | Meaning |
+|------|---------|
+| ![No Public Key](../assets/screenshots/lockOpen.png) | **No Public Key** — no public key has been received for this node, so direct messages to it cannot be sent. Use **Exchange User Info** on the node to ask for one. |
+| ![Public Key Encryption](../assets/screenshots/lockClosed.png) | **Public Key Encryption** — direct messages use public key infrastructure. Requires firmware 2.5+. |
+| ![PKI Mismatch](../assets/screenshots/keySlash.png) | **Public Key Mismatch** — public key does not match the previously recorded key. Verify the contact out-of-band. |
+
+Every radio has generated a keypair since firmware 2.5, so direct messages use it. A radio with no
+public key for the destination refuses to send rather than falling back to the channel key, so a node
+showing the open lock cannot be messaged until its node info arrives. Node detail shows **No Public
+Key** in place of the public key row for those nodes, and they are left out of the contact list.
+
+## Device Roles
+
+Each node is configured with a role that determines how it behaves on the mesh. Roles are shown in the node detail view.
+
+| Icon | Role | Description |
+|------|------|-------------|
+| ![](../assets/screenshots/roleClient.png) | Client | Standard end-user device. Sends and receives messages, shares position. |
+| ![](../assets/screenshots/roleClientMute.png) | Client Mute | Like Client but does not forward packets from other devices. Reduces mesh traffic near congested areas. |
+| ![](../assets/screenshots/roleClientHidden.png) | Client Hidden | Only broadcasts as needed for stealth or power savings. |
+| ![](../assets/screenshots/roleClientBase.png) | Client Base | Rooftop node that distributes messages widely from nearby Client Mute nodes. |
+| ![](../assets/screenshots/roleRouter.png) | Router | Dedicated infrastructure node — prioritises packet forwarding. Not for rooftops or mobile nodes. |
+| ![](../assets/screenshots/roleRouterLate.png) | Router Late | Like Router but rebroadcasts once after all other nodes. Better suited to rooftop deployments. |
+| ![](../assets/screenshots/roleTracker.png) | Tracker | Broadcasts GPS position packets as priority. Optimised for frequent location reporting. |
+| ![](../assets/screenshots/roleSensor.png) | Sensor | Broadcasts telemetry packets as priority. Optimised for sensor data. |
+| ![](../assets/screenshots/roleTak.png) | TAK | Optimised for ATAK system communication. Reduces routine broadcasts. |
+| ![](../assets/screenshots/roleTakTracker.png) | TAK Tracker | Enables automatic TAK PLI broadcasts. Reduces routine broadcasts. |
+| ![](../assets/screenshots/roleLostAndFound.png) | Lost and Found | Broadcasts location as a message to the default channel to assist with device recovery. |
+
+[Choosing the Right Device Role →](https://meshtastic.org/blog/choosing-the-right-device-role/)
+
+## Complete Node Row Examples
+
+The full node row shows the circle avatar, battery level, encryption status, last-heard time, device role, signal strength, and log indicators all at once.
+
+The signal meter shown here (and on a node's detail screen) rates link quality from SNR relative to your radio preset — using your radio's recently reported noise floor when available — and the strength bar and the SNR text color always reflect the same rating. See [Signal Meter](signal-meter.md) for how it works.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/standard_directConnected_dark.png" />
+  <img src="../assets/screenshots/standard_directConnected.png" alt="Directly connected node, favorite, with signal meter" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/standard_multiHop_dark.png" />
+  <img src="../assets/screenshots/standard_multiHop.png" alt="Multi-hop node 4 hops away" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/standard_mqtt_dark.png" />
+  <img src="../assets/screenshots/standard_mqtt.png" alt="MQTT-bridged node" />
+</picture>
+
+## Compact Node Row Examples
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/compact_directConnected_allInfo_dark.png" />
+  <img src="../assets/screenshots/compact_directConnected_allInfo.png" alt="Directly connected node with all telemetry info" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/compact_multiHop_dark.png" />
+  <img src="../assets/screenshots/compact_multiHop.png" alt="Multi-hop node 7 hops away" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/compact_withPosition_dark.png" />
+  <img src="../assets/screenshots/compact_withPosition.png" alt="Node with position, 1 hop" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/compact_pkiMismatch_dark.png" />
+  <img src="../assets/screenshots/compact_pkiMismatch.png" alt="PKI key mismatch node" />
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/compact_mqtt_dark.png" />
+  <img src="../assets/screenshots/compact_mqtt.png" alt="MQTT-bridged node" />
+</picture>
+
+## Nodes Not Heard on Your Current LoRa Settings
+
+Changing the radio's preset, region or frequency slot moves it to a different channel, and nodes it heard before may no longer be reachable. On firmware 2.8.1 and later, the radio reports for each node whether it has heard that node over LoRa on the settings it is using now, including after changes made from the device's menu or the CLI.
+
+A node the radio has not heard shows **Not heard on current LoRa** under its last-heard time. That is separate from online and offline: a node can be online and still not heard on these settings. Nodes known only over MQTT are never marked, because they don't reach your radio over LoRa. Switching back to the earlier settings brings back the earlier answers on their own.
+
+When most of the list is in that state, the Nodes tab shows a notice such as **87 nodes not heard on your current LoRa settings**. Choose **Remove Them** to open a confirmation that includes the number of nodes, such as **Remove 1 node?** or **Remove 10 nodes?**. Confirming removes those nodes from this app and the connected radio, and keeps favorites and the connected node. A node returns if it is heard again. Choose **Keep** to dismiss the notice until more nodes join that count. Nothing is removed unless you choose to.
+
+Older firmware doesn't report this, so the marker and the notice don't appear.
+
+## Context Menu Actions
+
+Long-press any node in the list to access quick actions:
+
+- **Add to favorites / Remove from favorites** — star important nodes so they appear at the top of the list
+- **Display name** — give a node a local nickname (see Display Names below)
+- **Status Message** — set the status your radio broadcasts to the mesh (connected node only, firmware 2.8+)
+- **Mute notifications / Unmute** — silence alerts from this node
+- **Message** — open a direct message conversation with this node
+- **Trace Route** — discover the path messages take to reach this node
+- **Ignore / Remove from ignored** — hide this node from normal views
+- **Remove** — remove the node from your local database
+
+## Display Names
+
+You can give any node a local nickname that's shown throughout the app instead of its device long name — in the node list, node details, and messages. Set it from the node's long-press menu ("Display name") or from the **Name** row in Node Detail. The avatar circle always shows the node's actual short code, unaffected by the nickname.
+
+Display names are stored only on this device and are never sent over the mesh, shared, or exported — they don't change the node's real identity, so QR codes and contact sharing still use the device's actual name.
+
+## Filtering & Search
+
+Tap the filter icon above the list to narrow which nodes are shown. Filters apply across the Nodes list, the contacts picker in Messages, and the map, so a filter set in one place takes effect everywhere.
+
+| Filter | What it shows |
+|--------|---------------|
+| **Online** | Only nodes heard in the last two hours. |
+| **Hide Not Heard on Current LoRa** | Hides nodes your radio has not heard on its current LoRa settings. Needs firmware 2.8.1 or later. |
+| **Favorites** | Only nodes you have starred. |
+| **Public Key Encryption** | Only nodes using PKI-encrypted direct messages. |
+| **Environment** | Only nodes reporting environment telemetry (temperature, humidity, pressure). |
+| **Hops Away** | Limit to nodes within a chosen number of hops, including direct (0-hop) only. |
+| **Distance** | Limit to nodes within a chosen radius of your location. Falls back to the connected device's last position when phone location is unavailable. |
+| **Roles** | Show only the device roles you select. |
+| **Connection** | Show nodes reachable via LoRa, via MQTT, or both. At least one is always kept on. |
+
+Filters are **remembered between launches** — the app reopens with the same filters applied. Search text is the exception: it is intentionally cleared on relaunch so you never reopen into a stale search that hides most of your nodes. Use the **reset** affordance to clear every filter and the search text at once.
+
+The map has one additional filter of its own — **Precise Locations Only**, which hides nodes reporting an approximate (reduced-precision) location. See [Map & Waypoints](map.md) for details.
+
+## Offline Map Detail
+
+Downloaded offline maps include the local road network. Pedestrian streets render as minor roads, so walkable streets remain visible offline. On nodes reporting the Burning Man firmware edition, the downloadable Burning Man 2026 map pack uses full zoom-level 15 detail for the Black Rock City street grid and remains available until you remove it.
+
+## Additional Icons
+
+Tap a node and scroll to the Logs section for detailed metrics:
+
+| Log | Description |
+|-----|-------------|
+| ![Distance & Bearing](../assets/screenshots/logDistance.png) | Direction and distance to the node based on GPS. Requires both devices to share location. |
+| ![Channel badge](../assets/screenshots/channelBadge.png) | The numbered circle shows which channel the node uses. Only shown for secondary channels (not primary channel 0). |
+| ![Device Metrics](../assets/screenshots/logDeviceMetrics.png) | Battery level, voltage, channel utilisation, and airtime reported by the node. |
+| ![Positions](../assets/screenshots/logPositions.png) | GPS position data including latitude, longitude, and altitude. |
+| ![Environment](../assets/screenshots/logEnvironment.png) | Sensor data: temperature, humidity, barometric pressure. |
+| ![Detection Sensor](../assets/screenshots/logDetectionSensor.png) | Motion or door open/close alerts from the node. |
+| ![Trace Routes](../assets/screenshots/logTraceRoutes.png) | Recorded trace route paths showing the hops a message took through the mesh. |
+
+When a node has a known position, the Logs section also offers **Estimate Coverage** (`cellularbars`). It switches to the Map tab and opens the Site Planner coverage-estimate form prefilled from that node. See [Coverage Estimate (Site Planner)](map.md) on the Map page for the full flow.
+
+## Local Stats and Noise Floor
+
+Local Stats show radio diagnostics reported by a node, including packets received, packets transmitted, duplicate packets, relayed packets, bad receives, canceled packets, online node count, total node count, and noise floor.
+
+When requesting Local Stats from another node, choose how to protect the request:
+
+- **Shared channel** encrypts the request with the selected mesh channel and is suitable for ordinary requests between channel members.
+- **Remote admin** uses PKI encryption and is unavailable until the destination has advertised a public key.
+
+Noise floor is displayed in dBm when the node reports it. Treat it as a directional diagnostic instead of an absolute site score: readings can vary quickly, and external filters can lower or skew the displayed value because of insertion loss or in-band interference.
+
+## Node Detail View
+
+Tap any node to see the full detail view with hardware info, signal metrics, environment sensors, and log navigation:
+
+![Node Detail](../assets/screenshots/nodeDetail.png)
+
+For messageable nodes, use **Actions > Share Contact QR** to show a Meshtastic contact link and QR code that another device can scan.
+
+### Write a Contact to an NFC Tag
+
+On iPhones with NFC hardware (iOS 18 or later), the contact share sheet also offers **Write to NFC Tag**. Hold a writable NFC tag near the top of your iPhone and the contact link is saved to it, replacing whatever the tag held before. Anyone can then tap that tag with their phone to open the contact in Meshtastic — the tag carries exactly the same link the QR code encodes.
+
+### Importing a Shared Contact
+
+Opening a Meshtastic contact link — by scanning a QR code, tapping a shared link, or tapping an NFC tag — presents a confirmation sheet before anything is added. The sheet shows the node's colored initials, its long name, and an explanation that adding the contact saves their name and public key to your connected node. Choose **Add Contact** to import, or **Cancel** to dismiss.
+
+If the import fails — most often because the radio disconnected — the sheet stays open and shows the reason so you can reconnect and tap **Add Contact** again. It closes only once the contact has actually been sent to your node. A link that is damaged or truncated is reported as an invalid format instead of being imported.
+
+If the contact carries a different public key than your node already holds for that node number, the sheet says so and **Add Contact** stays disabled until you turn on **Replace the stored key**. Importing replaces the key your node encrypts direct messages to that contact with, so only continue if you expected it to change — they reset their node, or set it up again. A contact you have never added, or one carrying the same key you already hold, imports without the extra step.
+
+A contact that carries no public key cannot be added. **Add Contact** is disabled and the sheet says the contact does not include one. The key is the point of a shared contact — it is what lets your node send direct messages to that contact — and applying a keyless one would clear the key your node already held, breaking direct messages that used to work. For the same reason, a node you have no public key for cannot be shared from this app.
+
+Importing a contact requires firmware 2.6.9 or later on the connected node.
+
+### Air Quality
+
+Nodes with a particulate-matter sensor — reporting the firmware's Air Quality telemetry — show an **Air Quality** section with the latest PM2.5, PM1.0, and PM10 readings in µg/m³.
+
+An **Air Quality Metrics Log** entry appears under the node's logs, with a seven-day chart and table of the particulate-matter readings (configurable columns), a **Clear** action to delete stored readings, and **CSV export**.
+
+### Signed Node
+
+If a node signs its broadcast packets, a green shield (🛡️) **Signed node** row appears in the detail view, marked **Verified automatically**. This means the radio has cryptographically verified an XEdDSA signature from this node (firmware 2.8 or later). Because a node's identity broadcast is itself signed, its name and identity are verified by extension.
+
+This is *automatic* trust observed from the radio — distinct from manually verifying a contact's public key out-of-band, which is a separate, user-asserted action. The row only ever affirms the good state; nodes that don't sign simply show no shield, which is not a warning.
+
+### Hardware Info
+
+The hardware section shows information about the physical device running the node. The section title reflects the device's support status:
+
+| Status | Meaning |
+|--------|---------|
+| **Supported Hardware** | Device is actively supported with firmware updates. |
+| **Discontinued Hardware** | Device is no longer supported and does not receive firmware updates. |
+
+For supported devices, the support tier is shown below the hardware name:
+
+| Tier | Description |
+|------|-------------|
+| Flagship | Recommended device with full feature support and active development. |
+| Niche | Supported device with active firmware updates and a specialised form factor. |
+| Legacy | Older device that still receives firmware updates but may lack some features. |
+
+### Where to Buy
+
+For devices with known purchase links, an **I want one** section appears below the hardware info. It shows the official vendor link and regional marketplace options (Amazon, Rokland, AliExpress, and others) sourced from [msh.to](https://msh.to).
+
+Marketplace links are filtered to your device region, so only stores that ship to your area are shown. Vendor links (directly from the device manufacturer) are always shown regardless of region.
+
+Some of these are affiliate links. The app says so — product links may be affiliate links, and purchases may earn Meshtastic a commission. In the **I want one** section the disclosure sits in small print below the links; the full directory at **Settings → Device Links** shows it above them.
+
+> **Tip — No purchase links shown**
+> Purchase links require an internet connection on first launch and after clearing app data. Connect the app to update the device catalog.
+
+[Device Configuration Docs →](https://meshtastic.org/docs/configuration/radio/device/)

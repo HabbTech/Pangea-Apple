@@ -8,6 +8,15 @@
 
 import SwiftUI
 
+/// Presents `PairRadioSheet` from the window root, above ContentView's `.id(databaseResetID)`.
+/// Pairing a different radio clears this device's chats, and the clear remounts everything
+/// under that id: a sheet presented from inside it was torn down mid-connect, so the name and
+/// region step after pairing never showed.
+@MainActor
+final class PairRadioPresenter: ObservableObject {
+	@Published var isPresented = false
+}
+
 struct PairRadioSheet: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
 	@Environment(\.dismiss) private var dismiss
@@ -41,7 +50,7 @@ struct PairRadioSheet: View {
 /// disconnected radio never looks like "messages aren't sending".
 struct RadioStatusBanner: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
-	@State private var showPairing = false
+	@EnvironmentObject private var pairRadio: PairRadioPresenter
 	@State private var isReconnecting = false
 
 	private enum Status {
@@ -59,8 +68,8 @@ struct RadioStatusBanner: View {
 
 	var body: some View {
 		// A VStack, not a Group: a Group hands its modifiers to its child, so the
-		// .hidden case (EmptyView) would remove the sheet's presenter the moment
-		// the radio connects, tearing down the pairing sheet mid-setup.
+		// .hidden case (EmptyView) would lose the animation the moment the radio connects.
+		// The pairing sheet itself is presented from the window root (PairRadioPresenter).
 		VStack(spacing: 0) {
 			switch status {
 			case .hidden:
@@ -73,19 +82,16 @@ struct RadioStatusBanner: View {
 						isReconnecting = true
 						let found = await RadioPairing.reconnect(accessoryManager: accessoryManager)
 						isReconnecting = false
-						if !found { showPairing = true }
+						if !found { pairRadio.isPresented = true }
 					}
 				}
 			case .notPaired:
 				pill(icon: "antenna.radiowaves.left.and.right", text: String(localized: "No radio paired"), action: String(localized: "Pair Radio")) {
-					showPairing = true
+					pairRadio.isPresented = true
 				}
 			}
 		}
 		.animation(.snappy, value: status == .hidden)
-		.sheet(isPresented: $showPairing) {
-			PairRadioSheet()
-		}
 	}
 
 	private func pill(icon: String?, text: String, action: String?, perform: @escaping () -> Void) -> some View {
