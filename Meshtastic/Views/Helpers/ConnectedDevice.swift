@@ -115,3 +115,18 @@ struct ConnectedDevice: View {
 			)
 	}
 }
+
+/// Pangea: the indicator as a toolbar item, only in Expert Mode. Standard mode shows connection
+/// problems in the banner instead, and an item with nothing in it still takes up room in the toolbar.
+struct ConnectedDeviceItem: ToolbarContent {
+	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
+	let device: ConnectedDevice
+
+	var body: some ToolbarContent {
+		if expertModeEnabled {
+			ToolbarItem(placement: .navigationBarTrailing) {
+				device
+			}
+		}
+	}
+}

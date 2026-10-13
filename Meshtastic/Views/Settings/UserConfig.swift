@@ -211,10 +211,9 @@ struct UserConfig: View {
 			}
 		}
 		.navigationTitle("User Config")
-		.navigationBarItems(trailing:
-								ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ConnectedDeviceItem(device: ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?"))
+		}
 		.onAppear {
 			self.shortName = node?.user?.shortName ?? ""
 			self.longName = node?.user?.longName ?? ""

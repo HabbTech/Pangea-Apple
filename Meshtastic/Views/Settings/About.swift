@@ -5,7 +5,6 @@
 //  Copyright(c) Garth Vander Houwen 10/6/22.
 //
 import SwiftUI
-import StoreKit
 
 struct AboutMeshtastic: View {
 
@@ -16,7 +15,7 @@ struct AboutMeshtastic: View {
 		VStack {
 			List {
 				Section(header: Text("What is Pangea?")) {
-					Text("An open source, off-grid, decentralized, mesh network that runs on affordable, low-power radios.")
+					Text("Off-grid, decentralized, mesh network that runs on affordable, low-power radios.")
 						.font(.title3)
 
 				}
@@ -31,32 +30,27 @@ struct AboutMeshtastic: View {
 								.cornerRadius(5)
 								.padding()
 							VStack(alignment: .leading) {
-								Link("Buy Complete Radios", destination: URL(string: "http://garthvh.com")!)
+								// No link yet.
+								Text("Buy Complete Radios (coming soon)")
 									.font(.title2)
 								Text("Get custom waterproof solar and detection sensor router nodes, aluminium desktop nodes and rugged handsets.")
 									.font(.callout)
 							}
 						}
 					}
-					Link("Sponsor App Development", destination: URL(string: "https://github.com/sponsors/garthvh")!)
+					// No links yet for sponsoring, reviews or documentation.
+					Text("Sponsor App Development (coming soon)")
 						.font(.title2)
-					Link("GitHub Repository", destination: URL(string: "https://github.com/meshtastic/Pangea-Apple")!)
+					Text("Review the app (coming soon)")
 						.font(.title2)
-					Button("Review the app") {
-						if let scene = UIApplication.shared.connectedScenes
-							.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
-							AppStore.requestReview(in: scene)
-						}
-					}
-					.font(.title2)
 
 					Text("Version: \(Bundle.main.appVersionLong) (\(Bundle.main.appBuild))")
 				}
 
 				Section(header: Text("Project information")) {
-					Link("Website", destination: URL(string: "https://meshtastic.org")!)
+					Link("Website", destination: URL(string: "https://habb.tech/")!)
 						.font(.title2)
-					Link("Documentation", destination: URL(string: "https://meshtastic.org/docs/getting-started")!)
+					Text("Documentation (coming soon)")
 						.font(.title2)
 				}
 				Text("Pangea® Copyright HABB")

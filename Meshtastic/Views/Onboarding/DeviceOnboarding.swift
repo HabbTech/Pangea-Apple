@@ -421,7 +421,7 @@ struct DeviceOnboarding: View {
 
 	var pairRadioView: some View {
 		VStack(spacing: 0) {
-			PairRadioView {
+			PairRadioView(finishIfAlreadyConnected: true) {
 				navigationPath.append(.profile)
 			}
 			Button("I don't have my radio yet") {

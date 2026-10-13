@@ -316,7 +316,7 @@ extension AccessoryManager {
 
 					let dataType = PortNum.textMessageApp
 					var messageQuotesReplaced = message.replacingOccurrences(of: "’", with: "'")
-					messageQuotesReplaced = message.replacingOccurrences(of: "”", with: "\"")
+					messageQuotesReplaced = messageQuotesReplaced.replacingOccurrences(of: "”", with: "\"")
 					let payloadData: Data = messageQuotesReplaced.data(using: String.Encoding.utf8)!
 
 					var dataMessage = DataMessage()
@@ -371,7 +371,22 @@ extension AccessoryManager {
 					toRadio.packet = meshPacket
 					Task {
 						let logString = String.localizedStringWithFormat("Sent message %@ from %@ to %@".localized, String(newMessage.messageId), fromUserNum.toHex(), toUserNum.toHex())
-						try await send(toRadio, debugDescription: logString)
+						do {
+							try await send(toRadio, debugDescription: logString)
+						} catch {
+							// Pangea: the radio never got it, so no routing reply will come. Show it
+							// as failed rather than sending forever. A link that dropped while the
+							// write waited for its reply may still have delivered it, so that stays
+							// as sending rather than inviting a duplicate retry.
+							Logger.services.error("💥 Sending message \(newMessage.messageId, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+							if AccessoryError.neverSent(error) {
+								newMessage.ackError = Int32(RoutingError.noInterface.rawValue)
+								try? context.save()
+							} else {
+								// If no reply ever comes, it's shown as not delivered then, with Try Again.
+								DeliveryStatus.checkForStaleSends(fromNum: fromUserNum, context: context)
+							}
+						}
 					}
 					do {
 						try context.save()
@@ -449,7 +464,7 @@ extension AccessoryManager {
 		}
 		// Before we get started delete the existing channels from the myNodeInfo
 		if !addChannels {
-			tryClearExistingChannels()
+			await tryClearExistingChannels()
 		}
 
 		let decodedString = base64UrlString.base64urlToBase64()
@@ -457,7 +472,10 @@ extension AccessoryManager {
 			let channelSet: ChannelSet = try ChannelSet(serializedBytes: decodedData)
 
 			var myInfo: MyInfoEntity!
-			var i: Int32 = 0
+			// Pangea: the slot each channel in the set is written to. Replacing writes 0, 1, 2…;
+			// adding takes free secondary slots by the same rule as a new group, because the
+			// list can have gaps where a group was left and the next index by count may hold one.
+			let slots: [Int32]
 
 			if addChannels {
 				let fetchMyInfoRequest = MyInfoEntity.fetchRequest()
@@ -468,17 +486,17 @@ extension AccessoryManager {
 					throw AccessoryError.appError("MyInfo not found")
 				}
 				
-				// We are trying to add a channel so lets get the last index
 				myInfo = fetchedMyInfo[0]
-				i = Int32(myInfo.channels?.count ?? -1)
-				
-				// Bail out if the index is negative or bigger than our max of 8
-				if i < 0 || i > 8 {
-					throw AccessoryError.appError("Index out of range \(i)")
+				slots = try GroupChats.freeSlots(in: myInfo.channels?.array as? [ChannelEntity] ?? [], count: channelSet.settings.count)
+			} else {
+				// The radio has 8 channels, 0 to 7.
+				guard channelSet.settings.count <= 8 else {
+					throw AccessoryError.appError("Index out of range \(channelSet.settings.count - 1)")
 				}
+				slots = channelSet.settings.indices.map { Int32($0) }
 			}
 
-			for cs in channelSet.settings {
+			for (cs, i) in zip(channelSet.settings, slots) {
 
 				if addChannels {
 					guard let mutableChannels = myInfo.channels?.mutableCopy() as? NSMutableOrderedSet else {
@@ -495,7 +513,6 @@ extension AccessoryManager {
 				chan.role = (i == 0) ? .primary : .secondary
 				chan.settings = cs
 				chan.index = i
-				i += 1
 
 				var adminPacket = AdminMessage()
 				adminPacket.setChannel = chan
@@ -523,32 +540,6 @@ extension AccessoryManager {
 				let logString = String.localizedStringWithFormat("Sent a Channel for: %@ Channel Index %d".localized, String(deviceNum), chan.index)
 				try await send(toRadio, debugDescription: logString)
 				await MeshPackets.shared.channelPacket(channel: chan, fromNum: self.activeDeviceNum ?? 0)
-			}
-			if !addChannels {
-				// Save the LoRa Config and the device will reboot
-				var adminPacket = AdminMessage()
-				adminPacket.setConfig.lora = channelSet.loraConfig
-				adminPacket.setConfig.lora.configOkToMqtt = okToMQTT // Preserve users okToMQTT choice
-				var meshPacket: MeshPacket = MeshPacket()
-				meshPacket.to = UInt32(deviceNum)
-				meshPacket.from	= UInt32(deviceNum)
-				meshPacket.id = UInt32.random(in: UInt32(UInt8.max)..<UInt32.max)
-				meshPacket.priority =  MeshPacket.Priority.reliable
-				meshPacket.wantAck = true
-				meshPacket.channel = 0
-				var dataMessage = DataMessage()
-				guard let adminData: Data = try? adminPacket.serializedData() else {
-					throw AccessoryError.ioFailed("sendReboot: Unable to serialize Admin packet")
-				}
-				dataMessage.payload = adminData
-				dataMessage.portnum = PortNum.adminApp
-				meshPacket.decoded = dataMessage
-				var toRadio: ToRadio!
-				toRadio = ToRadio()
-				toRadio.packet = meshPacket
-				
-				let logString = String.localizedStringWithFormat("Sent a LoRa.Config for: %@".localized, String(deviceNum))
-				try await send(toRadio, debugDescription: logString)
 			}
 			if !addChannels {
 				// Save the LoRa Config and the device will reboot

@@ -246,10 +246,14 @@ struct NodeNavigationTests {
 
 	// MARK: - Node Object ID Cache
 
+	/// On the main actor, since the view context is a main-queue context. Its own empty store:
+	/// `.preview` fills one with sample nodes and stops the app if that save fails.
+	@MainActor
 	@Test func cachedNodeInfoReturnNilForUnknownNode() async {
-		let router = await Router()
-		let context = PersistenceController.preview.container.viewContext
-		let result = await router.cachedNodeInfo(id: 999999, context: context)
+		let router = Router()
+		let controller = PersistenceController(inMemory: true)
+		let result = router.cachedNodeInfo(id: 999999, context: controller.container.viewContext)
 		#expect(result == nil)
+		withExtendedLifetime(controller) {}
 	}
 }

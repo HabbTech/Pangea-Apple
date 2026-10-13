@@ -86,15 +86,26 @@ struct Messages: View {
 				Text("Select a conversation type")
 			}
 		} detail: {
-			if let myInfo = node?.myInfo, let channelSelection {
-				ChannelMessageList(myInfo: myInfo, channel: channelSelection)
-					// The toolbar is now defined inside ChannelMessageList.swift
-			} else if let userSelection {
-				UserMessageList(user: userSelection)
-			} else if case .channels = router.messagesState {
-				Text("Select a channel")
-			} else if case .directMessages = router.messagesState {
-				Text("Select a conversation")
+			// The open list decides which chat shows, so a channel opened earlier doesn't
+			// stay up when a contact is picked (or a contact when a channel is).
+			switch router.messagesState {
+			case .channels:
+				if let myInfo = node?.myInfo, let channelSelection {
+					ChannelMessageList(myInfo: myInfo, channel: channelSelection)
+						.id(channelSelection.objectID)
+						// The toolbar is now defined inside ChannelMessageList.swift
+				} else {
+					Text("Select a channel")
+				}
+			case .directMessages:
+				if let userSelection {
+					UserMessageList(user: userSelection)
+						.id(userSelection.objectID)
+				} else {
+					Text("Select a conversation")
+				}
+			case nil:
+				EmptyView()
 			}
 		}.onChange(of: router.messagesState) {
 			setupNavigationState()
@@ -115,6 +126,7 @@ struct Messages: View {
 
 		switch state {
 		case .channels(channelId: let channelId, messageId: _):
+			userSelection = nil
 			if let channelId {
 				channelSelection = node?.myInfo?.channels?.first(where: { channel in
 					guard let channel = channel as? ChannelEntity else { return false }
@@ -125,6 +137,7 @@ struct Messages: View {
 				userSelection = nil
 			}
 		case .directMessages(userNum: let userNum, messageId: _):
+			channelSelection = nil
 			if let userNum {
 				userSelection = getUser(id: userNum, context: context)
 			} else {

@@ -578,8 +578,8 @@ extension MeshPackets {
 		let context = self.backgroundContext
 		await context.perform {
 			self.upsertPositionPacket(packet: packet, context: context)
+			self.resetContextIfNeeded()
 		}
-		resetContextIfNeeded()
 	}
 	
 	nonisolated func upsertPositionPacket (packet: MeshPacket, context: NSManagedObjectContext) {

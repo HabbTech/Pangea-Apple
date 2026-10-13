@@ -129,16 +129,26 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// Published Stuff
 	@Published var mqttProxyConnected: Bool = false
 	@Published var devices: [Device] = []
-	@Published var state: AccessoryManagerState
+	@Published var state: AccessoryManagerState {
+		didSet { refreshRadioReady() }
+	}
 	@Published var mqttError: String = ""
-	@Published var activeDeviceNum: Int64?
+	@Published var activeDeviceNum: Int64? {
+		didSet { if activeDeviceNum != oldValue { refreshRadioReady() } }
+	}
 	@Published var allowDisconnect = false
 	@Published var lastConnectionError: Error?
 	@Published var isConnected: Bool = false
 	@Published var isConnecting: Bool = false
 	@Published var isInBackground: Bool = false
 
-	var activeConnection: (device: Device, connection: any Connection)?
+	var activeConnection: (device: Device, connection: any Connection)? {
+		// Only whether there is one counts; it's re-assigned on every device change.
+		didSet { if (activeConnection == nil) != (oldValue == nil) { refreshRadioReady() } }
+	}
+	/// Pangea: whether the radio can take a packet, from the link, the state, my node number
+	/// and my own node in the database (see `refreshRadioReady`).
+	let readiness: RadioReadinessTracker
 
 	let transports: [any Transport]
 
@@ -157,6 +167,9 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	var connectionEventTask: Task <Void, Error>?
 	var locationTask: Task<Void, Error>?
 	var connectionStepper: SequentialSteps?
+	/// Pangea: teardowns still running. activeConnection goes nil as soon as one starts,
+	/// so this is what tells callers the link is fully closed and discovery restarted.
+	var closingConnections = 0
 	
 	// Flash subjects
 	@Published var packetsSent: Int = 0
@@ -173,10 +186,20 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	var heartbeatTimer: ResettableTimer?
 	var heartbeatResponseTimer: ResettableTimer?
 
-	init(transports: [any Transport] = [BLETransport(), TCPTransport()]) {
+	init(transports: [any Transport] = [BLETransport(), TCPTransport()], readiness: RadioReadinessTracker? = nil) {
 		self.transports = transports
 		self.state = .uninitialized
+		self.readiness = readiness ?? RadioReadinessTracker(context: PersistenceController.shared.container.viewContext)
 		self.mqttManager.delegate = self
+		// Pangea: profile packets wait while the radio can't take them and go once it can,
+		// whether or not any screen is up to notice.
+		self.readiness.onEdge = { [weak self] edge in
+			guard let self, self === AccessoryManager.shared else { return }
+			ProfileSync.radioReadinessChanged(edge)
+			if case .becameReady = edge {
+				Task { await RadioAutoConfig.turnOffPairingCode(accessoryManager: self) }
+			}
+		}
 
 		// Listen for system memory warnings to proactively release Core Data object data
 		NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
@@ -276,6 +299,8 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	// exposed the error to the UI or handled the error prior to calling this.
 	func closeConnection() async throws {
 		Logger.transport.debug("[AccessoryManager] received disconnect request")
+		closingConnections += 1
+		defer { closingConnections -= 1 }
 
 		if let activeConnection {
 			updateDevice(deviceId: activeConnection.device.id, key: \.connectionState, value: .disconnected)
@@ -322,7 +347,9 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 	}
 	
 	// Should only be called by UI-facing callers.
-	func disconnect() async throws {
+	// Pangea: returns once the teardown has finished (see `isFullyDisconnected`), or after
+	// `timeout`, so a connect straight after it isn't refused as "Already connecting".
+	func disconnect(timeout: Duration = .seconds(5)) async throws {
 		self.userRequestedConnectionCancellation = true
 		// Cancel ongoing connection task if it exists
 		await self.connectionStepper?.cancel()
@@ -331,6 +358,18 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 		if let activeConnection = activeConnection {
 			try await activeConnection.connection.disconnect(withError: nil, shouldReconnect: false)
 		}
+
+		// Cancelling only flags the attempt; its own clean-up (closeConnection, then clearing
+		// the stepper) and the link's close event finish a moment later.
+		let deadline = ContinuousClock.now + timeout
+		while !isFullyDisconnected && ContinuousClock.now < deadline {
+			try? await Task.sleep(for: .milliseconds(20))
+		}
+	}
+
+	/// Pangea: no link, no connection attempt, and no teardown still running.
+	var isFullyDisconnected: Bool {
+		activeConnection == nil && connectionStepper == nil && closingConnections == 0
 	}
 
 	// Update device attributes on MainActor for presentation in the UI
@@ -393,6 +432,18 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			self.isConnecting = false
 		}
 		self.state = newState
+	}
+
+	/// Pangea: brings `readiness` up to date. Called on every change of the link, the state
+	/// and my node number, once the new value is set; my own node in the database is watched
+	/// by `readiness` itself.
+	func refreshRadioReady() {
+		readiness.refresh(hasConnection: activeConnection != nil, state: state, deviceNum: activeDeviceNum)
+	}
+
+	/// Pangea: whether the radio can take a packet right now, from the live inputs.
+	var radioReadyNow: Bool {
+		readiness.isReady(hasConnection: activeConnection != nil, state: state, deviceNum: activeDeviceNum)
 	}
 
 	func send(_ data: ToRadio, debugDescription: String? = nil) async throws {
@@ -745,6 +796,17 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			Logger.transport.info("✅ [Accessory] Notifying completions that have completed for configCompleteID: \(configCompleteID)")
 			switch configCompleteID {
 			case UInt32(NONCE_ONLY_CONFIG):
+				// Pangea: every channel has been reported, so the list can be settled and the TAK
+				// server can check the primary channel now that there is one to check.
+				if let deviceNum = activeDeviceNum {
+					await MeshPackets.shared.finishChannelDownload(fromNum: deviceNum)
+					// The first sweep waits for the database phase (below): replies the radio
+					// queued for sends from before a dropped link come after it.
+					DeliveryStatus.checkForStaleSends(fromNum: deviceNum, context: context)
+					if TAKServerManager.shared.isRunning {
+						TAKServerManager.shared.checkPrimaryChannelValidity()
+					}
+				}
 				if let continuation = wantConfigContinuation {
 					continuation.resume()
 				}
@@ -752,6 +814,17 @@ class AccessoryManager: ObservableObject, MqttClientProxyManagerDelegate {
 			case UInt32(NONCE_ONLY_DB):
 				// Open the gate for the wantDatabaseContinuation
 				Task { await wantDatabaseGate.open() }
+
+				// Pangea: sends from before a dropped link that were never answered can be retried,
+				// once the radio has handed over the replies it queued while the app was away.
+				if let deviceNum = activeDeviceNum, let deviceId = activeConnection?.device.id {
+					let databaseDone = Date()
+					Task { @MainActor in
+						try? await Task.sleep(for: .seconds(DeliveryStatus.replyGrace))
+						guard activeDeviceNum == deviceNum, activeConnection?.device.id == deviceId, isConnected else { return }
+						DeliveryStatus.markStaleSends(fromNum: deviceNum, connectedSince: databaseDone, context: context)
+					}
+				}
 				
 				// If we get the "done" for NONCE_ONLY_DB, but are still waiting for the first NodeInfo,
 				// Then the database is probably empty, and can continue

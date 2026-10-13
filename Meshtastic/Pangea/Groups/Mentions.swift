@@ -40,34 +40,66 @@ enum Mentions {
 		return cache
 	}
 
-	/// Wraps known "@Name" mentions in markdown links. Text inside existing links is left alone.
+	/// Wraps known "@Name" mentions in markdown links. Text inside existing links and
+	/// `code spans` is left alone.
 	static func linkify(_ markdown: String) -> String {
 		guard markdown.contains("@") else { return markdown }
 		return linkify(markdown, people: people())
 	}
 
-	/// - Parameter people: sorted longest name first.
+	/// - Parameter people: sorted longest name first. A name shared by two different
+	///   people isn't linked, since there's no telling which one was meant.
 	static func linkify(_ markdown: String, people: [Person]) -> String {
 		guard !people.isEmpty else { return markdown }
 
 		var result = ""
 		var rest = Substring(markdown)
 		var insideLink = false
-		while let at = rest.firstIndex(where: { $0 == "@" || $0 == "[" || $0 == "]" }) {
+		while let at = rest.firstIndex(where: { $0 == "@" || $0 == "[" || $0 == "]" || $0 == "`" || $0.isNewline }) {
 			result += rest[..<at]
 			let char = rest[at]
-			if char != "@" {
-				insideLink = char == "["
+			if char == "`" {
+				// A code span runs to the next run of exactly as many backticks (longer or
+				// shorter runs inside it are part of the code); unclosed, it's just text.
+				let run = rest[at...].prefix(while: { $0 == "`" })
+				let after = rest[run.endIndex...]
+				if let close = closingRun(in: after, length: run.count) {
+					result += rest[at..<close]
+					rest = rest[close...]
+				} else {
+					result += run
+					rest = after
+				}
+				continue
+			}
+			if char.isNewline {
+				// Link text never spans lines, so a stray "[" stops mattering here.
+				insideLink = false
 				result.append(char)
 				rest = rest[rest.index(after: at)...]
 				continue
 			}
+			if char != "@" {
+				insideLink = char == "["
+				result.append(char)
+				rest = rest[rest.index(after: at)...]
+				if char == "]", rest.first == "(" {
+					// The link's target, e.g. the URL in "[url](url)", is copied untouched.
+					let target = linkTarget(rest)
+					result += target
+					rest = rest[target.endIndex...]
+				}
+				continue
+			}
 			let afterAt = rest[rest.index(after: at)...]
 			let precededByWord = result.last.map { $0.isLetter || $0.isNumber } ?? false
-			let lowered = afterAt.prefix(40).lowercased()
+			let lowered = matchKey(afterAt.prefix(40))
 			if !insideLink, !precededByWord,
-			   let match = people.first(where: { lowered.hasPrefix($0.name.lowercased()) && endsWord(afterAt, length: $0.name.count) }) {
-				let shown = afterAt.prefix(match.name.count)
+			   let match = people.first(where: { lowered.hasPrefix(matchKey($0.name)) && endsWord(afterAt, length: $0.name.count) }),
+			   !people.contains(where: { $0.num != match.num && matchKey($0.name) == matchKey(match.name) }) {
+				// Markdown punctuation in a name (brackets, backticks, * and _) would end the
+				// link text or style it; escaped, it shows as typed.
+				let shown = afterAt.prefix(match.name.count).map { Self.markdownPunctuation.contains($0) ? "\\\($0)" : String($0) }.joined()
 				let raw = PangeaCode.code(for: match.num).filter { $0 != "@" && $0 != "-" }
 				result += "[@\(shown)](\(PangeaCode.scheme)://\(PangeaCode.contactHost)/\(raw))"
 				rest = afterAt.dropFirst(match.name.count)
@@ -78,6 +110,43 @@ enum Mentions {
 		}
 		result += rest
 		return result
+	}
+
+	/// Lowercased, with the curly quotes that sending turns straight (see `sendMessage`)
+	/// made straight here too, so "@Sam’s Radio" still matches once it arrives as "Sam's".
+	/// Each swap is one character for one, so lengths in the text and the name still line up.
+	private static func matchKey<S: StringProtocol>(_ text: S) -> String {
+		text.lowercased().replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "”", with: "\"")
+	}
+
+	/// Every character CommonMark lets a backslash escape.
+	private static let markdownPunctuation = Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+	/// The end of the first run of exactly `length` backticks in `text`.
+	private static func closingRun(in text: Substring, length: Int) -> Substring.Index? {
+		var index = text.startIndex
+		while let start = text[index...].firstIndex(of: "`") {
+			let run = text[start...].prefix(while: { $0 == "`" })
+			if run.count == length { return run.endIndex }
+			index = run.endIndex
+		}
+		return nil
+	}
+
+	/// "(…)" at the start of `text`, through its matching ")". If it never closes it isn't
+	/// a link, so only the "(" is returned and the rest is still scanned for mentions.
+	private static func linkTarget(_ text: Substring) -> Substring {
+		var depth = 0
+		for index in text.indices {
+			switch text[index] {
+			case "(": depth += 1
+			case ")":
+				depth -= 1
+				if depth == 0 { return text[...index] }
+			default: break
+			}
+		}
+		return text.prefix(1)
 	}
 
 	private static func endsWord(_ text: Substring, length: Int) -> Bool {

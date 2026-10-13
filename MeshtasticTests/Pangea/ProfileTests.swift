@@ -12,10 +12,32 @@ import UIKit
 struct ProfileWireTests {
 
 	@Test func cardRoundTrips() throws {
-		let card = ProfileCard(displayName: "Sam Rivera", emoji: "🏕️", color: 3, photoVersion: 0xDEADBEEF)
+		let photo = try #require(PhotoPieces(photo: Data((0..<5000).map { UInt8($0 % 253) })))
+		let card = ProfileCard(displayName: "Sam Rivera", emoji: "🏕️", color: 3, photo: photo)
+		#expect(card.hasPhotoLayout)
 		let payload = try #require(card.payload)
 		#expect(payload.count < 100)
 		#expect(ProfileCard(payload: payload) == card)
+		let plain = ProfileCard(displayName: "Sam", emoji: "", color: 0, photoVersion: 0)
+		#expect(ProfileCard(payload: try #require(plain.payload)) == plain)
+	}
+
+	@Test func biggestCardFitsInOnePacket() throws {
+		let photo = try #require(PhotoPieces(photo: Data((0..<(PhotoChunk.maxBytes * PhotoChunk.maxChunks)).map { UInt8($0 % 251) })))
+		#expect(photo.manifest.count == 4)
+		let card = ProfileCard(displayName: String(repeating: "é", count: 32), emoji: "🧑🏻‍🤝‍🧑🏿", color: 1, photo: photo)
+		let payload = try #require(card.payload)
+		// Same room a photo piece gets (magic, version, index, 180 bytes).
+		#expect(payload.count <= PhotoChunk.maxBytes + 10)
+		#expect(photo.manifest.allSatisfy { $0.payload.count <= PhotoChunk.maxBytes + 10 })
+		#expect(ProfileCard(payload: payload) == card)
+	}
+
+	@Test func aPhotoWithoutItsPiecesIsntOffered() throws {
+		// A version but no piece list (say the file went missing): sent as no photo.
+		let card = ProfileCard(displayName: "Sam", emoji: "", color: 0, photoVersion: 0xDEADBEEF)
+		#expect(!card.hasPhotoLayout)
+		#expect(ProfileCard(payload: try #require(card.payload))?.photoVersion == 0)
 	}
 
 	@Test func cardVersionChangesWithContent() {
@@ -38,7 +60,12 @@ struct ProfileWireTests {
 		#expect(ProfileCard(payload: Data("PGI1hello".utf8)) == nil)
 		#expect(ProfileCard(payload: PangeaWire.cardMagic + Data([1, 2])) == nil)
 		#expect(PhotoRequest(payload: Data("nope".utf8)) == nil)
-		#expect(PhotoChunk(payload: PangeaWire.chunkMagic + Data([0, 0, 0, 1, 5, 2])) == nil) // index past count
+		#expect(PhotoChunk(payload: PangeaWire.chunkMagic + Data([0, 0, 0, 1, 80, 2])) == nil) // index past the most pieces
+		#expect(PhotoChunk(payload: PangeaWire.chunkMagic + Data([0, 0, 0, 1, 5])) == nil) // no bytes
+		#expect(PhotoManifest(payload: PangeaWire.manifestMagic + Data([0, 0, 0, 1, 0, 1, 2, 3])) == nil) // not whole tags
+		#expect(PhotoManifest(payload: PangeaWire.manifestMagic + Data([0, 0, 0, 1, 4]) + Data(count: 8)) == nil) // part past the last
+		// Older formats aren't read.
+		#expect(ProfileCard(payload: Data("PGP1".utf8) + Data([0, 0, 0, 0, 0, 0, 0])) == nil)
 	}
 
 	@Test func requestRoundTrips() {
@@ -55,7 +82,7 @@ struct ProfileWireTests {
 		let chunks = PhotoChunk.split(photo)
 		#expect(chunks.count == 7)
 		#expect(PhotoChunk.split(Data(count: PhotoCompressor.limit)).count <= PhotoChunk.maxChunks)
-		#expect(chunks.allSatisfy { $0.payload.count <= PhotoChunk.maxBytes + 10 })
+		#expect(chunks.allSatisfy { $0.payload.count <= PhotoChunk.maxBytes + 9 })
 
 		// Arrive out of order, through the wire format.
 		var received: [UInt8: Data] = [:]

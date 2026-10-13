@@ -13,7 +13,7 @@ class PersistenceController {
 	static let shared = PersistenceController()
 
 	static var preview: PersistenceController = {
-		let result = PersistenceController(inMemory: false)
+		let result = PersistenceController(inMemory: true)
 		let viewContext = result.container.viewContext
 		for _ in 0..<10 {
 			let newItem = NodeInfoEntity(context: viewContext)
@@ -32,9 +32,13 @@ class PersistenceController {
 
 	let container: NSPersistentContainer
 
+	/// Pangea: loaded once and shared, so an in-memory container beside `shared` doesn't
+	/// load a second copy (entity lookups would then match two models).
+	private static let model = NSManagedObjectModel(contentsOf: Bundle.main.url(forResource: "Meshtastic", withExtension: "momd")!)!
+
 	init(inMemory: Bool = false) {
 
-		container = NSPersistentContainer(name: "Meshtastic")
+		container = NSPersistentContainer(name: "Meshtastic", managedObjectModel: Self.model)
 
 		if inMemory {
 			container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")

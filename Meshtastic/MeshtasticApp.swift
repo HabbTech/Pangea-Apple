@@ -6,12 +6,6 @@ import OSLog
 import TipKit
 import MeshtasticProtobufs
 import WatchConnectivity
-import DatadogCore
-import DatadogCrashReporting
-import DatadogRUM
-import DatadogTrace
-import DatadogLogs
-import DatadogSessionReplay
 
 @main
 struct MeshtasticAppleApp: App {
@@ -33,56 +27,6 @@ struct MeshtasticAppleApp: App {
 		let appState = AppState(
 			router: Router()
 		)
-		// Initialize Datadog
-		// RUM Client Tokens are NOT secret
-		let appID = "79fe92a9-74c9-4c8f-ba63-6308384ecfa9"
-		let clientToken = "pub4427bea20dbdb08a6af68034de22cd3b"
-		var environment = "AppStore"
-
-#if DEBUG
-		environment = "Local"
-#else
-		if Bundle.main.isTestFlight {
-			environment = "TestFlight"
-		}
-#endif
-
-		Datadog.initialize(
-			with: Datadog.Configuration(
-				clientToken: clientToken,
-				env: environment,
-				site: .us5
-			),
-			trackingConsent: UserDefaults.usageDataAndCrashReporting ? .granted : .notGranted
-		)
-		DatadogCrashReporting.CrashReporting.enable()
-		Logs.enable()
-		Trace.enable(
-			with: Trace.Configuration(
-				sampleRate: 100, networkInfoEnabled: true // 100% sampling for development/testing, reduce for production
-			)
-		)
-
-		RUM.enable(
-			with: RUM.Configuration(
-				applicationID: appID,
-				swiftUIViewsPredicate: DefaultSwiftUIRUMViewsPredicate(),
-				swiftUIActionsPredicate: DefaultSwiftUIRUMActionsPredicate(isLegacyDetectionEnabled: true),
-				trackBackgroundEvents: true
-			)
-		)
-		if Bundle.main.isTestFlight {
-			SessionReplay.enable(
-				with: SessionReplay.Configuration(
-					replaySampleRate: 100,
-					textAndInputPrivacyLevel: .maskSensitiveInputs,
-					imagePrivacyLevel: .maskNone,
-					touchPrivacyLevel: .show,
-					startRecordingImmediately: true,
-					featureFlags: [.swiftui: true]
-				)
-			)
-		}
 		accessoryManager = AccessoryManager.shared
 		accessoryManager.appState = appState
 
@@ -198,6 +142,8 @@ struct MeshtasticAppleApp: App {
 				}
 			})
 			.task {
+				let background = PersistenceController.shared.container.newBackgroundContext()
+				background.perform { renameOldPlaceholderNames(context: background) }
 				try? Tips.configure(
 					[
 						// Reset which tips have been shown and what parameters have been tracked, useful during testing and for this sample project
@@ -214,9 +160,6 @@ struct MeshtasticAppleApp: App {
 			switch newScenePhase {
 			case .background:
 				Logger.services.info("🎬 [App] Scene is in the background")
-				// Stop Session Replay when app goes to background to prevent crashes
-				// from accessing SwiftUI view hierarchy while backgrounded
-				SessionReplay.stopRecording()
 				accessoryManager.appDidEnterBackground()
 				do {
 					try persistenceController.container.viewContext.save()
@@ -230,8 +173,6 @@ struct MeshtasticAppleApp: App {
 				Logger.services.info("🎬 [App] Scene is inactive")
 			case .active:
 				Logger.services.info("🎬 [App] Scene is active")
-				// Resume Session Replay when app becomes active
-				SessionReplay.startRecording()
 				accessoryManager.appDidBecomeActive()
 			@unknown default:
 				Logger.services.error("🍎 [App] Apple must have changed something")

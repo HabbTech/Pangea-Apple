@@ -58,7 +58,10 @@ struct RadioStatusBanner: View {
 	}
 
 	var body: some View {
-		Group {
+		// A VStack, not a Group: a Group hands its modifiers to its child, so the
+		// .hidden case (EmptyView) would remove the sheet's presenter the moment
+		// the radio connects, tearing down the pairing sheet mid-setup.
+		VStack(spacing: 0) {
 			switch status {
 			case .hidden:
 				EmptyView()

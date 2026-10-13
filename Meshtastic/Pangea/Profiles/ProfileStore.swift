@@ -16,8 +16,10 @@ struct MyProfile: Codable, Equatable {
 	var color: UInt8 = 0
 	var photoVersion: UInt32 = 0
 
-	func card(fallbackName: String) -> ProfileCard {
-		ProfileCard(displayName: displayName.isEmpty ? fallbackName : displayName, emoji: emoji, color: color, photoVersion: photoVersion)
+	/// My card. The photo is described only when `photo` is the one saved as mine.
+	func card(fallbackName: String, photo: PhotoPieces? = nil) -> ProfileCard {
+		ProfileCard(displayName: displayName.isEmpty ? fallbackName : displayName, emoji: emoji, color: color,
+					photo: photo?.version == photoVersion && photoVersion != 0 ? photo : nil)
 	}
 }
 
@@ -32,6 +34,22 @@ struct ContactProfile: Codable, Equatable {
 	var sentCardVersion: UInt32 = 0
 	/// Group channel we last heard their card on, for people without a DM key.
 	var lastChannel: Int32?
+	/// That group's identity ("index:name:key hash") when the card arrived. A slot
+	/// index alone is reused when a group is left and another joined, or the radio changes.
+	var lastGroupKey: String?
+	/// How the card arrived. One sent privately came from their key; one heard in a group
+	/// could have been sent by anyone in it, so it never replaces a private one.
+	var cardSource: CardSource?
+	/// Saved to Contacts. Kept here, not in the node list, so they stay after the radio forgets them.
+	/// A build from before Contacts drops this and `contactName` when it saves: only a TestFlight
+	/// rollback can install one (the App Store never goes back a version), so that is accepted.
+	var isContact = false
+	/// Their radio name when they were saved, to show while the radio doesn't know them.
+	var contactName: String?
+
+	enum CardSource: String, Codable {
+		case direct, group
+	}
 
 	/// A photo is waiting that the user hasn't downloaded or dismissed.
 	var hasPhotoOffer: Bool {
@@ -43,6 +61,38 @@ struct ContactProfile: Codable, Equatable {
 	var canUpdatePhoto: Bool {
 		guard let version = card?.photoVersion, version != 0 else { return false }
 		return version != savedPhotoVersion
+	}
+}
+
+// Decoded field by field, so a file written by an older or newer version (a field
+// added, missing, or of another type) still loads instead of being thrown away. A field
+// that's there but unreadable is noted, so the file is copied aside before it's rewritten.
+extension MyProfile {
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		displayName = container.tolerant(String.self, forKey: .displayName, decoder) ?? ""
+		// Older versions took any text here; it's held to the rule every receiver applies.
+		emoji = ProfileCard.cleanEmoji(container.tolerant(String.self, forKey: .emoji, decoder) ?? "")
+		color = container.tolerant(UInt8.self, forKey: .color, decoder) ?? 0
+		photoVersion = container.tolerant(UInt32.self, forKey: .photoVersion, decoder) ?? 0
+	}
+}
+
+extension ContactProfile {
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		// Cleaned here, so every screen sees the same name and emoji, whenever the card was saved.
+		card = container.tolerant(ProfileCard.self, forKey: .card, decoder)?.cleaned
+		savedPhotoVersion = container.tolerant(UInt32.self, forKey: .savedPhotoVersion, decoder) ?? 0
+		declinedPhotoVersion = container.tolerant(UInt32.self, forKey: .declinedPhotoVersion, decoder) ?? 0
+		nickname = container.tolerant(String.self, forKey: .nickname, decoder)
+		sentCardVersion = container.tolerant(UInt32.self, forKey: .sentCardVersion, decoder) ?? 0
+		lastChannel = container.tolerant(Int32.self, forKey: .lastChannel, decoder)
+		lastGroupKey = container.tolerant(String.self, forKey: .lastGroupKey, decoder)
+		cardSource = container.tolerant(CardSource.self, forKey: .cardSource, decoder)
+		// Missing from files saved before Contacts existed.
+		isContact = container.tolerant(Bool.self, forKey: .isContact, decoder) ?? false
+		contactName = container.tolerant(String.self, forKey: .contactName, decoder)
 	}
 }
 
@@ -73,6 +123,61 @@ final class ProfileStore: ObservableObject {
 		var me: MyProfile
 		var contacts: [Int64: ContactProfile]
 		var groupSends: [String: GroupSend]
+
+		private enum CodingKeys: String, CodingKey {
+			case me, contacts, groupSends
+		}
+
+		init(me: MyProfile, contacts: [Int64: ContactProfile], groupSends: [String: GroupSend]) {
+			self.me = me
+			self.contacts = contacts
+			self.groupSends = groupSends
+		}
+
+		init(from decoder: Decoder) throws {
+			let container = try decoder.container(keyedBy: CodingKeys.self)
+			me = container.tolerant(MyProfile.self, forKey: .me, decoder) ?? MyProfile()
+			contacts = Self.decodeContacts(container, decoder)
+			groupSends = container.tolerant([String: GroupSend].self, forKey: .groupSends, decoder) ?? [:]
+		}
+
+		/// One contact at a time, so one bad entry costs that contact, not everyone.
+		/// JSONEncoder writes an [Int64: X] dictionary as a flat [key, value, key, value] array.
+		private static func decodeContacts(_ container: KeyedDecodingContainer<CodingKeys>, _ decoder: Decoder) -> [Int64: ContactProfile] {
+			guard container.contains(.contacts) else { return [:] }
+			let loss = decoder.userInfo[.pangeaDecodeLoss] as? DecodeLoss
+			guard var list = try? container.nestedUnkeyedContainer(forKey: .contacts) else {
+				loss?.happened = true
+				return [:]
+			}
+			var contacts: [Int64: ContactProfile] = [:]
+			while !list.isAtEnd {
+				let start = list.currentIndex
+				let num = try? list.decode(Int64.self)
+				if num == nil { _ = try? list.decode(Skip.self) }
+				guard !list.isAtEnd else {
+					loss?.happened = true
+					break
+				}
+				if let num, let profile = try? list.decode(ContactProfile.self) {
+					contacts[num] = profile
+				} else {
+					loss?.happened = true
+					_ = try? list.decode(Skip.self)
+				}
+				// A value even Skip can't step past (shouldn't happen): stop, keep what loaded.
+				if list.currentIndex == start {
+					loss?.happened = true
+					break
+				}
+			}
+			return contacts
+		}
+
+		/// Decodes anything, to step past a value that can't be read.
+		private struct Skip: Decodable {
+			init(from decoder: Decoder) throws {}
+		}
 	}
 
 	private let folder: URL
@@ -82,12 +187,40 @@ final class ProfileStore: ObservableObject {
 			.appendingPathComponent("PangeaProfiles", isDirectory: true))
 		self.folder = base
 		try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-		if let data = try? Data(contentsOf: base.appendingPathComponent("profiles.json")),
-		   let saved = try? JSONDecoder().decode(Saved.self, from: data) {
+		let file = base.appendingPathComponent("profiles.json")
+		guard let data = try? Data(contentsOf: file) else { return }
+		let loss = DecodeLoss()
+		let decoder = JSONDecoder()
+		decoder.userInfo[.pangeaDecodeLoss] = loss
+		do {
+			let saved = try decoder.decode(Saved.self, from: data)
 			me = saved.me
 			contacts = saved.contacts
 			groupSends = saved.groupSends
+			if loss.happened {
+				// Part of the file couldn't be read (a downgrade, say). Keep a copy of it
+				// before the next save writes it out without that part, then save what
+				// did load, so the copy isn't made again on every launch.
+				let aside = Self.setAsideURL(in: base)
+				Logger.data.error("👤 [Profiles] Part of profiles.json couldn't be read, copied to \(aside.lastPathComponent, privacy: .public)")
+				if (try? FileManager.default.copyItem(at: file, to: aside)) != nil {
+					save()
+				}
+			}
+		} catch {
+			// Keep the unreadable file (nicknames can't be fetched again) rather than
+			// letting the next save write over it. An earlier set-aside copy is kept too.
+			let aside = Self.setAsideURL(in: base)
+			Logger.data.error("👤 [Profiles] Couldn't read profiles.json, set aside as \(aside.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+			try? FileManager.default.moveItem(at: file, to: aside)
 		}
+	}
+
+	/// profiles.corrupt.json, or a unique name next to it once that's taken.
+	private static func setAsideURL(in base: URL) -> URL {
+		let first = base.appendingPathComponent("profiles.corrupt.json")
+		guard FileManager.default.fileExists(atPath: first.path) else { return first }
+		return base.appendingPathComponent("profiles.corrupt-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8)).json")
 	}
 
 	private func save() {
@@ -111,14 +244,14 @@ final class ProfileStore: ObservableObject {
 
 	var myPhoto: UIImage? {
 		if let myPhotoImage { return myPhotoImage }
-		myPhotoImage = myPhotoData.flatMap(UIImage.init(data:))
+		myPhotoImage = myPhotoData.flatMap(PhotoCompressor.avatarImage(from:))
 		return myPhotoImage
 	}
 
 	func updateMe(displayName: String, emoji: String, color: UInt8, photo: Data??) {
 		var profile = me
-		profile.displayName = ProfileCard.clamp(displayName.trimmingCharacters(in: .whitespacesAndNewlines), bytes: ProfileCard.maxNameBytes)
-		profile.emoji = ProfileCard.clamp(emoji, bytes: ProfileCard.maxEmojiBytes)
+		profile.displayName = displayName.cleanedName(fitting: ProfileCard.maxNameBytes)
+		profile.emoji = ProfileCard.cleanEmoji(emoji)
 		profile.color = color
 		if let photo {
 			if let photo {
@@ -143,15 +276,26 @@ final class ProfileStore: ObservableObject {
 	func photo(for num: Int64) -> UIImage? {
 		guard let profile = contacts[num], profile.savedPhotoVersion != 0 else { return nil }
 		if let cached = photoCache[num] { return cached }
-		let image = (try? Data(contentsOf: photoURL(String(num)))).flatMap(UIImage.init(data:))
+		let image = (try? Data(contentsOf: photoURL(String(num)))).flatMap(PhotoCompressor.avatarImage(from:))
 		photoCache[num] = image
 		return image
 	}
 
-	func receivedCard(_ card: ProfileCard, from num: Int64, channel: Int32?) {
+	/// `channel` is the group it was heard in, or nil for a private (PKI) card. Returns
+	/// false when it was ignored: anyone in a group can send a card in someone else's
+	/// name, so a group card never replaces one that came privately from their key.
+	@discardableResult
+	func receivedCard(_ card: ProfileCard, from num: Int64, channel: Int32?, groupKey: String? = nil) -> Bool {
 		var profile = contacts[num] ?? ContactProfile()
+		if channel != nil, profile.cardSource == .direct {
+			return false
+		}
 		profile.card = card
-		if let channel { profile.lastChannel = channel }
+		profile.cardSource = channel == nil ? .direct : .group
+		if let channel {
+			profile.lastChannel = channel
+			profile.lastGroupKey = groupKey
+		}
 		if card.photoVersion == 0, profile.savedPhotoVersion != 0 {
 			// They removed their photo.
 			profile.savedPhotoVersion = 0
@@ -160,6 +304,7 @@ final class ProfileStore: ObservableObject {
 		}
 		contacts[num] = profile
 		save()
+		return true
 	}
 
 	func savePhoto(_ data: Data, version: UInt32, for num: Int64) {
@@ -188,6 +333,42 @@ final class ProfileStore: ObservableObject {
 		save()
 	}
 
+	// MARK: Contacts
+
+	func isContact(_ num: Int64) -> Bool {
+		contacts[num]?.isContact == true
+	}
+
+	/// `radioName` is kept so the contact still has a name once the radio forgets them.
+	func setContact(_ saved: Bool, for num: Int64, radioName: String? = nil) {
+		var profile = contacts[num] ?? ContactProfile()
+		profile.isContact = saved
+		if saved {
+			if let radioName, !radioName.isEmpty { profile.contactName = radioName }
+		} else {
+			profile.contactName = nil
+		}
+		contacts[num] = profile
+		save()
+	}
+
+	/// Saved contacts by name, A to Z.
+	var contactNums: [Int64] {
+		contactNums(radioName: { _ in nil })
+	}
+
+	/// Sorted by the name each row shows: the radio's current name, when it has one, over the
+	/// one saved with the contact.
+	func contactNums(radioName current: (Int64) -> String?) -> [Int64] {
+		contacts.filter { $0.value.isContact }
+			.map { (num: $0.key, name: name(num: $0.key, radioName: current($0.key) ?? $0.value.contactName)) }
+			.sorted { lhs, rhs in
+				let order = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+				return order == .orderedSame ? lhs.num < rhs.num : order == .orderedAscending
+			}
+			.map(\.num)
+	}
+
 	func markCardSent(_ version: UInt32, to num: Int64) {
 		var profile = contacts[num] ?? ContactProfile()
 		profile.sentCardVersion = version
@@ -195,9 +376,12 @@ final class ProfileStore: ObservableObject {
 		save()
 	}
 
-	func needsGroupSend(_ key: String, version: UInt32, every interval: TimeInterval = 24 * 60 * 60) -> Bool {
+	/// Due when the card changed, a day after the last send, or when the clock is now before
+	/// the last send (it was set back): otherwise an unchanged card would never go again.
+	func needsGroupSend(_ key: String, version: UInt32, every interval: TimeInterval = 24 * 60 * 60, now: Date = Date()) -> Bool {
 		guard let last = groupSends[key] else { return true }
-		return last.version != version || Date().timeIntervalSince(last.date) > interval
+		let since = now.timeIntervalSince(last.date)
+		return last.version != version || since > interval || since < 0
 	}
 
 	func markGroupSent(_ key: String, version: UInt32) {
@@ -224,7 +408,7 @@ final class ProfileStore: ObservableObject {
 
 	func name(num: Int64, radioName: String?) -> String {
 		if let nickname = contacts[num]?.nickname { return nickname }
-		if let display = contacts[num]?.card?.displayName, !display.isEmpty { return display }
+		if let display = (contacts[num]?.card?.displayName).map(ProfileCard.cleanName), !display.isEmpty { return display }
 		if let radioName, !radioName.isEmpty { return radioName }
 		return PangeaCode.code(for: num)
 	}

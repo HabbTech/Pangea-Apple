@@ -42,6 +42,16 @@ enum EmojiCatalog {
 		return groups
 	}()
 
+	/// Every emoji the editor can produce: the full list, every skin tone, and the quick picks.
+	private static let all: Set<String> = Set(groups.flatMap(\.emoji).flatMap { [$0.emoji] + $0.variants })
+		.union(ProfileEditorSheet.suggestedEmoji)
+
+	/// Whether this is exactly one of the emoji someone can pick, so it draws as one emoji.
+	/// One from a newer catalog than this build's isn't, and shows as initials instead.
+	static func contains(_ text: String) -> Bool {
+		all.contains(text)
+	}
+
 	private static let raw = #"""
 #Smileys
 😀;grinning face

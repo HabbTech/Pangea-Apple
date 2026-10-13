@@ -50,6 +50,18 @@ struct MeshMap: View {
 	@StateObject var filters = NodeFilterParameters()
 	/// Track whether the map pop-out window is already open
 	@State private var isMapWindowOpen = false
+	/// Pangea: one radio with a location, to tell an empty map from one still waiting.
+	@FetchRequest private var anyPosition: FetchedResults<PositionEntity>
+
+	init(router: Router, showOpenWindowButton: Bool = true) {
+		_router = ObservedObject(wrappedValue: router)
+		self.showOpenWindowButton = showOpenWindowButton
+		let request = PositionEntity.fetchRequest()
+		request.predicate = NSPredicate(format: "latest == true AND nodePosition != nil")
+		request.sortDescriptors = []
+		request.fetchLimit = 1
+		_anyPosition = FetchRequest(fetchRequest: request, animation: .none)
+	}
 
 	var body: some View {
 		NavigationStack {
@@ -172,6 +184,19 @@ struct MeshMap: View {
 						.presentationContentInteraction(.scrolls)
 						.presentationDragIndicator(.visible)
 						.presentationBackgroundInteraction(.enabled(upThrough: .medium))
+				}
+				.safeAreaInset(edge: .top) {
+					if anyPosition.isEmpty {
+						Text("No radios have shared a location yet. They show up here once they send one, usually every 15 to 30 minutes. Radios without GPS or with location turned off won't appear.")
+							.font(.footnote)
+							.foregroundStyle(.secondary)
+							.multilineTextAlignment(.center)
+							.padding(12)
+							.frame(maxWidth: 480)
+							.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+							.padding(.horizontal, 16)
+							.padding(.top, 8)
+					}
 				}
 				.safeAreaInset(edge: .bottom, alignment: .trailing) {
 					HStack {

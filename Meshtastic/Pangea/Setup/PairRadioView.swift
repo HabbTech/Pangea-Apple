@@ -12,15 +12,27 @@ import OSLog
 struct PairRadioView: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
 
+	/// First-run setup moves on if a radio is already connected. From Settings the
+	/// user is here to pick a different radio, so the list always shows.
+	var finishIfAlreadyConnected = false
 	/// Called once the radio has finished sending its config and node list.
 	var onPaired: () -> Void
 
 	@State private var selectedDevice: Device?
 	@State private var pendingSwitch: Device?
 	@State private var didFinish = false
+	/// Why the last pick didn't get as far as connecting.
+	@State private var pickError: String?
+
+	/// The radio already in use, shown above the list when opened from Settings.
+	private var currentRadio: Device? {
+		guard !finishIfAlreadyConnected, selectedDevice == nil, accessoryManager.state == .subscribed else { return nil }
+		return accessoryManager.activeConnection?.device
+	}
 
 	private var nearbyRadios: [Device] {
-		accessoryManager.devices.sorted { lhs, rhs in
+		let currentId = accessoryManager.activeConnection?.device.id
+		return accessoryManager.devices.filter { $0.id != currentId }.sorted { lhs, rhs in
 			let lhsPangea = RadioAutoConfig.isPangeaRadio(lhs)
 			let rhsPangea = RadioAutoConfig.isPangeaRadio(rhs)
 			if lhsPangea != rhsPangea { return lhsPangea }
@@ -40,8 +52,13 @@ struct PairRadioView: View {
 					if isWorking, let device = selectedDevice {
 						progress(for: device)
 					} else {
-						if let error = accessoryManager.lastConnectionError, selectedDevice != nil {
-							errorCard(error)
+						if let pickError {
+							errorCard(pickError)
+						} else if let error = accessoryManager.lastConnectionError, selectedDevice != nil {
+							errorCard(friendlyMessage(for: error))
+						}
+						if let currentRadio {
+							currentRadioCard(currentRadio)
 						}
 						radioList
 					}
@@ -50,9 +67,19 @@ struct PairRadioView: View {
 			}
 		}
 		.onAppear {
-			accessoryManager.startDiscovery()
-			if accessoryManager.state == .subscribed, accessoryManager.activeConnection != nil {
+			if finishIfAlreadyConnected, accessoryManager.state == .subscribed, accessoryManager.activeConnection != nil {
 				finish()
+				return
+			}
+			// While a radio is connected this scans for others without changing the
+			// connection state (see AccessoryManager.startDiscovery).
+			accessoryManager.startDiscovery()
+		}
+		.onDisappear {
+			// Connecting stops the scan; if the user leaves with the old radio still
+			// connected, stop the scan this screen started.
+			if selectedDevice == nil, accessoryManager.activeConnection != nil {
+				accessoryManager.stopDiscovery()
 			}
 		}
 		.onChange(of: accessoryManager.state) { _, state in
@@ -113,12 +140,26 @@ struct PairRadioView: View {
 					.buttonStyle(.plain)
 				}
 			}
-			Text("If your phone asks for a pairing code, enter the number shown on your radio's screen. Radios without a screen usually use 123456.")
+			Text("The first time, your phone may ask for a pairing code: enter the number shown on your radio's screen, or 123456 if it doesn't have one. After that it won't ask again.")
 				.font(.footnote)
 				.foregroundStyle(.secondary)
 				.multilineTextAlignment(.center)
 				.padding(.top, 8)
 		}
+	}
+
+	private func currentRadioCard(_ device: Device) -> some View {
+		VStack(alignment: .leading, spacing: 8) {
+			Label("Connected to \(RadioAutoConfig.pangeaSerial(device) ?? device.name)", systemImage: "checkmark.circle.fill")
+				.font(.headline)
+				.foregroundStyle(.green)
+			Text("To switch, pick another radio below. Radios that are turned on and nearby show up here.")
+				.font(.subheadline)
+				.foregroundStyle(.secondary)
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding()
+		.background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 	}
 
 	private func radioRow(_ device: Device) -> some View {
@@ -186,12 +227,12 @@ struct PairRadioView: View {
 		}
 	}
 
-	private func errorCard(_ error: Error) -> some View {
+	private func errorCard(_ message: String) -> some View {
 		VStack(alignment: .leading, spacing: 8) {
 			Label("Couldn't connect", systemImage: "exclamationmark.triangle.fill")
 				.font(.headline)
 				.foregroundStyle(.orange)
-			Text(friendlyMessage(for: error))
+			Text(message)
 				.font(.subheadline)
 				.foregroundStyle(.secondary)
 			Text("Tap your radio below to try again.")
@@ -226,25 +267,42 @@ struct PairRadioView: View {
 			return
 		}
 		selectedDevice = device
+		pickError = nil
 		Task {
-			if accessoryManager.activeConnection != nil {
-				try? await accessoryManager.disconnect()
-			}
-			try? await accessoryManager.connect(to: device)
+			guard let found = await readyToConnect(device) else { return }
+			try? await accessoryManager.connect(to: found)
 		}
 	}
 
+	/// Nothing about the current radio changes (its preference, its chats) until it has
+	/// let go and the new one has been heard again.
 	private func switchAndConnect(to device: Device) async {
 		selectedDevice = device
-		UserDefaults.preferredPeripheralId = device.id.uuidString
+		pickError = nil
+		guard let found = await readyToConnect(device) else { return }
+		UserDefaults.preferredPeripheralId = found.id.uuidString
 		UserDefaults.preferredPeripheralNum = 0
-		if accessoryManager.activeConnection != nil {
-			try? await accessoryManager.disconnect()
+		await RadioPairing.clearRadioData()
+		try? await accessoryManager.connect(to: found)
+	}
+
+	/// Disconnects whatever is connected and waits for the picked radio to show up in
+	/// the scan again (closing a connection restarts it). Nil, with the reason shown and
+	/// the list back, if either doesn't happen.
+	private func readyToConnect(_ device: Device) async -> Device? {
+		let name = RadioAutoConfig.pangeaSerial(device) ?? device.name
+		guard await RadioPairing.disconnect(accessoryManager: accessoryManager) else {
+			let current = accessoryManager.activeConnection.map { RadioAutoConfig.pangeaSerial($0.device) ?? $0.device.name }
+			pickError = String(localized: "Couldn't disconnect from \(current ?? String(localized: "your radio")). Try again.")
+			selectedDevice = nil
+			return nil
 		}
-		await MeshPackets.shared.clearCoreDataDatabase(includeRoutes: false)
-		clearNotifications()
-		ProfileStore.shared.resetSentCards()
-		try? await accessoryManager.connect(to: device)
+		guard let found = await RadioPairing.waitForDevice(id: device.id, accessoryManager: accessoryManager) else {
+			pickError = String(localized: "Couldn't find \(name). Make sure it's turned on and nearby.")
+			selectedDevice = nil
+			return nil
+		}
+		return found
 	}
 
 	private func finish() {

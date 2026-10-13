@@ -3,7 +3,6 @@ import Combine
 import SwiftUI
 import SwiftProtobuf
 import MapKit
-import DatadogCore
 import OSLog
 
 struct AppSettings: View {
@@ -18,7 +17,6 @@ struct AppSettings: View {
 	@AppStorage("purgeStaleNodeDays") private var  purgeStaleNodeDays: Double = 0
 	@AppStorage("environmentEnableWeatherKit") private var  environmentEnableWeatherKit: Bool = true
 	@AppStorage("enableAdministration") private var  enableAdministration: Bool = false
-	@AppStorage("usageDataAndCrashReporting") private var usageDataAndCrashReporting: Bool = true
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
 
 	@StateObject private var powerManager = PowerManager.shared
@@ -50,13 +48,6 @@ struct AppSettings: View {
 					}
 					.tint(.accentColor)
 					Text("PKI based node administration, requires firmware version 2.5+")
-						.foregroundStyle(.secondary)
-						.font(.caption)
-					Toggle(isOn: $usageDataAndCrashReporting) {
-						Label("Usage and Crash Data", systemImage: "pencil.and.list.clipboard")
-					}
-					.tint(.accentColor)
-					Text("Provide anonymous usage statistics and crash reports.")
 						.foregroundStyle(.secondary)
 						.font(.caption)
 					Toggle(isOn: $expertModeEnabled) {
@@ -121,11 +112,6 @@ struct AppSettings: View {
 							showAutoConnect = true
 						}
 #endif
-					}
-					.onChange(of: usageDataAndCrashReporting) { _, newUsageDataAndCrashReporting in
-						if !newUsageDataAndCrashReporting {
-							Datadog.set(trackingConsent: .notGranted)
-						}
 					}
 					.onChange(of: purgeStaleNodes) { _, newValue in
 						purgeStaleNodeDays = purgeStaleNodeDays > 0 ? purgeStaleNodeDays : 7
@@ -206,9 +192,8 @@ struct AppSettings: View {
 			}
 		}
 		.navigationTitle("App Settings")
-		.navigationBarItems(trailing:
-								ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ConnectedDeviceItem(device: ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?"))
+		}
 	}
 }

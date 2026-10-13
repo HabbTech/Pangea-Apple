@@ -11,15 +11,6 @@
       }
     },
     {
-      "identity" : "dd-sdk-ios",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/DataDog/dd-sdk-ios.git",
-      "state" : {
-        "revision" : "8d67e973ff4a958cb536263cb816646ee904c508",
-        "version" : "3.3.0"
-      }
-    },
-    {
       "identity" : "ios-dfu-library",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/NordicSemiconductor/IOS-DFU-Library",
@@ -35,24 +26,6 @@
       "state" : {
         "revision" : "ce3e18607fd01079495f86ff6195d8a3ca469f73",
         "version" : "1.0.8"
-      }
-    },
-    {
-      "identity" : "opentelemetry-swift-packages",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/DataDog/opentelemetry-swift-packages.git",
-      "state" : {
-        "revision" : "4a7295600d4ebb9525a23c11586c5fdb74ae8b7e",
-        "version" : "1.13.1"
-      }
-    },
-    {
-      "identity" : "plcrashreporter",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/microsoft/plcrashreporter.git",
-      "state" : {
-        "revision" : "8c61e5e38e9f737dd68512ed1ea5ab081244ad65",
-        "version" : "1.12.0"
       }
     },
     {

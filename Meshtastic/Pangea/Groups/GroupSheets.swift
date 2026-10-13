@@ -134,25 +134,57 @@ struct GroupInviteSheet: View {
 
 struct GroupInviteContent: View {
 	@EnvironmentObject var accessoryManager: AccessoryManager
+	@ObservedObject private var profiles = ProfileStore.shared
+	@StateObject private var resolver = ContactResolver()
 	let channel: ChannelEntity
 
 	@FetchRequest(
 		sortDescriptors: [NSSortDescriptor(keyPath: \UserEntity.lastMessage, ascending: false)],
 		predicate: NSPredicate(format: "pkiEncrypted == YES AND lastMessage != nil")
-	) private var contacts: FetchedResults<UserEntity>
+	) private var messaged: FetchedResults<UserEntity>
 
 	@State private var sent: Set<Int64> = []
 	@State private var sending: Set<Int64> = []
 	@State private var error: String?
+	@State private var code = ""
+	@State private var showScanner = false
+	/// Who's being reached, to invite once they answer: from the code field, or a contact the radio has forgotten.
+	@State private var reaching: Int64?
+	/// The last person entered in the code field, whose progress shows under it.
+	@State private var codeTarget: Int64?
+	@State private var codeError: String?
 
+	/// Saved contacts first, then everyone else I've messaged privately, each once, never me.
+	nonisolated static func inviteList(contacts: [Int64], messaged: [Int64], me: Int64?) -> [Int64] {
+		var seen = Set<Int64>()
+		return (contacts + messaged).filter { $0 != me && seen.insert($0).inserted }
+	}
+
+	private var people: [Int64] {
+		Self.inviteList(contacts: profiles.contactNums(radioName: { existingUser(num: $0, context: accessoryManager.context)?.longName }), messaged: messaged.map(\.num), me: accessoryManager.activeDeviceNum)
+	}
+
+	/// Nil when a friend's app couldn't join from it (see `GroupInvite.shareable`).
 	private var invite: GroupInvite? {
-		guard let name = channel.name, let psk = channel.psk else { return nil }
-		return GroupInvite(name: name, psk: psk)
+		try? shareable.get()
+	}
+
+	private var shareable: Result<GroupInvite, GroupChatError> {
+		GroupInvite.shareable(name: channel.name ?? "", psk: channel.psk ?? Data())
 	}
 
 	var body: some View {
 		List {
-			if let invite, let link = invite.link {
+			if case .failure(let reason) = shareable {
+				// Made elsewhere (expert channel settings, another app, an older Pangea).
+				// Renaming it or changing its key would make it a different channel, so
+				// there's nothing to fix here.
+				Section {
+					Label(reason.localizedDescription, systemImage: "exclamationmark.triangle.fill")
+						.font(.footnote)
+						.foregroundStyle(.orange)
+				}
+			} else if let invite, let link = invite.link {
 				Section {
 					VStack(spacing: 12) {
 						if let image = qrImage(link) {
@@ -181,53 +213,241 @@ struct GroupInviteContent: View {
 				}
 			}
 
-			Section {
-				if contacts.isEmpty {
-					Text("People you've messaged privately show up here, so you can invite them with one tap.")
-						.font(.footnote)
-						.foregroundStyle(.secondary)
-				}
-				ForEach(contacts.filter { $0.num != accessoryManager.activeDeviceNum }, id: \.num) { user in
-					HStack {
-						PangeaAvatar(user: user, size: 36)
-						Text(ProfileStore.shared.name(for: user))
-						Spacer()
-						if sent.contains(user.num) {
-							Label("Sent", systemImage: "checkmark")
-								.labelStyle(.titleAndIcon)
-								.font(.subheadline)
-								.foregroundStyle(.green)
-						} else if sending.contains(user.num) {
-							ProgressView()
-						} else {
-							Button("Invite") {
-								Task { await send(to: user) }
+			if invite != nil {
+				Section {
+					let people = self.people
+					if people.isEmpty {
+						Text("Your contacts and people you've messaged privately show up here, so you can invite them with one tap.")
+							.font(.footnote)
+							.foregroundStyle(.secondary)
+					}
+					ForEach(people, id: \.self) { num in
+						ContactRow(num: num, user: existingUser(num: num, context: accessoryManager.context)) {
+							status(for: num) {
+								Button("Invite") {
+									Task { await inviteListed(num) }
+								}
+								.buttonStyle(.bordered)
+								.buttonBorderShape(.capsule)
+								.disabled(reaching != nil)
 							}
-							.buttonStyle(.bordered)
-							.buttonBorderShape(.capsule)
 						}
 					}
+				} header: {
+					Text("Invite Contacts")
+				} footer: {
+					if let error {
+						Text(error).foregroundStyle(.orange)
+					}
 				}
-			} header: {
-				Text("Invite Contacts")
-			} footer: {
-				if let error {
-					Text(error).foregroundStyle(.orange)
+
+				Section {
+					codeField
+					if let codeTarget {
+						codeStatus(codeTarget)
+					}
+					if let codeError {
+						Label(codeError, systemImage: "exclamationmark.circle")
+							.font(.footnote)
+							.foregroundStyle(.orange)
+					} else if !code.isEmpty && PangeaCode.invite(from: code) == nil && PangeaCode.looksComplete(code) {
+						Label("That code doesn't look right. Check it and try again.", systemImage: "exclamationmark.circle")
+							.font(.footnote)
+							.foregroundStyle(.orange)
+					}
+				} header: {
+					Text("Invite by Code")
+				} footer: {
+					Text("They need to have their radio on and be in range, unless you scan their QR code.")
 				}
+			}
+		}
+		.sheet(isPresented: $showScanner) {
+			QRScannerSheet { value in
+				if let scanned = PangeaCode.invite(from: value) {
+					code = scanned.code
+					reach(scanned, fromCode: true)
+				} else {
+					codeError = String(localized: "That QR code isn't a person's Pangea code.")
+				}
+			}
+		}
+		.onDisappear {
+			resolver.cancel()
+		}
+	}
+
+	private var codeField: some View {
+		HStack(spacing: 8) {
+			// An edit clears the last code's error, so it doesn't stand in for what's typed now.
+			// Not .onChange: a scanned code is set just before `reach` reports on it.
+			TextField("@code", text: Binding(get: { code }, set: { value in
+				if value != code { codeError = nil }
+				code = value
+			}))
+				.font(.body.monospaced())
+				.textInputAutocapitalization(.characters)
+				.autocorrectionDisabled()
+				.submitLabel(.send)
+				.onSubmit { reachTypedCode() }
+				.disabled(reaching != nil)
+			Button {
+				showScanner = true
+			} label: {
+				Image(systemName: "qrcode.viewfinder")
+					.font(.title3)
+			}
+			.buttonStyle(.borderless)
+			.accessibilityLabel("Scan QR code")
+			.disabled(reaching != nil)
+			Button("Invite") {
+				reachTypedCode()
+			}
+			.buttonStyle(.bordered)
+			.buttonBorderShape(.capsule)
+			.disabled(PangeaCode.invite(from: code) == nil || reaching != nil)
+		}
+	}
+
+	/// Under the code field: reaching them, sending, or sent. Nothing once it failed.
+	@ViewBuilder
+	private func codeStatus(_ num: Int64) -> some View {
+		let name = profiles.name(num: num, radioName: existingUser(num: num, context: accessoryManager.context)?.longName)
+		if sent.contains(num) {
+			Label("Invite sent to \(name)", systemImage: "checkmark")
+				.font(.subheadline)
+				.foregroundStyle(.green)
+		} else if reaching == num || sending.contains(num) {
+			HStack(spacing: 10) {
+				ProgressView()
+				if case .reaching(let code) = resolver.state {
+					Text("Reaching \(code)…")
+				} else {
+					Text("Sending invite to \(name)…")
+				}
+			}
+			.font(.subheadline)
+			.foregroundStyle(.secondary)
+		}
+	}
+
+	/// The per-person Sent / progress / Invite control.
+	@ViewBuilder
+	private func status(for num: Int64, @ViewBuilder button: () -> some View) -> some View {
+		if sent.contains(num) {
+			Label("Sent", systemImage: "checkmark")
+				.labelStyle(.titleAndIcon)
+				.font(.subheadline)
+				.foregroundStyle(.green)
+		} else if sending.contains(num) || reaching == num {
+			ProgressView()
+		} else {
+			button()
+		}
+	}
+
+	// MARK: Sending
+
+	/// A list row: sent straight away when we have their key, otherwise reached first.
+	private func inviteListed(_ num: Int64) async {
+		if let user = keyedUser(num) {
+			error = await send(to: user)
+		} else {
+			reach(PangeaCode.Invite(nodeNum: num), fromCode: false)
+		}
+	}
+
+	private func reachTypedCode() {
+		guard let typed = PangeaCode.invite(from: code), reaching == nil else { return }
+		reach(typed, fromCode: true)
+	}
+
+	private func reach(_ person: PangeaCode.Invite, fromCode: Bool) {
+		let num = person.nodeNum
+		// Typed or scanned: my own node has a key, so it would otherwise be sent one.
+		guard num != accessoryManager.activeDeviceNum else {
+			let message = String(localized: "That's your own code. Enter a friend's code to invite them.")
+			if fromCode {
+				codeTarget = nil
+				codeError = message
+			} else {
+				error = message
+			}
+			return
+		}
+		if fromCode {
+			codeTarget = num
+			codeError = nil
+		} else {
+			error = nil
+		}
+		reaching = num
+		if keyedUser(num) != nil {
+			// Already known: no need to say hello first.
+			Task { await sendOnceKnown(num) }
+			return
+		}
+		// From idle, so the status line doesn't show the last attempt's outcome meanwhile.
+		resolver.cancel()
+		Task {
+			let outcome = await resolver.resolveAndWait(person, accessoryManager: accessoryManager)
+			guard reaching == num else { return }
+			switch outcome {
+			case .ready(let ready) where ready == num:
+				await sendOnceKnown(num)
+			case .unreachable(let code):
+				report(String(localized: "Couldn't reach \(code) yet. They might be out of range or have their radio off."), for: num)
+				reaching = nil
+			case .failed(let message):
+				report(message, for: num)
+				reaching = nil
+			case .idle, .reaching, .ready:
+				// Cancelled (the sheet closed): nothing to say.
+				reaching = nil
 			}
 		}
 	}
 
-	private func send(to user: UserEntity) async {
-		guard let invite else { return }
+	/// Shown under the code field when that's where they were entered, otherwise under the list.
+	private func report(_ message: String?, for num: Int64?) {
+		if num != nil, num == codeTarget {
+			codeError = message
+		} else {
+			error = message
+		}
+	}
+
+	/// Only someone with a key can be sent an invite (it goes privately).
+	private func keyedUser(_ num: Int64) -> UserEntity? {
+		guard let user = existingUser(num: num, context: accessoryManager.context),
+			  user.pkiEncrypted, !(user.publicKey?.isEmpty ?? true) else { return nil }
+		return user
+	}
+
+	/// The resolver says ready as soon as a link's contact is added; their key can land a moment later.
+	private func sendOnceKnown(_ num: Int64) async {
+		defer { reaching = nil }
+		for _ in 0..<10 {
+			if let user = keyedUser(num) {
+				report(await send(to: user), for: num)
+				return
+			}
+			try? await Task.sleep(for: .milliseconds(500))
+		}
+		report(GroupChatError.noKey.localizedDescription, for: num)
+	}
+
+	/// Returns what went wrong, in words, or nil once it's sent.
+	private func send(to user: UserEntity) async -> String? {
+		guard let invite else { return nil }
 		sending.insert(user.num)
 		defer { sending.remove(user.num) }
 		do {
 			try await GroupChats.sendInvite(invite, to: user, accessoryManager: accessoryManager)
 			sent.insert(user.num)
-			error = nil
+			return nil
 		} catch {
-			self.error = error.localizedDescription
+			return error.localizedDescription
 		}
 	}
 
@@ -253,6 +473,8 @@ struct JoinGroupSheet: View {
 	@State private var isJoining = false
 	@State private var error: String?
 	@State private var isFull = false
+	/// Groups whose Leave was tapped and is waiting on the radio.
+	@State private var leaving: Set<Int32> = []
 
 	private var groups: [ChannelEntity] {
 		guard let num = accessoryManager.activeDeviceNum,
@@ -308,14 +530,18 @@ struct JoinGroupSheet: View {
 					HStack {
 						Text(GroupChats.displayName(channel))
 						Spacer()
+						let index = channel.index
 						Button("Leave", role: .destructive) {
+							leaving.insert(index)
 							Task {
+								defer { leaving.remove(index) }
 								try? await GroupChats.leave(channel, accessoryManager: accessoryManager)
 								isFull = false
 								error = nil
 							}
 						}
 						.buttonStyle(.bordered)
+						.disabled(leaving.contains(index))
 					}
 				}
 			}
@@ -354,6 +580,7 @@ struct GroupChatScreen: View {
 
 	@State private var showInvite = false
 	@State private var confirmLeave = false
+	@AppStorage(GroupChats.everyoneNotificationsKey) private var everyoneNotifications = false
 
 	private var recentSenders: [Int64] {
 		var seen = Set<Int64>()
@@ -366,7 +593,16 @@ struct GroupChatScreen: View {
 				PhotoUpdateBanner(nums: recentSenders)
 			}
 			.toolbar {
-				if !GroupChats.isEveryone(channel) {
+				if GroupChats.isEveryone(channel) {
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							everyoneNotifications.toggle()
+						} label: {
+							Image(systemName: everyoneNotifications ? "bell.fill" : "bell.slash")
+						}
+						.accessibilityLabel(everyoneNotifications ? "Turn Off Notifications" : "Turn On Notifications")
+					}
+				} else {
 					ToolbarItem(placement: .topBarTrailing) {
 						Menu {
 							Button {

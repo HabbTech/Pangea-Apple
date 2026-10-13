@@ -20,6 +20,13 @@ extension AccessoryManager {
 		if activeConnection != nil {
 			throw AccessoryError.connectionFailed("Already connected to a device")
 		}
+		// Pangea: also refuse while another attempt is still in its first steps, before
+		// activeConnection is set. The stepper is assigned below with no await in between,
+		// so this check-and-set is atomic on the main actor; without it a Reconnect tap and
+		// discovery's auto-connect could both get in and overwrite each other's stepper.
+		if connectionStepper != nil {
+			throw AccessoryError.connectionFailed("Already connecting to a device")
+		}
 		
 		guard let transport = transportForType(device.transportType) else {
 			throw AccessoryError.connectionFailed("No transport for type")
@@ -204,15 +211,14 @@ extension AccessoryManager {
 					}
 				
 					let connectionWasRestored = (withConnection != nil)
-					Logger.datadog.action(.connect(firmwareVersion: version,
-													transportType: device.transportType.rawValue,
-												   hardwareModel: device.hardwareModel,
-												   nodes: self.expectedNodeDBSize,
-												  connectionRestored: connectionWasRestored))
+					Logger.services.info("🔗 [Connect] Connected: firmware \(version ?? "unknown", privacy: .public), \(device.transportType.rawValue, privacy: .public), \(device.hardwareModel ?? "unknown", privacy: .public), restored: \(connectionWasRestored, privacy: .public)")
 				}
 			}
 		}
 		
+		// Pangea: cleared on every way out, so a failure can't leave the guard above shut.
+		defer { self.connectionStepper = nil }
+
 		// Run the connection process
 		do {
 			try await connectionStepper?.run()
@@ -227,9 +233,6 @@ extension AccessoryManager {
 			updateState(.discovering)
 			self.lastConnectionError = error
 		}
-		
-		// All done, one way or another, clean up
-		self.connectionStepper = nil
 	}
 }
 

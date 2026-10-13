@@ -87,7 +87,10 @@ struct ContentView: View {
 			isPresented: $isShowingDeviceOnboardingFlow,
 			onDismiss: {
 				UserDefaults.firstLaunch = false
-				accessoryManager.startDiscovery()
+				// Setup may have connected a radio already; scanning is only needed without one.
+				if accessoryManager.activeConnection == nil {
+					accessoryManager.startDiscovery()
+				}
 				appState.router.selectedTab = .messages
 			}, content: {
 				DeviceOnboarding()
@@ -122,9 +125,6 @@ struct ContentView: View {
 		}
 		.onChange(of: appState.router.selectedTab) {
 			keepSelectionVisible()
-		}
-		.onChange(of: accessoryManager.state) { _, state in
-			if state == .subscribed { ProfileSync.radioDidConnect() }
 		}
 		.onChange(of: expertModeEnabled) {
 			keepSelectionVisible()

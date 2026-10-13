@@ -145,18 +145,14 @@ struct ChannelMessageList: View {
 					Text(String(channel.name ?? "Unknown").camelCaseToWords()).font(.headline)
 				}
 			}
-			ToolbarItem(placement: .navigationBarTrailing) {
-				ZStack {
-					ConnectedDevice(
-						deviceConnected: accessoryManager.isConnected,
-						name: accessoryManager.activeConnection?.device.shortName ?? "?",
-						mqttProxyConnected: accessoryManager.mqttProxyConnected && (channel.uplinkEnabled || channel.downlinkEnabled),
-						mqttUplinkEnabled: channel.uplinkEnabled,
-						mqttDownlinkEnabled: channel.downlinkEnabled,
-						mqttTopic: accessoryManager.mqttManager.topic
-					)
-				}
-			}
+			ConnectedDeviceItem(device: ConnectedDevice(
+				deviceConnected: accessoryManager.isConnected,
+				name: accessoryManager.activeConnection?.device.shortName ?? "?",
+				mqttProxyConnected: accessoryManager.mqttProxyConnected && (channel.uplinkEnabled || channel.downlinkEnabled),
+				mqttUplinkEnabled: channel.uplinkEnabled,
+				mqttDownlinkEnabled: channel.downlinkEnabled,
+				mqttTopic: accessoryManager.mqttManager.topic
+			))
 		}
 	}
 }

@@ -48,17 +48,56 @@ enum PhotoCompressor {
 		return nil
 	}
 
-	private static func square(_ image: UIImage, side: CGFloat, pixels: Int) -> CGImage? {
-		let format = UIGraphicsImageRendererFormat()
-		format.scale = 1
-		format.opaque = true
+	/// Drawn into a bitmap with no alpha channel. UIGraphicsImageRenderer keeps one even
+	/// when told the image is opaque, and ImageIO then stores it, making files bigger.
+	static func square(_ image: UIImage, side: CGFloat, pixels: Int) -> CGImage? {
+		guard let context = CGContext(
+			data: nil,
+			width: pixels,
+			height: pixels,
+			bitsPerComponent: 8,
+			bytesPerRow: 0,
+			space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+			bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+		) else { return nil }
 		let size = CGSize(width: pixels, height: pixels)
+		// White behind transparent images (stickers, PNGs), which would otherwise turn black.
+		context.setFillColor(UIColor.white.cgColor)
+		context.fill(CGRect(origin: .zero, size: size))
+		// UIKit draws top-down; flip so the photo isn't upside down.
+		context.translateBy(x: 0, y: size.height)
+		context.scaleBy(x: 1, y: -1)
+		context.interpolationQuality = .high
+		UIGraphicsPushContext(context)
 		// Drawing the UIImage applies its orientation, so phone photos come out upright.
-		return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-			let scale = CGFloat(pixels) / side
-			let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-			image.draw(in: CGRect(x: (size.width - drawSize.width) / 2, y: (size.height - drawSize.height) / 2, width: drawSize.width, height: drawSize.height))
-		}.cgImage
+		let scale = CGFloat(pixels) / side
+		let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+		image.draw(in: CGRect(x: (size.width - drawSize.width) / 2, y: (size.height - drawSize.height) / 2, width: drawSize.width, height: drawSize.height))
+		UIGraphicsPopContext()
+		return context.makeImage()
+	}
+
+	/// A received photo is kept only if it really is a small image. A tiny file can
+	/// claim to be 10000 × 10000 and cost hundreds of MB once decoded.
+	static let maxReceivedPixels = 512
+
+	static func isAcceptableAvatar(_ data: Data) -> Bool {
+		guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0,
+			  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+			  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+			  let height = properties[kCGImagePropertyPixelHeight] as? Int else { return false }
+		return width > 0 && height > 0 && width <= maxReceivedPixels && height <= maxReceivedPixels
+	}
+
+	/// Decoded at avatar size at most, whatever the file says about itself.
+	static func avatarImage(from data: Data) -> UIImage? {
+		guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+			  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+				kCGImageSourceThumbnailMaxPixelSize: 256,
+				kCGImageSourceCreateThumbnailFromImageAlways: true,
+				kCGImageSourceCreateThumbnailWithTransform: true
+			  ] as CFDictionary) else { return nil }
+		return UIImage(cgImage: image)
 	}
 
 	private static func encode(_ image: CGImage, type: UTType, quality: Double) -> Data? {
@@ -159,65 +198,115 @@ struct MyAvatar: View {
 /// "Sam shared a profile photo · Update / Not Now", like Name & Photo Sharing on iPhone.
 struct PhotoUpdateBanner: View {
 	@ObservedObject private var store = ProfileStore.shared
+	/// Only whether the radio can take a packet, not everything else AccessoryManager publishes.
+	@ObservedObject private var readiness = AccessoryManager.shared.readiness
 	@Environment(\.managedObjectContext) private var context
 	let nums: [Int64]
+	/// "Update" was tapped and none of the photos could be asked for.
+	@State private var couldntAsk: ProfileSync.PhotoAsk?
+
+	private var radioAway: Bool { !readiness.value.ready }
 
 	private var offers: [Int64] {
-		nums.filter { store.profile($0)?.hasPhotoOffer == true && !store.downloading.contains($0) && ProfileSync.canRequestPhoto(from: $0) }
+		// Without a radio, who can be reached isn't known; the offer stays, with why it can't go yet.
+		nums.filter { store.profile($0)?.hasPhotoOffer == true && !store.downloading.contains($0) && (radioAway || ProfileSync.canRequestPhoto(from: $0)) }
 	}
 
 	var body: some View {
 		let offers = self.offers
-		if let busy = nums.first(where: { store.downloading.contains($0) }) {
-			let name = store.name(num: busy, radioName: existingUser(num: busy, context: context)?.longName)
-			HStack(spacing: 12) {
-				ProgressView(value: store.downloadProgress[busy] ?? 0)
-					.progressViewStyle(.circular)
-				Text("Getting \(name)'s photo… \(Int((store.downloadProgress[busy] ?? 0) * 100))%")
+		Group {
+			if let busy = nums.first(where: { store.downloading.contains($0) }) {
+				let name = store.name(num: busy, radioName: existingUser(num: busy, context: context)?.longName)
+				HStack(spacing: 12) {
+					ProgressView(value: store.downloadProgress[busy] ?? 0)
+						.progressViewStyle(.circular)
+					VStack(alignment: .leading, spacing: 2) {
+						if let line = ProfileRules.photoLine(downloading: true, radioAway: radioAway, full: false, lastAsk: nil) {
+							Text("Getting \(name)'s photo")
+							PhotoStatusLine(line: line)
+						} else {
+							Text("Getting \(name)'s photo… \(Int((store.downloadProgress[busy] ?? 0) * 100))%")
+						}
+					}
 					.font(.subheadline)
 					.frame(maxWidth: .infinity, alignment: .leading)
-			}
-			.padding(.horizontal, 16)
-			.padding(.vertical, 10)
-			.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-			.padding(.horizontal)
-			.padding(.top, 4)
-		} else if let first = offers.first {
-			let name = store.name(num: first, radioName: existingUser(num: first, context: context)?.longName)
-			HStack(spacing: 12) {
-				Image(systemName: "person.crop.circle.badge.plus")
-					.font(.title2)
-					.foregroundStyle(Color.accentColor)
-				Text(offers.count == 1
-					 ? "\(name) shared a profile photo."
-					 : "\(name) and \(offers.count - 1) more shared profile photos.")
-					.font(.subheadline)
+				}
+				.padding(.horizontal, 16)
+				.padding(.vertical, 10)
+				.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+				.padding(.horizontal)
+				.padding(.top, 4)
+			} else if let first = offers.first {
+				let name = store.name(num: first, radioName: existingUser(num: first, context: context)?.longName)
+				let line = ProfileRules.photoLine(downloading: false, radioAway: radioAway,
+												  full: store.downloading.count >= ProfileOutbox.maxTransfers, lastAsk: couldntAsk)
+				HStack(spacing: 12) {
+					Image(systemName: "person.crop.circle.badge.plus")
+						.font(.title2)
+						.foregroundStyle(Color.accentColor)
+					VStack(alignment: .leading, spacing: 2) {
+						Text(offers.count == 1
+							 ? "\(name) shared a profile photo."
+							 : "\(name) and \(offers.count - 1) more shared profile photos.")
+							.font(.subheadline)
+						if let line {
+							PhotoStatusLine(line: line)
+						}
+					}
 					.frame(maxWidth: .infinity, alignment: .leading)
-				Button("Update") {
-					for num in offers {
-						ProfileSync.requestPhoto(from: num)
+					Button("Update") {
+						let results = offers.map { ProfileSync.requestPhoto(from: $0) }
+						// Said only when none of them went: whichever reason held them back.
+						let asked = results.contains(where: { $0 == .started || $0 == .alreadyGoing })
+						couldntAsk = asked ? nil : results.first(where: { $0 == .noRadio }) ?? results.first(where: { $0 == .busy }) ?? results.first
 					}
-				}
-				.buttonStyle(.borderedProminent)
-				.buttonBorderShape(.capsule)
-				.controlSize(.small)
-				Button {
-					for num in offers {
-						store.declinePhoto(for: num)
+					.buttonStyle(.borderedProminent)
+					.buttonBorderShape(.capsule)
+					.controlSize(.small)
+					.disabled(line != nil)
+					Button {
+						for num in offers {
+							store.declinePhoto(for: num)
+						}
+					} label: {
+						Image(systemName: "xmark")
 					}
-				} label: {
-					Image(systemName: "xmark")
+					.buttonStyle(.borderless)
+					.foregroundStyle(.secondary)
+					.accessibilityLabel("Not Now")
 				}
-				.buttonStyle(.borderless)
-				.foregroundStyle(.secondary)
-				.accessibilityLabel("Not Now")
+				.padding(.horizontal, 16)
+				.padding(.vertical, 10)
+				.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+				.padding(.horizontal)
+				.padding(.top, 4)
+				.transition(.move(edge: .top).combined(with: .opacity))
 			}
-			.padding(.horizontal, 16)
-			.padding(.vertical, 10)
-			.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-			.padding(.horizontal)
-			.padding(.top, 4)
-			.transition(.move(edge: .top).combined(with: .opacity))
+		}
+		.onChange(of: store.downloading) { couldntAsk = nil }
+		.onChange(of: readiness.value.ready) { couldntAsk = nil }
+	}
+}
+
+/// Why a photo isn't coming just now. The banner and the profile sheet both use it, so
+/// they always say the same thing.
+struct PhotoStatusLine: View {
+	let line: ProfileRules.PhotoLine
+
+	var body: some View {
+		Text(text)
+			.font(.footnote)
+			.foregroundStyle(.secondary)
+	}
+
+	private var text: String {
+		switch line {
+		case .waitingForRadio:
+			return String(localized: "Waiting for your radio…")
+		case .connectRadio:
+			return String(localized: "Connect your radio to get photos.")
+		case .busy:
+			return String(localized: "Busy downloading other photos. Try again in a moment.")
 		}
 	}
 }
@@ -229,5 +318,31 @@ struct PangeaName: View {
 
 	var body: some View {
 		Text(store.name(for: user))
+	}
+}
+
+/// A person in a list: avatar, name, and an optional button on the right. `user` is nil for a
+/// saved contact the radio has forgotten; their saved name or code shows instead.
+struct ContactRow<Trailing: View>: View {
+	@ObservedObject private var store = ProfileStore.shared
+	let num: Int64
+	let user: UserEntity?
+	var size: CGFloat = 36
+	@ViewBuilder var trailing: Trailing
+
+	var body: some View {
+		HStack {
+			PangeaAvatar(num: num, shortName: user?.shortName, size: size)
+			Text(store.name(num: num, radioName: user?.longName ?? store.profile(num)?.contactName))
+				.lineLimit(1)
+			Spacer()
+			trailing
+		}
+	}
+}
+
+extension ContactRow where Trailing == EmptyView {
+	init(num: Int64, user: UserEntity?, size: CGFloat = 36) {
+		self.init(num: num, user: user, size: size) { EmptyView() }
 	}
 }

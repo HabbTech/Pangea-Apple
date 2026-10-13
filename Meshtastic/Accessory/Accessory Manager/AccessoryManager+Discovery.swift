@@ -34,7 +34,12 @@ extension AccessoryManager {
 			return
 		}
 		if otaInProgress { return }
-		updateState(.discovering)
+		// Scanning while a radio is connected or connecting is fine (auto-connect is
+		// guarded by isConnected / activeConnection), but the state must keep
+		// describing that radio, or the UI treats a live link as disconnected.
+		if activeConnection == nil && !isConnecting {
+			updateState(.discovering)
+		}
 
 		discoveryTask = Task { @MainActor in
 			for await event in self.discoverAllDevices() {

@@ -582,8 +582,8 @@ struct ManualConnectionMenu: View {
 						if accessoryManager.allowDisconnect {
 							try await accessoryManager.disconnect()
 						}
-						await MeshPackets.shared.clearCoreDataDatabase(includeRoutes: false)
-						clearNotifications()
+						// Pangea: also drops the old radio's invites, sent-card records and pending name.
+						await RadioPairing.clearRadioData()
 						try await selectedTransport?.transport.manuallyConnect(toDevice: device)
 						
 						// Clean up just in case
@@ -663,9 +663,9 @@ struct DeviceConnectRow: View {
 						if accessoryManager.allowDisconnect {
 							try await accessoryManager.disconnect()
 						}
-						await MeshPackets.shared.clearCoreDataDatabase(includeRoutes: false)
-						clearNotifications()
-						
+						// Pangea: also drops the old radio's invites, sent-card records and pending name.
+						await RadioPairing.clearRadioData()
+
 						try await accessoryManager.connect(to: device)
 						
 					}

@@ -65,7 +65,14 @@ final class TAKServerManager: ObservableObject {
 	@Published private(set) var readOnlyMode = false
 	
 	/// User toggle for read-only mode - locked to true if channel has issues
-	@AppStorage("takServerReadOnly") var userReadOnlyMode = false
+	@AppStorage("takServerReadOnly") var userReadOnlyMode = false {
+		// Pangea: once the user sets it, it's theirs, so a later valid check leaves it alone.
+		didSet { readOnlyForcedByCheck = false }
+	}
+
+	/// Pangea: whether `userReadOnlyMode` is on only because the channel check turned it on,
+	/// so the check turns it off again once the channel is fine.
+	@AppStorage("takServerReadOnlyForced") private(set) var readOnlyForcedByCheck = false
 	
 	/// Enable Mesh to CoT converter - bridges Pangea packets to TAK format
 	@AppStorage("takServerMeshToCot") var meshToCotEnabled = false
@@ -140,14 +147,26 @@ final class TAKServerManager: ObservableObject {
 	/// Check the primary channel for validity
 	/// Returns true if the primary channel is valid for TAK server operation
 	func checkPrimaryChannelValidity() {
+		// Pangea: with no radio there's no channel to check, which isn't a channel problem.
+		// Checked again once a radio has reported its channels (see `processFromRadio`).
+		guard let deviceNum = AccessoryManager.shared.activeDeviceNum else {
+			Logger.tak.debug("No radio connected, skipping the primary channel check")
+			return
+		}
 		let context = PersistenceController.shared.container.viewContext
 		let fetchRequest = MyInfoEntity.fetchRequest()
+		// Pangea: one MyInfo is kept per node heard, so pick the connected radio's.
+		fetchRequest.predicate = NSPredicate(format: "myNodeNum == %lld", deviceNum)
 		
 		var issues: [PrimaryChannelIssue] = []
 		var isValid = true
 		
 		do {
 			let myInfos = try context.fetch(fetchRequest)
+			// Pangea: the channels are saved on the packet handler's context; read what's saved.
+			if let myInfo = myInfos.first {
+				MeshPackets.reloadChannels(of: myInfo, in: context)
+			}
 			guard let myInfo = myInfos.first,
 				  let channels = myInfo.channels?.array as? [ChannelEntity],
 				  let primaryChannel = channels.first(where: { $0.index == 0 || $0.role == 1 }) else {
@@ -218,15 +237,27 @@ final class TAKServerManager: ObservableObject {
 		primaryChannelIssues = issues
 		readOnlyMode = !isValid
 		
-		if !isValid {
-			userReadOnlyMode = true
+		let next = Self.readOnlyAfterCheck(isValid: isValid, userReadOnly: userReadOnlyMode, forced: readOnlyForcedByCheck)
+		if next.userReadOnly != userReadOnlyMode {
+			userReadOnlyMode = next.userReadOnly
 		}
+		readOnlyForcedByCheck = next.forced
 		
 		if !isValid && isRunning {
 			Logger.tak.warning("TAK Server running in read-only mode due to primary channel issues")
 		}
 	}
 	
+	/// Pangea: read-only after a channel check. A failed check turns it on and remembers that
+	/// it did; a passing one turns it off only if the check had turned it on, never when the
+	/// user chose it.
+	nonisolated static func readOnlyAfterCheck(isValid: Bool, userReadOnly: Bool, forced: Bool) -> (userReadOnly: Bool, forced: Bool) {
+		if !isValid {
+			return userReadOnly && !forced ? (true, false) : (true, true)
+		}
+		return forced ? (false, false) : (userReadOnly, false)
+	}
+
 	/// Check if TAK client messages should be forwarded to mesh
 	var shouldForwardTAKToMesh: Bool {
 		return !userReadOnlyMode
@@ -598,6 +629,7 @@ final class TAKServerManager: ObservableObject {
 		}
 
 		let fetchRequest = MyInfoEntity.fetchRequest()
+		fetchRequest.predicate = NSPredicate(format: "myNodeNum == %lld", connectedNodeNum)
 
 		do {
 			let myInfos = try context.fetch(fetchRequest)

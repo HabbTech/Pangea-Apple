@@ -167,13 +167,9 @@ struct UserMessageList: View {
 				.buttonStyle(.plain)
 				.accessibilityHint("Shows their profile")
 			}
-			ToolbarItem(placement: .navigationBarTrailing) {
-				ZStack {
-					ConnectedDevice(
-						deviceConnected: accessoryManager.isConnected,
-						name: accessoryManager.activeConnection?.device.shortName ?? "?")
-				}
-			}
+			ConnectedDeviceItem(device: ConnectedDevice(
+				deviceConnected: accessoryManager.isConnected,
+				name: accessoryManager.activeConnection?.device.shortName ?? "?"))
 		}
 	}
 }

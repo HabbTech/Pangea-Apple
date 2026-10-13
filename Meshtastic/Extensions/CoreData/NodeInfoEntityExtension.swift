@@ -92,6 +92,26 @@ extension NodeInfoEntity {
 	}
 }
 
+/// What a radio is called until its name arrives: the firmware's own default for a radio
+/// nobody has named. Not "Pangea", since most radios heard aren't Pangea's.
+func placeholderLongName(last4: String) -> String {
+	"Meshtastic \(last4)"
+}
+
+/// Pangea: placeholders saved before were "Pangea 1a2b". Renamed to the firmware default,
+/// only where nothing more than the number was ever learned (hardware still unset).
+/// Call on the context's queue.
+func renameOldPlaceholderNames(context: NSManagedObjectContext) {
+	let request = UserEntity.fetchRequest()
+	request.predicate = NSPredicate(format: "longName BEGINSWITH %@ AND hwModel == %@", "Pangea ", "UNSET")
+	guard let users = try? context.fetch(request), !users.isEmpty else { return }
+	for user in users {
+		guard let last4 = user.userId.map({ String($0.suffix(4)) }), user.longName == "Pangea \(last4)" else { continue }
+		user.longName = placeholderLongName(last4: last4)
+	}
+	if context.hasChanges { try? context.save() }
+}
+
 public func createNodeInfo(num: Int64, context: NSManagedObjectContext) -> NodeInfoEntity {
 
 	let newNode = NodeInfoEntity(context: context)
@@ -102,7 +122,7 @@ public func createNodeInfo(num: Int64, context: NSManagedObjectContext) -> NodeI
 	let userId = num.toHex()
 	newUser.userId = "!\(userId)"
 	let last4 = String(userId.suffix(4))
-	newUser.longName = "Pangea \(last4)"
+	newUser.longName = placeholderLongName(last4: last4)
 	newUser.shortName = last4
 	newUser.hwModel = "UNSET"
 	newNode.user = newUser

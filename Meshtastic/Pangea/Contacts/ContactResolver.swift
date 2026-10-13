@@ -34,6 +34,16 @@ final class ContactResolver: ObservableObject {
 		task = Task { await run(invite, accessoryManager: accessoryManager) }
 	}
 
+	/// `resolve`, then how that attempt ended. A caller watching `state` for the end can miss
+	/// it: two attempts that fail the same way, before the screen redraws, look like no change.
+	/// `.idle` when the attempt was cancelled or replaced before it finished.
+	func resolveAndWait(_ invite: PangeaCode.Invite, accessoryManager: AccessoryManager) async -> State {
+		resolve(invite, accessoryManager: accessoryManager)
+		let attempt = task
+		await attempt?.value
+		return attempt != nil && attempt == task ? state : .idle
+	}
+
 	func cancel() {
 		task?.cancel()
 		task = nil
@@ -41,6 +51,8 @@ final class ContactResolver: ObservableObject {
 	}
 
 	private func run(_ invite: PangeaCode.Invite, accessoryManager: AccessoryManager) async {
+		// Cancelled before it started: what follows until the first wait would still set the state.
+		guard !Task.isCancelled else { return }
 		let context = accessoryManager.context
 
 		guard let myNum = accessoryManager.activeDeviceNum, accessoryManager.isConnected else {
@@ -63,19 +75,24 @@ final class ContactResolver: ObservableObject {
 		   let data = try? contact.serializedData() {
 			do {
 				try await accessoryManager.addContactFromURL(base64UrlString: data.base64EncodedString().base64ToBase64url())
+				// Cancelled while waiting: the user has moved on, so leave the state alone.
+				guard !Task.isCancelled else { return }
 				state = .ready(nodeNum: invite.nodeNum)
 				return
 			} catch {
 				Logger.services.error("👥 [Contacts] Adding contact failed: \(error.localizedDescription, privacy: .public)")
 			}
+			guard !Task.isCancelled else { return }
 		}
 
 		// Typed code: say hello over the mesh and wait for their reply.
 		state = .reaching(code: invite.code)
 		for _ in 0..<attempts {
+			guard !Task.isCancelled else { return }
 			do {
 				try await sendUserInfo(to: invite.nodeNum, accessoryManager: accessoryManager)
 			} catch {
+				guard !Task.isCancelled else { return }
 				state = .failed(String(localized: "Couldn't send through your radio. Make sure it's connected."))
 				return
 			}
@@ -89,6 +106,7 @@ final class ContactResolver: ObservableObject {
 				}
 			}
 		}
+		guard !Task.isCancelled else { return }
 		state = .unreachable(code: invite.code)
 	}
 
@@ -96,7 +114,12 @@ final class ContactResolver: ObservableObject {
 		let request = UserEntity.fetchRequest()
 		request.predicate = NSPredicate(format: "num == %lld", nodeNum)
 		request.fetchLimit = 1
-		guard let user = try? context.fetch(request).first else { return false }
+		return Self.hasKey(try? context.fetch(request).first)
+	}
+
+	/// A DM to them goes privately (PKI). Without their key it would go out on the public channel.
+	static func hasKey(_ user: UserEntity?) -> Bool {
+		guard let user else { return false }
 		return user.pkiEncrypted && !(user.publicKey?.isEmpty ?? true)
 	}
 

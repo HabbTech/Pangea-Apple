@@ -82,7 +82,7 @@ struct SaveChannelQRCode: View {
 								}
 							} catch {
 								Task { @MainActor in
-									errorMessage = "Failed to save channel configuration"
+									errorMessage = Self.message(for: error)
 									showError = true
 								}
 							}
@@ -126,6 +126,12 @@ struct SaveChannelQRCode: View {
 			fetchLoRaConfigChanges()
 		}
 	}
+	/// Pangea: a group refusal (no free slot, groups still loading) says why. Other errors
+	/// carry internal wording, so they keep the general line.
+	static func message(for error: Error) -> String {
+		(error as? GroupChatError)?.errorDescription ?? "Failed to save channel configuration"
+	}
+
 	private func extractChannelDataFromURL(_ urlString: String) -> String? {
 		Logger.data.info("Extracting channel data from URL: \(urlString)")
 		if let url = URL(string: urlString) {

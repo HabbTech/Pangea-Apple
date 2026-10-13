@@ -33,8 +33,10 @@ struct SetupProfileView: View {
 		return false
 	}
 
+	/// What gets saved: no hidden characters, plain spaces, trimmed. Cleaned here
+	/// rather than while typing, so a joiner typed before its next letter isn't lost.
 	private var trimmedName: String {
-		name.trimmingCharacters(in: .whitespacesAndNewlines)
+		name.cleanedName(fitting: 36)
 	}
 
 	private var canContinue: Bool {

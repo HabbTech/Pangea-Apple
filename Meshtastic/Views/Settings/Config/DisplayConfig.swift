@@ -158,12 +158,9 @@ struct DisplayConfig: View {
 			}
 		}
 		.navigationTitle("Display Config")
-		.navigationBarItems(
-			trailing: ZStack {
-				ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-				
-			}
-		)
+		.toolbar {
+			ConnectedDeviceItem(device: ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?"))
+		}
 		.onFirstAppear {
 			// Need to request a DisplayConfig from the remote node before allowing changes
 			if let deviceNum = accessoryManager.activeDeviceNum, let node {

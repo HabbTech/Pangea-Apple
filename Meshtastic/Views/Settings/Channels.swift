@@ -308,10 +308,9 @@ struct Channels: View {
 		}
 		.padding(.bottom, 5)
 		.navigationTitle("Channels")
-		.navigationBarItems(trailing:
-		ZStack {
-			ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
-		})
+		.toolbar {
+			ConnectedDeviceItem(device: ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?"))
+		}
 	}
 }
 

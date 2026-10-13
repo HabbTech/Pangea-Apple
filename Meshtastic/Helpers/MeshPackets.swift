@@ -58,10 +58,17 @@ func generateMessageMarkdown (message: String) -> String {
 actor MeshPackets {
 	static let shared = MeshPackets()
 
+	private let container: NSPersistentContainer
+
+	/// Pangea: tests pass their own in-memory container.
+	init(container: NSPersistentContainer = PersistenceController.shared.container) {
+		self.container = container
+	}
+
 	// Create an actor-level background context
 	// We keep this alive so sequential writes happen on the same context (efficient)
 	lazy var backgroundContext: NSManagedObjectContext = {
-		let ctx = PersistenceController.shared.container.newBackgroundContext()
+		let ctx = container.newBackgroundContext()
 		ctx.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy // Handle conflicts automatically
 		return ctx
 	}()
@@ -72,13 +79,18 @@ actor MeshPackets {
 	/// Call after saves to prevent unbounded growth of the context's registered objects.
 	/// Uses `reset()` instead of `refreshAllObjects()` to fully unregister objects from the context,
 	/// since `refreshAllObjects()` only re-faults objects but leaves them in the registeredObjects set.
+	/// Pangea: the reset is queued on the context rather than done here, so it runs after the
+	/// block that saved has finished with its objects, and never alongside another block.
 	func resetContextIfNeeded() {
 		savesSinceLastReset += 1
 		if savesSinceLastReset >= 50 {
-			let registeredCount = backgroundContext.registeredObjects.count
-			backgroundContext.reset()
 			savesSinceLastReset = 0
-			Logger.data.info("💾 [MeshPackets] Reset background context to reclaim memory (was \(registeredCount) registered objects)")
+			let context = backgroundContext
+			context.perform {
+				let registeredCount = context.registeredObjects.count
+				context.reset()
+				Logger.data.info("💾 [MeshPackets] Reset background context to reclaim memory (was \(registeredCount) registered objects)")
+			}
 		}
 	}
 
@@ -192,7 +204,44 @@ actor MeshPackets {
 		}
 	}
 	
+	/// Pangea: the slots each radio has reported in use since its channel download began, by
+	/// node number. See `beginChannelDownload` and `finishChannelDownload`.
+	private var reportedChannels: [Int64: Set<Int32>] = [:]
+
+	/// Called when the radio starts sending its config. The list is left as it is until the
+	/// download finishes, so a link that drops part way keeps every group in Chats.
+	func beginChannelDownload(fromNum: Int64) {
+		reportedChannels[fromNum] = []
+	}
+
+	/// Called when the radio has sent its whole config: takes off the list only the slots it
+	/// didn't report in use, such as a group left on another phone.
+	func finishChannelDownload(fromNum: Int64) async {
+		guard let reported = reportedChannels.removeValue(forKey: fromNum) else { return }
+		let context = self.backgroundContext
+		await context.perform {
+			let fetchMyInfoRequest = MyInfoEntity.fetchRequest()
+			fetchMyInfoRequest.predicate = NSPredicate(format: "myNodeNum == %lld", fromNum)
+			do {
+				let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
+				guard fetchedMyInfo.count == 1 else { return }
+				MeshPackets.reloadChannels(of: fetchedMyInfo[0], in: context)
+				let channels = fetchedMyInfo[0].channels?.array as? [ChannelEntity] ?? []
+				let kept = channels.filter { reported.contains($0.index) }
+				guard kept.count != channels.count else { return }
+				fetchedMyInfo[0].channels = NSOrderedSet(array: kept)
+				try context.save()
+			} catch {
+				context.rollback()
+				Logger.data.error("Failed to take unused channels off the local app database: \(error.localizedDescription, privacy: .public)")
+			}
+		}
+	}
+
 	func channelPacket (channel: Channel, fromNum: Int64) async {
+		if channel.isInitialized && channel.hasSettings && channel.role != Channel.Role.disabled {
+			reportedChannels[fromNum]?.insert(Int32(channel.index))
+		}
 		let context = self.backgroundContext
 		await context.perform {
 			self.channelPacket(channel: channel, fromNum: fromNum, context: context)
@@ -210,35 +259,47 @@ actor MeshPackets {
 			do {
 				let fetchedMyInfo = try context.fetch(fetchedMyInfoRequest)
 				if fetchedMyInfo.count == 1 {
-					let newChannel = ChannelEntity(context: context)
-					newChannel.id = Int32(channel.index)
-					newChannel.index = Int32(channel.index)
-					newChannel.uplinkEnabled = channel.settings.uplinkEnabled
-					newChannel.downlinkEnabled = channel.settings.downlinkEnabled
-					newChannel.name = channel.settings.name
-					newChannel.role = Int32(channel.role.rawValue)
-					newChannel.psk = channel.settings.psk
+					let myInfo = fetchedMyInfo[0]
+					MeshPackets.reloadChannels(of: myInfo, in: context)
+					// Pangea: a channel is unique on its index alone, so the slot's row is updated
+					// where it is, whichever radio it was last attached to or none. Inserting a second
+					// row lost the merge with the first and left the slot off the radio's list.
+					let fetchChannelRequest = ChannelEntity.fetchRequest()
+					fetchChannelRequest.predicate = NSPredicate(format: "index == %d", Int32(channel.index))
+					fetchChannelRequest.shouldRefreshRefetchedObjects = true
+					let found = try context.fetch(fetchChannelRequest)
+					let slot = found.first ?? ChannelEntity(context: context)
+					for duplicate in found.dropFirst() {
+						context.delete(duplicate)
+					}
+					// Another group in a reused slot (or a row kept from one that was left) mustn't keep its mute or precision.
+					let otherGroup = slot.name != channel.settings.name || slot.psk != channel.settings.psk
+					slot.id = Int32(channel.index)
+					slot.index = Int32(channel.index)
+					slot.uplinkEnabled = channel.settings.uplinkEnabled
+					slot.downlinkEnabled = channel.settings.downlinkEnabled
+					slot.name = channel.settings.name
+					slot.role = Int32(channel.role.rawValue)
+					slot.psk = channel.settings.psk
 					if channel.settings.hasModuleSettings {
-						newChannel.positionPrecision = Int32(truncatingIfNeeded: channel.settings.moduleSettings.positionPrecision)
-						newChannel.mute = channel.settings.moduleSettings.isMuted
+						slot.positionPrecision = Int32(truncatingIfNeeded: channel.settings.moduleSettings.positionPrecision)
+						slot.mute = channel.settings.moduleSettings.isMuted
+					} else if otherGroup {
+						slot.positionPrecision = 0
+						slot.mute = false
 					}
-					guard let mutableChannels = fetchedMyInfo[0].channels!.mutableCopy() as? NSMutableOrderedSet else {
-						return
-					}
-					if let oldChannel = mutableChannels.first(where: {($0 as AnyObject).index == newChannel.index }) as? ChannelEntity {
-						let index = mutableChannels.index(of: oldChannel as Any)
-						mutableChannels.replaceObject(at: index, with: newChannel)
-					} else {
-						mutableChannels.add(newChannel)
-					}
-					fetchedMyInfo[0].channels = mutableChannels.copy() as? NSOrderedSet
-					context.refresh(newChannel, mergeChanges: true)
+					// Attached to this radio in index order, in place of anything else listed for the slot.
+					var channels = (myInfo.channels?.array as? [ChannelEntity] ?? []).filter { $0 != slot && $0.index != slot.index }
+					let position = channels.firstIndex { $0.index > slot.index } ?? channels.count
+					channels.insert(slot, at: position)
+					myInfo.channels = NSOrderedSet(array: channels)
 					do {
 						try context.save()
 					} catch {
+						context.rollback()
 						Logger.data.error("💥 Failed to save channel: \(error.localizedDescription, privacy: .public)")
 					}
-					Logger.data.info("💾 Updated MyInfo channel \(channel.index, privacy: .public) from Channel App Packet For: \(fetchedMyInfo[0].myNodeNum, privacy: .public)")
+					Logger.data.info("💾 Updated MyInfo channel \(channel.index, privacy: .public) from Channel App Packet For: \(myInfo.myNodeNum, privacy: .public)")
 				} else if channel.role.rawValue > 0 {
 					Logger.data.error("💥Trying to save a channel to a MyInfo that does not exist: \(fromNum.toHex(), privacy: .public)")
 				}
@@ -246,6 +307,39 @@ actor MeshPackets {
 				context.rollback()
 				let nsError = error as NSError
 				Logger.data.error("💥 Error Saving MyInfo Channel from ADMIN_APP \(nsError, privacy: .public)")
+			}
+		}
+	}
+	
+	/// This context doesn't merge saves made on the view context, and a channel deleted there
+	/// (leaving a group) can stay listed in the cached list. Changing a list that still holds
+	/// it fails the save, so the list is read again from the store first.
+	nonisolated static func reloadChannels(of myInfo: MyInfoEntity, in context: NSManagedObjectContext) {
+		guard !myInfo.hasChanges else { return }
+		let staleness = context.stalenessInterval
+		context.stalenessInterval = 0
+		context.refresh(myInfo, mergeChanges: false)
+		_ = myInfo.channels?.count
+		context.stalenessInterval = staleness
+	}
+	
+	/// Takes every channel off the radio's list before it reports them again on connect, so a
+	/// slot it no longer uses drops off. Runs on the same context as `channelPacket`, so the
+	/// channels that follow are attached after this, never before.
+	func clearChannels(fromNum: Int64) async {
+		let context = self.backgroundContext
+		await context.perform {
+			let fetchMyInfoRequest = MyInfoEntity.fetchRequest()
+			fetchMyInfoRequest.predicate = NSPredicate(format: "myNodeNum == %lld", fromNum)
+			do {
+				let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
+				guard fetchedMyInfo.count == 1 else { return }
+				MeshPackets.reloadChannels(of: fetchedMyInfo[0], in: context)
+				fetchedMyInfo[0].channels = NSOrderedSet()
+				try context.save()
+			} catch {
+				context.rollback()
+				Logger.data.error("Failed to clear existing channels from local app database: \(error.localizedDescription, privacy: .public)")
 			}
 		}
 	}
@@ -912,6 +1006,9 @@ actor MeshPackets {
 						// Low Battery notification
 						if connectedNode == Int64(packet.from) {
 							let batteryLevel = telemetry.batteryLevel ?? 0
+							let shortName = telemetry.nodeTelemetry?.user?.shortName ?? "UNK"
+							let nodeNum = telemetry.nodeTelemetry?.num ?? 0
+							let batteryText = telemetry.batteryLevel?.formatted(.number) ?? Constants.nilValueIndicator
 							Task {@MainActor in
 								if UserDefaults.lowBatteryNotifications && batteryLevel > 0 && batteryLevel < 4 {
 									let manager = LocalNotificationManager()
@@ -919,10 +1016,10 @@ actor MeshPackets {
 										Notification(
 											id: ("notification.id.\(UUID().uuidString)"),
 											title: "Critically Low Battery!",
-											subtitle: "AKA \(telemetry.nodeTelemetry?.user?.shortName ?? "UNK")",
-											content: "Time to charge your radio, there is \(telemetry.batteryLevel?.formatted(.number) ?? Constants.nilValueIndicator)% battery remaining.",
+											subtitle: "AKA \(shortName)",
+											content: "Time to charge your radio, there is \(batteryText)% battery remaining.",
 											target: "nodes",
-											path: "meshtastic:///nodes?nodenum=\(telemetry.nodeTelemetry?.num ?? 0)"
+											path: "meshtastic:///nodes?nodenum=\(nodeNum)"
 										)
 									]
 									manager.schedule()
@@ -1146,26 +1243,27 @@ actor MeshPackets {
 								}
 							}
 							if !(newMessage.fromUser?.mute ?? false) && newMessage.isEmoji == false {
-								// Create an iOS Notification for the received DM message
+								// Create an iOS Notification for the received DM message.
+								// Pangea: built here, as the message belongs to this context's queue.
+								let notification = Notification(
+									id: ("notification.id.\(newMessage.messageId)"),
+									title: "\(newMessage.fromUser?.longName ?? "Unknown".localized)",
+									subtitle: "AKA \(newMessage.fromUser?.shortName ?? "?")",
+									content: messageText!,
+									target: "messages",
+									path: "meshtastic:///messages?userNum=\(newMessage.fromUser?.num ?? 0)&messageId=\(newMessage.isEmoji ? newMessage.replyID : newMessage.messageId)",
+									messageId: newMessage.messageId,
+									channel: newMessage.channel,
+									userNum: Int64(packet.from),
+									critical: critical
+								)
+								let fromName = newMessage.fromUser?.longName ?? "Unknown".localized
 								Task {@MainActor in
 									let manager = LocalNotificationManager()
-									manager.notifications = [
-										Notification(
-											id: ("notification.id.\(newMessage.messageId)"),
-											title: "\(newMessage.fromUser?.longName ?? "Unknown".localized)",
-											subtitle: "AKA \(newMessage.fromUser?.shortName ?? "?")",
-											content: messageText!,
-											target: "messages",
-											path: "meshtastic:///messages?userNum=\(newMessage.fromUser?.num ?? 0)&messageId=\(newMessage.isEmoji ? newMessage.replyID : newMessage.messageId)",
-											messageId: newMessage.messageId,
-											channel: newMessage.channel,
-											userNum: Int64(packet.from),
-											critical: critical
-										)
-									]
+									manager.notifications = [notification]
 									manager.schedule()
 									
-									Logger.services.debug("iOS Notification Scheduled for text message from \(newMessage.fromUser?.longName ?? "Unknown".localized, privacy: .public)")
+									Logger.services.debug("iOS Notification Scheduled for text message from \(fromName, privacy: .public)")
 								}
 							}
 						} else if newMessage.fromUser != nil && newMessage.toUser == nil {
@@ -1174,32 +1272,44 @@ actor MeshPackets {
 							do {
 								let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
 								if !fetchedMyInfo.isEmpty {
+									// Pangea: read on this context's queue, then handed to the main actor
+									// as plain values.
+									let unreadChannelMessages = fetchedMyInfo[0].unreadMessages(context: context)
+									// Pangea: the view context may have left or added a group since this
+									// context last read the list.
+									MeshPackets.reloadChannels(of: fetchedMyInfo[0], in: context)
+									let channel = (fetchedMyInfo[0].channels?.array as? [ChannelEntity] ?? []).first { $0.index == newMessage.channel }
+									if let channel {
+										context.refresh(channel, mergeChanges: true)
+									}
+									let muted = channel?.mute == true && GroupChats.radioMuteApplies(channelIndex: newMessage.channel)
+									let notification: Notification? = if let channel, !muted, newMessage.isEmoji == false {
+										Notification(
+											id: ("notification.id.\(newMessage.messageId)"),
+											title: "\(newMessage.fromUser?.longName ?? "Unknown".localized)",
+											subtitle: "AKA \(newMessage.fromUser?.shortName ?? "?")",
+											content: messageText!,
+											target: "messages",
+											path: "meshtastic:///messages?channelId=\(newMessage.channel)&messageId=\(newMessage.isEmoji ? newMessage.replyID : newMessage.messageId)",
+											messageId: newMessage.messageId,
+											channel: newMessage.channel,
+											userNum: Int64(newMessage.fromUser?.userId ?? "0"),
+											critical: critical
+										)
+									} else {
+										nil
+									}
+									let channelIndex = newMessage.channel
+									let fromName = newMessage.fromUser?.longName ?? "Unknown".localized
 									Task {@MainActor in
-										appState?.unreadChannelMessages = fetchedMyInfo[0].unreadMessages(context: context)
-										for channel in (fetchedMyInfo[0].channels?.array ?? []) as? [ChannelEntity] ?? [] {
-											if channel.index == newMessage.channel {
-												context.refresh(channel, mergeChanges: true)
-											}
-											if channel.index == newMessage.channel && !channel.mute && UserDefaults.channelMessageNotifications && newMessage.isEmoji == false {
-												// Create an iOS Notification for the received channel message
-												let manager = LocalNotificationManager()
-												manager.notifications = [
-													Notification(
-														id: ("notification.id.\(newMessage.messageId)"),
-														title: "\(newMessage.fromUser?.longName ?? "Unknown".localized)",
-														subtitle: "AKA \(newMessage.fromUser?.shortName ?? "?")",
-														content: messageText!,
-														target: "messages",
-														path: "meshtastic:///messages?channelId=\(newMessage.channel)&messageId=\(newMessage.isEmoji ? newMessage.replyID : newMessage.messageId)",
-														messageId: newMessage.messageId,
-														channel: newMessage.channel,
-														userNum: Int64(newMessage.fromUser?.userId ?? "0"),
-														critical: critical
-													)
-												]
-												manager.schedule()
-												Logger.services.debug("iOS Notification Scheduled for text message from \(newMessage.fromUser?.longName ?? "Unknown".localized, privacy: .public)")
-											}
+										appState?.unreadChannelMessages = unreadChannelMessages
+										if let notification, UserDefaults.channelMessageNotifications,
+										   GroupChats.mayNotify(channelIndex: channelIndex) {
+											// Create an iOS Notification for the received channel message
+											let manager = LocalNotificationManager()
+											manager.notifications = [notification]
+											manager.schedule()
+											Logger.services.debug("iOS Notification Scheduled for text message from \(fromName, privacy: .public)")
 										}
 									}
 								}

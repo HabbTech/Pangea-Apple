@@ -92,7 +92,9 @@ extension AccessoryManager {
 				// Onboard a new device connection here
 			}
 		}
-		tryClearExistingChannels()
+		// Pangea: channels the radio no longer uses come off the list once it has sent them all
+		// (see `finishChannelDownload`), not here, so a drop part way leaves the list whole.
+		await MeshPackets.shared.beginChannelDownload(fromNum: Int64(myNodeInfo.myNodeNum))
 
 		// Initialize TAK bridge for TAK integration
 		initializeTAKBridge()
@@ -203,32 +205,15 @@ extension AccessoryManager {
 		await MeshPackets.shared.deviceMetadataPacket(metadata: metadata, fromNum: deviceNum)
 	}
 
-	internal func tryClearExistingChannels() {
+	internal func tryClearExistingChannels() async {
 		guard let device = activeConnection?.device, let deviceNum = device.num else {
 			Logger.services.error("Attempt to clear existing channels when no connected device.")
 			return
 		}
 
-		// Before we get started delete the existing channels from the myNodeInfo
-		let fetchMyInfoRequest = MyInfoEntity.fetchRequest()
-		fetchMyInfoRequest.predicate = NSPredicate(format: "myNodeNum == %lld", Int64(deviceNum))
-
-		do {
-			let fetchedMyInfo = try context.fetch(fetchMyInfoRequest)
-			if fetchedMyInfo.count == 1 {
-				let mutableChannels = fetchedMyInfo[0].channels?.mutableCopy() as? NSMutableOrderedSet
-				mutableChannels?.removeAllObjects()
-				fetchedMyInfo[0].channels = mutableChannels
-				do {
-					try context.save()
-				} catch {
-					Logger.data.error("Failed to clear existing channels from local app database: \(error.localizedDescription, privacy: .public)")
-				}
-			}
-		} catch {
-			Logger.data.error("Failed to find a node MyInfo to save these channels to: \(error.localizedDescription, privacy: .public)")
-		}
-
+		// Before we get started take the existing channels off the myNodeInfo. Done on the
+		// context the channels are saved on, so the ones the radio reports next attach after it.
+		await MeshPackets.shared.clearChannels(fromNum: Int64(deviceNum))
 	}
 
 	func handleTextMessageAppPacket(_ packet: MeshPacket) async {

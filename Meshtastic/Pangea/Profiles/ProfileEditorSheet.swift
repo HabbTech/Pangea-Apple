@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 import OSLog
 
 struct ProfileEditorSheet: View {
-	@EnvironmentObject var accessoryManager: AccessoryManager
 	@Environment(\.dismiss) private var dismiss
 	@ObservedObject private var store = ProfileStore.shared
 
@@ -25,6 +24,8 @@ struct ProfileEditorSheet: View {
 	@State private var error: String?
 	@State private var showAllEmoji = false
 	@State private var isLoadingPhoto = false
+	/// The photo being read and shrunk; a newer pick cancels it.
+	@State private var photoLoad: Task<Void, Never>?
 	@State private var showFileImporter = false
 	@State private var showPhotosPicker = false
 
@@ -46,8 +47,10 @@ struct ProfileEditorSheet: View {
 		return [emoji] + Self.suggestedEmoji.dropLast()
 	}
 
+	/// What gets saved: no hidden characters, plain spaces, trimmed. Cleaned here
+	/// rather than while typing, so a joiner typed before its next letter isn't lost.
 	private var trimmedName: String {
-		name.trimmingCharacters(in: .whitespacesAndNewlines)
+		name.cleanedName(fitting: ProfileCard.maxNameBytes)
 	}
 
 	private var previewPhoto: UIImage? {
@@ -79,7 +82,7 @@ struct ProfileEditorSheet: View {
 							}
 							.dropDestination(for: Data.self) { items, _ in
 								guard let data = items.first else { return false }
-								usePhoto(data)
+								loadPhoto { data }
 								return true
 							}
 						HStack(spacing: 12) {
@@ -101,13 +104,28 @@ struct ProfileEditorSheet: View {
 							.buttonStyle(.bordered)
 							.buttonBorderShape(.capsule)
 							#endif
-							if hasPhoto {
+							if isLoadingPhoto {
+								// A photo that never finishes loading (an iCloud original with
+								// no network) mustn't leave Save disabled with no way out.
+								Button("Stop") {
+									cancelPhotoLoad()
+								}
+								.buttonStyle(.bordered)
+								.buttonBorderShape(.capsule)
+							} else if hasPhoto {
 								Button("Remove", role: .destructive) {
+									cancelPhotoLoad()
 									photo = .some(nil)
 								}
 								.buttonStyle(.bordered)
 								.buttonBorderShape(.capsule)
 							}
+						}
+						if let error {
+							Label(error, systemImage: "exclamationmark.triangle.fill")
+								.font(.footnote)
+								.foregroundStyle(.orange)
+								.multilineTextAlignment(.center)
 						}
 					}
 					.frame(maxWidth: .infinity)
@@ -189,18 +207,15 @@ struct ProfileEditorSheet: View {
 					Text("Your photo is only sent to people you message and groups you're in, and only when they choose to download it.")
 				}
 
-				if let error {
-					Section {
-						Label(error, systemImage: "exclamationmark.triangle.fill")
-							.foregroundStyle(.orange)
-					}
-				}
 			}
 			.navigationTitle("Your Profile")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") { dismiss() }
+					Button("Cancel") {
+						cancelPhotoLoad()
+						dismiss()
+					}
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") { save() }
@@ -215,42 +230,59 @@ struct ProfileEditorSheet: View {
 			.photosPicker(isPresented: $showPhotosPicker, selection: $pickerItem, matching: .images)
 			.fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image]) { result in
 				guard case .success(let url) = result else { return }
-				let access = url.startAccessingSecurityScopedResource()
-				defer { if access { url.stopAccessingSecurityScopedResource() } }
-				if let data = try? Data(contentsOf: url) {
-					usePhoto(data)
-				} else {
-					error = String(localized: "Couldn't open that file. Try a different one.")
+				loadPhoto(readFailure: String(localized: "Couldn't open that file. Try a different one.")) {
+					// Read off the main thread, so a large or not-yet-downloaded file doesn't
+					// freeze the sheet. The security scope is opened and closed around the
+					// read itself; closing it when this callback returns would end access first.
+					await Task.detached(priority: .userInitiated) {
+						let access = url.startAccessingSecurityScopedResource()
+						defer { if access { url.stopAccessingSecurityScopedResource() } }
+						return try? Data(contentsOf: url)
+					}.value
 				}
 			}
 			.onChange(of: pickerItem) { _, item in
 				guard let item else { return }
-				Task {
-					if let data = try? await item.loadTransferable(type: Data.self) {
-						usePhoto(data)
-					} else {
-						error = String(localized: "Couldn't use that photo. Try a different one.")
-					}
-				}
+				// Cleared right away so picking the same photo again still counts.
+				pickerItem = nil
+				loadPhoto { try? await item.loadTransferable(type: Data.self) }
 			}
 		}
 	}
 
-	/// Shrinks the photo off the main thread, with a spinner on the avatar meanwhile.
-	private func usePhoto(_ data: Data) {
+	/// Reads and shrinks a photo off the main thread, with a spinner on the avatar and
+	/// Save held back from the moment it's picked. Only the latest pick is used.
+	/// - Parameter readFailure: shown when `read` returns nothing, instead of the
+	///   general "Couldn't use that photo".
+	private func loadPhoto(readFailure: String? = nil, _ read: @escaping () async -> Data?) {
+		photoLoad?.cancel()
 		isLoadingPhoto = true
 		error = nil
-		Task {
-			let small = await Task.detached(priority: .userInitiated) {
-				UIImage(data: data).flatMap { PhotoCompressor.avatarData(from: $0) }
-			}.value
+		photoLoad = Task {
+			var small: Data?
+			let data = await read()
+			if let data, !Task.isCancelled {
+				small = await Task.detached(priority: .userInitiated) {
+					UIImage(data: data).flatMap { PhotoCompressor.avatarData(from: $0) }
+				}.value
+			}
+			guard !Task.isCancelled else { return }
+			photoLoad = nil
 			isLoadingPhoto = false
 			if let small {
 				photo = .some(small)
+			} else if data == nil, let readFailure {
+				error = readFailure
 			} else {
 				error = String(localized: "Couldn't use that photo. Try a different one.")
 			}
 		}
+	}
+
+	private func cancelPhotoLoad() {
+		photoLoad?.cancel()
+		photoLoad = nil
+		isLoadingPhoto = false
 	}
 
 	private func save() {
@@ -262,10 +294,12 @@ struct ProfileEditorSheet: View {
 		if nameChanged {
 			ProfileSync.pendingRadioName = trimmedName
 		}
-		if nameChanged && accessoryManager.state == .subscribed {
-			ProfileSync.radioDidConnect()
-		} else if store.me != before && accessoryManager.state == .subscribed {
-			ProfileSync.pushUpdatedCard()
+		// An edit made while the radio's away is pushed once it's back (`ProfileSync.pushWhenBack`).
+		for action in ProfileRules.afterSave(nameChanged: nameChanged, meChanged: store.me != before, radioReady: ProfileSync.radioReady) {
+			switch action {
+			case .applyName: ProfileSync.applyPendingName()
+			case .push: ProfileSync.pushUpdatedCard()
+			}
 		}
 		dismiss()
 	}
