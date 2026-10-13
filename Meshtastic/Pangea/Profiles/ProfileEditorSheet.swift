@@ -196,8 +196,8 @@ struct ProfileEditorSheet: View {
 				}
 			}
 			.navigationDestination(isPresented: $showPhotoLibrary) {
-				PhotoLibraryPage { item in
-					loadPhoto { try? await item.loadTransferable(type: Data.self) }
+				PhotoLibraryPage { data in
+					loadPhoto { data }
 				}
 			}
 			.fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image]) { result in
@@ -277,11 +277,13 @@ struct ProfileEditorSheet: View {
 	}
 }
 
-/// The Photos library as a page, closing once a photo is picked.
+/// The Photos library as a page. It stays open, with a spinner, until the picked photo has
+/// been read: closing it at once ended the read on a Mac, and the photo never arrived.
 private struct PhotoLibraryPage: View {
 	@Environment(\.dismiss) private var dismiss
-	var onPick: (PhotosPickerItem) -> Void
+	var onPicked: (Data?) -> Void
 	@State private var selection: PhotosPickerItem?
+	@State private var isReading = false
 
 	var body: some View {
 		PhotosPicker(selection: $selection, matching: .images, preferredItemEncoding: .compatible) {
@@ -290,11 +292,27 @@ private struct PhotoLibraryPage: View {
 		.photosPickerStyle(.inline)
 		.photosPickerDisabledCapabilities(.selectionActions)
 		.ignoresSafeArea(edges: .bottom)
+		.disabled(isReading)
+		.overlay {
+			if isReading {
+				ZStack {
+					Color.black.opacity(0.3)
+					ProgressView()
+						.controlSize(.large)
+				}
+				.ignoresSafeArea()
+			}
+		}
 		.navigationTitle("Photos")
 		.navigationBarTitleDisplayMode(.inline)
-		.onChange(of: selection) { _, item in
-			guard let item else { return }
-			onPick(item)
+		.navigationBarBackButtonHidden(isReading)
+		.task(id: selection) {
+			guard let item = selection else { return }
+			isReading = true
+			let data = try? await item.loadTransferable(type: Data.self)
+			guard !Task.isCancelled else { return }
+			isReading = false
+			onPicked(data)
 			dismiss()
 		}
 	}
