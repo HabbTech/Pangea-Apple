@@ -38,7 +38,7 @@ struct AboutMeshtastic: View {
 							}
 						}
 					}
-					// No links yet for sponsoring, reviews or documentation.
+					// No links yet for sponsoring or reviews.
 					Text("Sponsor App Development (coming soon)")
 						.font(.title2)
 					Text("Review the app (coming soon)")
@@ -50,7 +50,7 @@ struct AboutMeshtastic: View {
 				Section(header: Text("Project information")) {
 					Link("Website", destination: URL(string: "https://habb.tech/")!)
 						.font(.title2)
-					Text("Documentation (coming soon)")
+					Link("Documentation", destination: URL(string: "https://github.com/HabbTech/Pangea-Documentation/tree/main")!)
 						.font(.title2)
 				}
 				Text("Pangea® Copyright HABB")
