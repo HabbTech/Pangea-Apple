@@ -511,7 +511,8 @@ enum ChatSummary: Identifiable {
 struct ChatRowModel: Equatable {
 	enum Avatar: Equatable {
 		case everyone
-		case group
+		/// `ChatIconStore.key(for:)`, so the row shows the icon picked for it.
+		case group(key: String)
 		case person(num: Int64, shortName: String?)
 	}
 
@@ -534,7 +535,7 @@ struct ChatRowModel: Equatable {
 					if !first.isEmpty { preview = "\(first): \(text)" }
 				}
 			}
-			return ChatRowModel(title: GroupChats.displayName(channel), preview: preview, date: date(last), unread: unread, avatar: everyone ? .everyone : .group)
+			return ChatRowModel(title: GroupChats.displayName(channel), preview: preview, date: date(last), unread: unread, avatar: everyone ? .everyone : .group(key: ChatIconStore.key(for: channel)))
 		case .dm(let user):
 			let preview = last?.messagePayload ?? String(localized: "Say hello")
 			return ChatRowModel(title: name(user), preview: preview, date: date(last), unread: unread, avatar: .person(num: user.num, shortName: user.shortName))
@@ -588,13 +589,10 @@ struct ChatRow: View {
 	@ViewBuilder
 	private var avatar: some View {
 		switch row.avatar {
-		case .everyone, .group:
-			let everyone = row.avatar == .everyone
-			Image(systemName: everyone ? "globe" : "person.3.fill")
-				.font(.system(size: 18, weight: .semibold))
-				.foregroundStyle(.white)
-				.frame(width: 46, height: 46)
-				.background(everyone ? Color.pangeaTertiary : Color.accentColor, in: Circle())
+		case .everyone:
+			ChatIconView(key: "everyone", everyone: true, size: 46)
+		case .group(let key):
+			ChatIconView(key: key, everyone: false, size: 46)
 		case .person(let num, let shortName):
 			// Observes ProfileStore itself, so a photo or emoji still updates in place.
 			PangeaAvatar(num: num, shortName: shortName, size: 46)

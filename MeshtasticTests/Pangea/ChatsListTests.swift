@@ -163,10 +163,10 @@ struct ChatRowModelTests {
 		let ann = user(10, "Ann Lee", short: "AL")
 		let hike = channel(2, "Hike")
 		let empty = ChatRowModel.make(chat: .group(hike), last: nil, unread: 0, name: radioName)
-		#expect(empty == ChatRowModel(title: "Hike", preview: "No messages yet. Invite people to start.", date: nil, unread: 0, avatar: .group))
+		#expect(empty == ChatRowModel(title: "Hike", preview: "No messages yet. Invite people to start.", date: nil, unread: 0, avatar: .group(key: ChatIconStore.key(name: "Hike", psk: hike.psk ?? Data()))))
 		let post = message("on my way", from: ann, at: 1_700_000_100)
 		let row = ChatRowModel.make(chat: .group(hike), last: post, unread: 1, name: radioName)
-		#expect(row == ChatRowModel(title: "Hike", preview: "Ann: on my way", date: Date(timeIntervalSince1970: 1_700_000_100), unread: 1, avatar: .group))
+		#expect(row == ChatRowModel(title: "Hike", preview: "Ann: on my way", date: Date(timeIntervalSince1970: 1_700_000_100), unread: 1, avatar: .group(key: ChatIconStore.key(name: "Hike", psk: hike.psk ?? Data()))))
 		// No sender, or a blank name: no prefix.
 		#expect(ChatRowModel.make(chat: .group(hike), last: message("anon", from: nil, at: 1), unread: 0, name: radioName).preview == "anon")
 		#expect(ChatRowModel.make(chat: .group(hike), last: post, unread: 0) { _ in " " }.preview == "on my way")
@@ -228,14 +228,15 @@ struct ChatRowModelTests {
 			("short name", { $0.avatar = .person(num: 1, shortName: "B") }),
 			("no short name", { $0.avatar = .person(num: 1, shortName: nil) }),
 			("num", { $0.avatar = .person(num: 2, shortName: "A") }),
-			("group", { $0.avatar = .group })
+			("group", { $0.avatar = .group(key: "a") }),
+			("group icon", { $0.avatar = .group(key: "b") })
 		]
 		for (field, change) in changes {
 			var copy = base
 			change(&copy)
 			#expect(copy != base, "\(field)")
 		}
-		#expect(ChatRowModel.Avatar.group != .everyone)
+		#expect(ChatRowModel.Avatar.group(key: "everyone") != .everyone)
 	}
 }
 

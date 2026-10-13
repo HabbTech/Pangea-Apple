@@ -103,6 +103,11 @@ struct ContentView: View {
 				// A pre-unlock launch can never be a genuine first launch: a fresh install has no
 				// restoration session to be relaunched for.
 				if UserDefaults.firstLaunch && UIApplication.shared.isProtectedDataAvailable {
+					// Pangea: setup ends on Chats. Chosen before setup opens, not as it closes: on a
+					// Mac a tab changed while the sheet was going away showed Chats under a tab bar
+					// still on Settings (where Clear App Data had left it).
+					router.selectedTab = .messages
+					router.settingsPath = []
 					isShowingDeviceOnboardingFlow = true
 				}
 				// Present the gate if the device is already in a blocking state when
@@ -129,6 +134,7 @@ struct ContentView: View {
 				isShowingFirmwareGate = required
 			}
 			.onChange(of: UserDefaults.showDeviceOnboarding) {_, newValue in
+				if newValue { router.selectedTab = .messages }
 				isShowingDeviceOnboardingFlow = newValue
 			}
 			.task {

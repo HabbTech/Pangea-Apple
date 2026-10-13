@@ -184,8 +184,12 @@ struct MyAvatar: View {
 					Image(systemName: "person.fill")
 						.font(.system(size: size * 0.45))
 				} else {
+					// Up to four letters, as the radio's short name: one line, shrunk to fit the circle.
 					Text(initials)
 						.font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
+						.lineLimit(1)
+						.minimumScaleFactor(0.4)
+						.padding(.horizontal, size * 0.14)
 				}
 			}
 			.foregroundStyle(.white)

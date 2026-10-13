@@ -646,7 +646,8 @@ struct ClearRadioDataTests {
 		#expect(Set(RadioPairing.localDefaultsKeys) == [
 			"preferredPeripheralId", "preferredPeripheralNum", "firstLaunch",
 			"pangeaEveryoneNotifications", "pangeaPairingCodeAttempts",
-			"pangeaPendingRadioName", "pangeaPushCardWhenBack", "manualConnections"
+			"pangeaPendingRadioName", "pangeaPushCardWhenBack", "manualConnections",
+			"pangeaChatIcons"
 		])
 	}
 

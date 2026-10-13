@@ -22,6 +22,9 @@ struct ChannelMessageList: View {
 	@Bindable var myInfo: MyInfoEntity
 	@Bindable var channel: ChannelEntity
 	@State private var replyMessageId: Int64 = 0
+	@AppStorage("expertModeEnabled") private var expertModeEnabled = false
+	/// Pangea: the chat's icon is being picked.
+	@State private var editingIcon = false
 	@AppStorage("preferredPeripheralNum") private var preferredPeripheralNum = -1
 	@State private var messageToHighlight: Int64 = 0
 	@State private var messageLimit: Int = 100
@@ -376,14 +379,31 @@ struct ChannelMessageList: View {
 		}
 		}
 		.navigationBarTitleDisplayMode(.inline)
+		.sheet(isPresented: $editingIcon) {
+			ChatIconSheet(key: ChatIconStore.key(for: channel), everyone: GroupChats.isEveryone(channel), title: GroupChats.displayName(channel))
+		}
 		.searchable(text: $searchQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Find in conversation")
 		.autocorrectionDisabled()
 		.task(id: searchQuery) { await debouncedSearch() }
 		.toolbar {
 			ToolbarItem(placement: .principal) {
-				HStack {
-					CircleText(text: String(channel.index), color: .accentFill, circleSize: 44).fixedSize()
-					Text(String(channel.name ?? "Unknown")).font(.headline)
+				if expertModeEnabled {
+					HStack {
+						CircleText(text: String(channel.index), color: .accentFill, circleSize: 44).fixedSize()
+						Text(String(channel.name ?? "Unknown")).font(.headline)
+					}
+				} else {
+					// Pangea: the chat's own icon, which a tap changes.
+					Button {
+						editingIcon = true
+					} label: {
+						HStack {
+							ChatIconView(key: ChatIconStore.key(for: channel), everyone: GroupChats.isEveryone(channel), size: 36)
+							Text(GroupChats.displayName(channel)).font(.headline)
+						}
+					}
+					.buttonStyle(.plain)
+					.accessibilityHint("Changes the chat's icon")
 				}
 			}
 			ConnectedDeviceItem(device: ConnectedDevice(

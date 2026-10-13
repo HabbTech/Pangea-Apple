@@ -290,11 +290,12 @@ enum RadioPairing {
 			defaults.removeObject(forKey: key)
 		}
 		ManualConnectionList.shared.forgetAll()
+		ChatIconStore.shared.forgetAll()
 	}
 
 	/// What Clear App Data puts back as on a fresh install: no radio paired, so nothing
 	/// reconnects; setup shown again; the Everyone Nearby bell; the pairing-code tries per radio;
-	/// the name and push waiting for the radio; and the saved manual connections. App settings
+	/// the name and push waiting for the radio; the saved manual connections; and the chat icons. App settings
 	/// stay (Reset App Settings is separate), as do the iOS Bluetooth bonds
 	/// (`pairedPeripheralIds`) that iOS itself keeps.
 	static let localDefaultsKeys: [String] = [
@@ -305,7 +306,8 @@ enum RadioPairing {
 		GroupChats.everyoneNotificationsKey,
 		RadioAutoConfig.pairingCodeAttemptsKey,
 		ProfileSync.pendingNameKey,
-		ProfileSync.pushWhenBackKey
+		ProfileSync.pushWhenBackKey,
+		ChatIconStore.defaultsKey
 	]
 
 	/// The part of `clearRadioData` that isn't the database: also run when switching to another

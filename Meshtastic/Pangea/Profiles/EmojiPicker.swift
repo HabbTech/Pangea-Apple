@@ -3,12 +3,14 @@
 //  Pangea
 //
 //  Every emoji, searchable, with skin tones. Picking never depends on the
-//  keyboard, so it works the same on iPhone and Mac.
+//  keyboard, so it works the same on iPhone and Mac. Pushed inside the sheet that
+//  opens it rather than presented over it: on a Mac a sheet over a sheet could close
+//  before the pick reached the one below.
 //
 
 import SwiftUI
 
-struct EmojiPickerSheet: View {
+struct EmojiPickerView: View {
 	@Environment(\.dismiss) private var dismiss
 	var onPick: (String) -> Void
 
@@ -23,48 +25,41 @@ struct EmojiPickerSheet: View {
 	}
 
 	var body: some View {
-		NavigationStack {
-			ScrollView {
-				LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
-					ForEach(results) { group in
-						Section {
-							LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 4)], spacing: 4) {
-								ForEach(group.emoji) { item in
-									cell(item)
-								}
+		ScrollView {
+			LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
+				ForEach(results) { group in
+					Section {
+						LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 4)], spacing: 4) {
+							ForEach(group.emoji) { item in
+								cell(item)
 							}
-							.padding(.bottom, 12)
-						} header: {
-							Text(group.name)
-								.font(.subheadline.weight(.semibold))
-								.foregroundStyle(.secondary)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.padding(.vertical, 6)
-								.background(.background)
 						}
+						.padding(.bottom, 12)
+					} header: {
+						Text(group.name)
+							.font(.subheadline.weight(.semibold))
+							.foregroundStyle(.secondary)
+							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.vertical, 6)
+							.background(.background)
 					}
-					if results.isEmpty {
-						ContentUnavailableView.search(text: search)
-					}
 				}
-				.padding(.horizontal)
-			}
-			.safeAreaInset(edge: .bottom) {
-				if let item = choosingVariant {
-					VariantBar(item: item, onPick: pick) { choosingVariant = nil }
-						.transition(.move(edge: .bottom).combined(with: .opacity))
+				if results.isEmpty {
+					ContentUnavailableView.search(text: search)
 				}
 			}
-			.animation(.snappy, value: choosingVariant)
-			.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search emoji")
-			.navigationTitle("Choose Emoji")
-			.navigationBarTitleDisplayMode(.inline)
-			.toolbar {
-				ToolbarItem(placement: .cancellationAction) {
-					Button("Cancel") { dismiss() }
-				}
+			.padding(.horizontal)
+		}
+		.safeAreaInset(edge: .bottom) {
+			if let item = choosingVariant {
+				VariantBar(item: item, onPick: pick) { choosingVariant = nil }
+					.transition(.move(edge: .bottom).combined(with: .opacity))
 			}
 		}
+		.animation(.snappy, value: choosingVariant)
+		.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search emoji")
+		.navigationTitle("Choose Emoji")
+		.navigationBarTitleDisplayMode(.inline)
 	}
 
 	private func cell(_ item: EmojiCatalog.Emoji) -> some View {

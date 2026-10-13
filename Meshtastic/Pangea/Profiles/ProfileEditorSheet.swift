@@ -22,12 +22,12 @@ struct ProfileEditorSheet: View {
 	@State private var photo: Data??
 	@State private var pickerItem: PhotosPickerItem?
 	@State private var error: String?
-	@State private var showAllEmoji = false
 	@State private var isLoadingPhoto = false
 	/// The photo being read and shrunk; a newer pick cancels it.
 	@State private var photoLoad: Task<Void, Never>?
 	@State private var showFileImporter = false
-	@State private var showPhotosPicker = false
+	@State private var showAllEmoji = false
+	@State private var showPhotoLibrary = false
 
 	private let originalName: String
 
@@ -87,16 +87,15 @@ struct ProfileEditorSheet: View {
 							}
 						HStack(spacing: 12) {
 							#if targetEnvironment(macCatalyst)
-							// On a Mac most pictures live in Finder, not the Photos library.
-							Menu {
-								Button("Choose File…") { showFileImporter = true }
-								Button("Photos Library…") { showPhotosPicker = true }
-							} label: {
-								Text(hasPhoto ? "Change Photo" : "Add Photo")
-							}
-							.menuStyle(.button)
-							.buttonStyle(.bordered)
-							.buttonBorderShape(.capsule)
+							// The library opens as a page inside this sheet: on a Mac a picker over
+							// the sheet could close without the photo reaching it.
+							Button(hasPhoto ? "Change Photo" : "Add Photo") { showPhotoLibrary = true }
+								.buttonStyle(.bordered)
+								.buttonBorderShape(.capsule)
+							// Most pictures on a Mac live in Finder, not the Photos library.
+							Button("Choose File…") { showFileImporter = true }
+								.buttonStyle(.bordered)
+								.buttonBorderShape(.capsule)
 							#else
 							PhotosPicker(selection: $pickerItem, matching: .images) {
 								Text(hasPhoto ? "Change Photo" : "Add Photo")
@@ -148,20 +147,7 @@ struct ProfileEditorSheet: View {
 				}
 
 				Section {
-					LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 10) {
-						ForEach(quickEmoji, id: \.self) { item in
-							Button {
-								emoji = emoji == item ? "" : item
-							} label: {
-								Text(item)
-									.font(.title2)
-									.frame(width: 38, height: 38)
-									.background(emoji == item ? Color.accentColor.opacity(0.25) : .clear, in: Circle())
-							}
-							.buttonStyle(.plain)
-						}
-					}
-					.padding(.vertical, 4)
+					EmojiGrid(emoji: $emoji, choices: quickEmoji)
 					HStack {
 						Button {
 							showAllEmoji = true
@@ -181,25 +167,7 @@ struct ProfileEditorSheet: View {
 				}
 
 				Section("Color") {
-					HStack {
-						ForEach(Array(AvatarPalette.colors.enumerated()), id: \.offset) { index, swatch in
-							Button {
-								color = UInt8(index)
-							} label: {
-								Circle()
-									.fill(swatch.gradient)
-									.frame(width: 30, height: 30)
-									.overlay {
-										if color == UInt8(index) {
-											Circle().strokeBorder(.primary, lineWidth: 2.5).padding(-4)
-										}
-									}
-									.frame(maxWidth: .infinity)
-							}
-							.buttonStyle(.plain)
-						}
-					}
-					.padding(.vertical, 6)
+					ColorSwatches(color: $color)
 				}
 
 				Section {
@@ -222,12 +190,16 @@ struct ProfileEditorSheet: View {
 						.disabled(trimmedName.isEmpty || isLoadingPhoto)
 				}
 			}
-			.sheet(isPresented: $showAllEmoji) {
-				EmojiPickerSheet { picked in
+			.navigationDestination(isPresented: $showAllEmoji) {
+				EmojiPickerView { picked in
 					emoji = picked
 				}
 			}
-			.photosPicker(isPresented: $showPhotosPicker, selection: $pickerItem, matching: .images)
+			.navigationDestination(isPresented: $showPhotoLibrary) {
+				PhotoLibraryPage { item in
+					loadPhoto { try? await item.loadTransferable(type: Data.self) }
+				}
+			}
 			.fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image]) { result in
 				guard case .success(let url) = result else { return }
 				loadPhoto(readFailure: String(localized: "Couldn't open that file. Try a different one.")) {
@@ -302,5 +274,28 @@ struct ProfileEditorSheet: View {
 			}
 		}
 		dismiss()
+	}
+}
+
+/// The Photos library as a page, closing once a photo is picked.
+private struct PhotoLibraryPage: View {
+	@Environment(\.dismiss) private var dismiss
+	var onPick: (PhotosPickerItem) -> Void
+	@State private var selection: PhotosPickerItem?
+
+	var body: some View {
+		PhotosPicker(selection: $selection, matching: .images, preferredItemEncoding: .compatible) {
+			EmptyView()
+		}
+		.photosPickerStyle(.inline)
+		.photosPickerDisabledCapabilities(.selectionActions)
+		.ignoresSafeArea(edges: .bottom)
+		.navigationTitle("Photos")
+		.navigationBarTitleDisplayMode(.inline)
+		.onChange(of: selection) { _, item in
+			guard let item else { return }
+			onPick(item)
+			dismiss()
+		}
 	}
 }
