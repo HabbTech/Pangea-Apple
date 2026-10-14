@@ -15,7 +15,6 @@ struct EmojiPickerView: View {
 	var onPick: (String) -> Void
 
 	@State private var search = ""
-	@State private var choosingVariant: EmojiCatalog.Emoji?
 
 	private var results: [EmojiCatalog.Group] {
 		let query = search.trimmingCharacters(in: .whitespaces).lowercased()
@@ -50,25 +49,16 @@ struct EmojiPickerView: View {
 			}
 			.padding(.horizontal)
 		}
-		.safeAreaInset(edge: .bottom) {
-			if let item = choosingVariant {
-				VariantBar(item: item, onPick: pick) { choosingVariant = nil }
-					.transition(.move(edge: .bottom).combined(with: .opacity))
-			}
-		}
-		.animation(.snappy, value: choosingVariant)
 		.searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search emoji")
 		.navigationTitle("Choose Emoji")
 		.navigationBarTitleDisplayMode(.inline)
 	}
 
+	/// A tap picks the emoji as shown, like the keyboard; holding it (or a right-click on a Mac)
+	/// offers the skin tones. A tap that only opened the tones looked like a pick that didn't take.
 	private func cell(_ item: EmojiCatalog.Emoji) -> some View {
 		Button {
-			if item.variants.isEmpty {
-				pick(item.emoji)
-			} else {
-				choosingVariant = item
-			}
+			pick(item.emoji)
 		} label: {
 			Text(item.emoji)
 				.font(.system(size: 32))
@@ -82,57 +72,23 @@ struct EmojiPickerView: View {
 							.foregroundStyle(.tertiary)
 					}
 				}
+				.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
-		.background(choosingVariant == item ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+		.contextMenu {
+			if !item.variants.isEmpty {
+				ForEach([item.emoji] + item.variants, id: \.self) { emoji in
+					Button(emoji) { pick(emoji) }
+				}
+			}
+		}
 		.accessibilityLabel(item.name)
+		.accessibilityHint(item.variants.isEmpty ? "" : String(localized: "Hold for skin tones."))
 	}
 
 	private func pick(_ emoji: String) {
-		choosingVariant = nil
 		onPick(emoji)
 		dismiss()
 	}
 }
 
-/// The base emoji plus every skin tone (and, for pairs, every combination).
-private struct VariantBar: View {
-	let item: EmojiCatalog.Emoji
-	var onPick: (String) -> Void
-	var onClose: () -> Void
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: 6) {
-			HStack {
-				Text(item.name.capitalized(with: .current))
-					.font(.subheadline.weight(.semibold))
-				Spacer()
-				Button(action: onClose) {
-					Image(systemName: "xmark.circle.fill")
-						.font(.title3)
-						.foregroundStyle(.secondary)
-				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Close")
-			}
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: 4) {
-					ForEach([item.emoji] + item.variants, id: \.self) { emoji in
-						Button {
-							onPick(emoji)
-						} label: {
-							Text(emoji)
-								.font(.system(size: 36))
-								.frame(width: 52, height: 52)
-						}
-						.buttonStyle(.plain)
-					}
-				}
-			}
-		}
-		.padding(14)
-		.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-		.padding(.horizontal)
-		.padding(.bottom, 8)
-	}
-}
