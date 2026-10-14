@@ -24,8 +24,9 @@ final class ChatIconStore: ObservableObject {
 
 	init(defaults: UserDefaults = .standard) {
 		self.defaults = defaults
-		let saved = defaults.data(forKey: Self.defaultsKey).flatMap { try? JSONDecoder().decode([String: ChatIcon].self, from: $0) } ?? [:]
-		icons = saved.filter { ProfileCard.cleanEmoji($0.value.emoji) == $0.value.emoji && !$0.value.emoji.isEmpty }
+		// Each icon is read on its own, so one that won't decode doesn't take the rest with it.
+		let saved = defaults.data(forKey: Self.defaultsKey).flatMap { try? JSONDecoder().decode([String: SavedIcon].self, from: $0) } ?? [:]
+		icons = saved.compactMapValues(\.icon).filter { ProfileCard.cleanEmoji($0.value.emoji) == $0.value.emoji && !$0.value.emoji.isEmpty }
 	}
 
 	func icon(for key: String) -> ChatIcon? {
@@ -63,7 +64,16 @@ final class ChatIconStore: ObservableObject {
 	}
 }
 
-/// A chat's picture, redrawn as soon as its icon changes.
+private struct SavedIcon: Decodable {
+	let icon: ChatIcon?
+
+	init(from decoder: Decoder) throws {
+		icon = try? ChatIcon(from: decoder)
+	}
+}
+
+/// A chat's picture, redrawn as soon as its icon changes. Hidden from VoiceOver: the
+/// chat's name always sits beside it.
 struct ChatIconView: View {
 	@ObservedObject private var store = ChatIconStore.shared
 	let key: String
@@ -71,15 +81,18 @@ struct ChatIconView: View {
 	var size: CGFloat = 46
 
 	var body: some View {
-		if let icon = store.icon(for: key) {
-			EmojiAvatar(emoji: icon.emoji, color: AvatarPalette.color(icon.color), size: size)
-		} else {
-			Image(systemName: everyone ? "globe" : "person.3.fill")
-				.font(.system(size: size * 0.4, weight: .semibold))
-				.foregroundStyle(.white)
-				.frame(width: size, height: size)
-				.background(everyone ? Color.pangeaTertiary : Color.accentColor, in: Circle())
+		Group {
+			if let icon = store.icon(for: key) {
+				EmojiAvatar(emoji: icon.emoji, color: AvatarPalette.color(icon.color), size: size)
+			} else {
+				Image(systemName: everyone ? "globe" : "person.3.fill")
+					.font(.system(size: size * 0.4, weight: .semibold))
+					.foregroundStyle(.white)
+					.frame(width: size, height: size)
+					.background(everyone ? Color.pangeaTertiary : Color.accentColor, in: Circle())
+			}
 		}
+		.accessibilityHidden(true)
 	}
 }
 
@@ -114,11 +127,14 @@ struct ChatIconSheet: View {
 			Form {
 				Section {
 					VStack(spacing: 10) {
-						if emoji.isEmpty {
-							ChatIconView(key: "", everyone: everyone, size: 96)
-						} else {
-							EmojiAvatar(emoji: emoji, color: AvatarPalette.color(color), size: 96)
+						Group {
+							if emoji.isEmpty {
+								ChatIconView(key: "", everyone: everyone, size: 96)
+							} else {
+								EmojiAvatar(emoji: emoji, color: AvatarPalette.color(color), size: 96)
+							}
 						}
+						.accessibilityHidden(true)
 						Text(title)
 							.font(.headline)
 					}
@@ -151,7 +167,8 @@ struct ChatIconSheet: View {
 					}
 				}
 
-				if store.icon(for: key) != nil || !emoji.isEmpty {
+				// Only for a saved icon: before that, Cancel already keeps the default.
+				if store.icon(for: key) != nil {
 					Section {
 						Button("Use Default Icon", role: .destructive) {
 							store.set(nil, for: key)
@@ -175,6 +192,7 @@ struct ChatIconSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
 					Button("Cancel") { dismiss() }
+						.keyboardShortcut(.cancelAction)
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") {
@@ -204,6 +222,7 @@ struct EmojiGrid: View {
 						.background(emoji == item ? Color.accentColor.opacity(0.25) : .clear, in: Circle())
 				}
 				.buttonStyle(.plain)
+				.accessibilityAddTraits(emoji == item ? .isSelected : [])
 			}
 		}
 		.padding(.vertical, 4)
@@ -230,6 +249,8 @@ struct ColorSwatches: View {
 						.frame(maxWidth: .infinity)
 				}
 				.buttonStyle(.plain)
+				.accessibilityLabel(AvatarPalette.names[index])
+				.accessibilityAddTraits(color == UInt8(index) ? .isSelected : [])
 			}
 		}
 		.padding(.vertical, 6)

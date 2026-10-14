@@ -21,6 +21,12 @@ enum AvatarPalette {
 		Color(red: 0.45, green: 0.47, blue: 0.52)
 	]
 
+	/// For VoiceOver, in the same order as `colors`.
+	static let names = [
+		String(localized: "Orange"), String(localized: "Gold"), String(localized: "Green"), String(localized: "Teal"),
+		String(localized: "Blue"), String(localized: "Purple"), String(localized: "Pink"), String(localized: "Gray")
+	]
+
 	static func color(_ index: UInt8) -> Color {
 		colors[Int(index) % colors.count]
 	}

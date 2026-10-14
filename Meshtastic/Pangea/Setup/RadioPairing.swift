@@ -225,7 +225,7 @@ enum RadioPairing {
 	/// - Parameters:
 	///   - disconnect: lets go of the radio first; if it throws, nothing is erased.
 	///   - clearStore: the clear itself; replaced only by tests.
-	///   - profiles, invites, defaults, backups (nil: `NodeBackupManager.shared`), oldBackupFolders,
+	///   - profiles, invites, chatIcons (nil: `ChatIconStore.shared`), defaults, backups (nil: `NodeBackupManager.shared`), oldBackupFolders,
 	///     oldStoreFolders, keychainService: where Pangea keeps the rest; replaced only by tests.
 	/// - Returns: false, with nothing erased, when `disconnect` threw.
 	@discardableResult
@@ -233,6 +233,7 @@ enum RadioPairing {
 		disconnect: @MainActor () async throws -> Void,
 		profiles: ProfileStore = .shared,
 		invites: GroupInviteStore = .shared,
+		chatIcons: ChatIconStore? = nil,
 		defaults: UserDefaults = .standard,
 		backups: NodeBackupManager? = nil,
 		oldBackupFolders: [URL] = NodeBackupManager.backupFolders,
@@ -272,7 +273,7 @@ enum RadioPairing {
 		await clearRadioData(profiles: profiles, clearStore: {
 			let cleared = await clearStore()
 			// While the lists are still unmounted, so nothing shows a contact on its way out.
-			eraseLocalData(profiles: profiles, invites: invites, defaults: defaults)
+			eraseLocalData(profiles: profiles, invites: invites, chatIcons: chatIcons ?? .shared, defaults: defaults)
 			return cleared
 		})
 		return true
@@ -283,14 +284,14 @@ enum RadioPairing {
 
 	/// What Pangea keeps outside the database, for Clear App Data. `clearRadioState` takes the
 	/// rest (notifications, the Messages snapshot, a pending name, a held push) on every clear.
-	static func eraseLocalData(profiles: ProfileStore, invites: GroupInviteStore, defaults: UserDefaults) {
+	static func eraseLocalData(profiles: ProfileStore, invites: GroupInviteStore, chatIcons: ChatIconStore, defaults: UserDefaults) {
 		profiles.eraseAll()
 		invites.removeAll()
 		for key in localDefaultsKeys {
 			defaults.removeObject(forKey: key)
 		}
 		ManualConnectionList.shared.forgetAll()
-		ChatIconStore.shared.forgetAll()
+		chatIcons.forgetAll()
 	}
 
 	/// What Clear App Data puts back as on a fresh install: no radio paired, so nothing

@@ -184,6 +184,7 @@ struct ProfileEditorSheet: View {
 						cancelPhotoLoad()
 						dismiss()
 					}
+					.keyboardShortcut(.cancelAction)
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") { save() }
@@ -279,11 +280,14 @@ struct ProfileEditorSheet: View {
 
 /// The Photos library as a page. It stays open, with a spinner, until the picked photo has
 /// been read: closing it at once ended the read on a Mac, and the photo never arrived.
+/// Cancel stands in for the back button meanwhile, so a photo that never finishes
+/// (an iCloud original with no network) can't hold the sheet.
 private struct PhotoLibraryPage: View {
 	@Environment(\.dismiss) private var dismiss
 	var onPicked: (Data?) -> Void
 	@State private var selection: PhotosPickerItem?
 	@State private var isReading = false
+	@State private var cancelled = false
 
 	var body: some View {
 		PhotosPicker(selection: $selection, matching: .images, preferredItemEncoding: .compatible) {
@@ -306,11 +310,24 @@ private struct PhotoLibraryPage: View {
 		.navigationTitle("Photos")
 		.navigationBarTitleDisplayMode(.inline)
 		.navigationBarBackButtonHidden(isReading)
+		.toolbar {
+			if isReading {
+				// The read only ends once the page has slid away, so a photo that arrives
+				// meanwhile is dropped here rather than used.
+				ToolbarItem(placement: .cancellationAction) {
+					Button("Cancel") {
+						cancelled = true
+						dismiss()
+					}
+					.keyboardShortcut(.cancelAction)
+				}
+			}
+		}
 		.task(id: selection) {
 			guard let item = selection else { return }
 			isReading = true
 			let data = try? await item.loadTransferable(type: Data.self)
-			guard !Task.isCancelled else { return }
+			guard !Task.isCancelled, !cancelled else { return }
 			isReading = false
 			onPicked(data)
 			dismiss()

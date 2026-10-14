@@ -36,6 +36,16 @@ import Testing
 		#expect(ChatIconStore(defaults: defaults).icons.isEmpty)
 	}
 
+	/// One icon that won't read back is dropped on its own, and the next change doesn't lose the rest.
+	@Test func oneBadIconKeepsTheRest() {
+		let defaults = scratchDefaults()
+		defaults.set(Data(#"{"a":{"emoji":"🏕️","color":2},"b":{"emoji":"🔥","color":300}}"#.utf8), forKey: ChatIconStore.defaultsKey)
+		let store = ChatIconStore(defaults: defaults)
+		#expect(store.icons == ["a": ChatIcon(emoji: "🏕️", color: 2)])
+		store.set(ChatIcon(emoji: "🔥", color: 1), for: "c")
+		#expect(ChatIconStore(defaults: defaults).icon(for: "a") == ChatIcon(emoji: "🏕️", color: 2))
+	}
+
 	/// A group is its name and key: the same group gets the same icon in any slot, another group doesn't.
 	@Test func groupKeys() {
 		let key = Data(repeating: 7, count: 32)
@@ -43,6 +53,11 @@ import Testing
 		#expect(ChatIconStore.key(name: "Hike", psk: key) != ChatIconStore.key(name: "Hike", psk: Data(repeating: 8, count: 32)))
 		#expect(ChatIconStore.key(name: "Hike", psk: key) != ChatIconStore.key(name: "Hikes", psk: key))
 		#expect(ChatIconStore.key(name: "Hike", psk: key) != "everyone")
+	}
+
+	/// Every swatch has a name for VoiceOver.
+	@Test func everyColorHasAName() {
+		#expect(AvatarPalette.names.count == AvatarPalette.colors.count)
 	}
 
 	@Test func forgetAllDropsTheLoadedCopy() {

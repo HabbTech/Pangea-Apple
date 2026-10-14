@@ -142,6 +142,8 @@ struct UserMessageRow: View {
 						.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
 					}
 					.accessibilityLabel(String(localized: "Replying to: \(replyMessage?.displayedPayload ?? String(localized: "Original message not available"))", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
+					// Nothing to jump to.
+					.disabled(replyMessage == nil)
 					if !isCurrentUser { Spacer(minLength: 50) }
 				}
 			}

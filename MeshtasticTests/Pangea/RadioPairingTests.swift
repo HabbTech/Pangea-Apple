@@ -594,6 +594,8 @@ struct ClearRadioDataTests {
 		defaults.set(true, forKey: UserDefaults.Keys.expertModeEnabled.rawValue)
 
 		defaults.set(Data("[]".utf8), forKey: UserDefaults.Keys.manualConnections.rawValue)
+		let chatIcons = ChatIconStore(defaults: defaults)
+		chatIcons.set(ChatIcon(emoji: "🔥", color: 0), for: "everyone")
 		let app = ProfileSync.defaults
 		ProfileSync.defaults = defaults
 		defer { ProfileSync.defaults = app }
@@ -602,7 +604,7 @@ struct ClearRadioDataTests {
 
 		var erasingShown: Bool?
 		var radioKeysAtClear: [Any?] = []
-		let erased = await erase(scratch, profiles: profiles, invites: invites, defaults: defaults, clearStore: {
+		let erased = await erase(scratch, profiles: profiles, invites: invites, defaults: defaults, chatIcons: chatIcons, clearStore: {
 			erasingShown = AccessoryManager.shared.appState?.isErasingAppData
 			radioKeysAtClear = [
 				defaults.object(forKey: UserDefaults.Keys.preferredPeripheralId.rawValue),
@@ -615,6 +617,7 @@ struct ClearRadioDataTests {
 		#expect(radioKeysAtClear.count == 2 && radioKeysAtClear.allSatisfy { $0 == nil }, "the radio is forgotten before the store is cleared, so auto-connect can't bring it back")
 		#expect(defaults.object(forKey: ProfileSync.pushWhenBackKey) == nil, "removed, not written back as false")
 		#expect(ManualConnectionList.shared.connectionsList.isEmpty)
+		#expect(chatIcons.icons.isEmpty)
 
 		if AccessoryManager.shared.appState != nil {
 			#expect(erasingShown == true, "the placeholder says Erasing app data")
@@ -639,6 +642,8 @@ struct ClearRadioDataTests {
 			#expect(defaults.object(forKey: key) == nil, "\(key)")
 		}
 		#expect(defaults.bool(forKey: UserDefaults.Keys.expertModeEnabled.rawValue), "app settings stay")
+		chatIcons.set(ChatIcon(emoji: "🐻", color: 1), for: "other")
+		#expect(ChatIconStore(defaults: defaults).icons == ["other": ChatIcon(emoji: "🐻", color: 1)], "the next icon change doesn't write the old icons back")
 	}
 
 	/// The keys are the ones the app reads, by name: a renamed key would quietly survive an erase.
@@ -806,6 +811,7 @@ struct ClearRadioDataTests {
 		profiles: ProfileStore,
 		invites: GroupInviteStore,
 		defaults: UserDefaults,
+		chatIcons: ChatIconStore? = nil,
 		disconnect: @MainActor () async throws -> Void = {},
 		clearStore: @MainActor () async -> Bool = { await MeshPackets.shared.clearDatabase(includeRoutes: true) }
 	) async -> Bool {
@@ -813,6 +819,8 @@ struct ClearRadioDataTests {
 			disconnect: disconnect,
 			profiles: profiles,
 			invites: invites,
+			// A scratch store unless one is passed, so tests leave the app's icons alone.
+			chatIcons: chatIcons ?? ChatIconStore(defaults: defaults),
 			defaults: defaults,
 			backups: scratch.backups,
 			oldBackupFolders: [scratch.backupFolder, scratch.oldBackupFolder],
