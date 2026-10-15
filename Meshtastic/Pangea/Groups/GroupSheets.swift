@@ -203,6 +203,7 @@ struct GroupInviteContent: View {
 						ShareLink(item: link, message: Text("Join my Pangea group \"\(invite.name)\"")) {
 							Label("Share Invite Link", systemImage: "square.and.arrow.up")
 								.frame(maxWidth: .infinity)
+								.foregroundStyle(.white)
 						}
 						.buttonStyle(.borderedProminent)
 						.buttonBorderShape(.capsule)

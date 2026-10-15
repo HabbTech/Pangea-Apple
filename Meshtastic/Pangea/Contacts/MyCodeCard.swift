@@ -88,6 +88,8 @@ struct MyCodeCard: View {
 					ShareLink(item: link, message: Text(mine.shareText)) {
 						Label("Share", systemImage: "square.and.arrow.up")
 							.frame(maxWidth: .infinity)
+							// A share link tints its icon; in Dark Mode that's the button's own orange.
+							.foregroundStyle(.white)
 					}
 					.buttonStyle(.borderedProminent)
 				}
