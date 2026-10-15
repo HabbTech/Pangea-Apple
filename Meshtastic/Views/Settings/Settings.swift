@@ -643,7 +643,7 @@ struct Settings: View {
 					// pushed results off the top of the screen and read as broken.
 					SettingsSearchResultsView(
 						results: searchResults,
-						docs: DocumentationSearch.search(searchText),
+						docs: DocumentationSearch.search(searchText, expertMode: expertModeEnabled),
 						onSelect: { entry in
 							// The screen scrolls to the control the result named; screens
 							// that are still hand-written just open as before.
@@ -662,8 +662,8 @@ struct Settings: View {
 					}
 				}
 
-				// Pangea: the bundled guide is the mesh firmware's, with radio-level detail; standard
-				// mode points to Pangea's own documentation from About instead.
+				// Pangea: links to Pangea's guides, Expert Mode's included; standard mode has
+				// About Pangea's Documentation link instead.
 				if expertModeEnabled {
 					expertLink(.helpDocs, "Help & Documentation") {
 						Image(systemName: "book.pages")
@@ -896,7 +896,7 @@ struct Settings: View {
 					case .helpDocs:
 						// Carries the settings-search query through, so a documentation
 						// result opens filtered. Empty when reached from the list row.
-						DocBrowserView(initialSearch: searchText)
+						PangeaHelpView(initialSearch: searchText)
 					case .backupManagement:
 						BackupManagement()
 					}

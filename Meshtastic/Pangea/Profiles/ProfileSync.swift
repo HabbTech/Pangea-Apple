@@ -198,9 +198,9 @@ enum ProfileSync {
 				if nameWrites == ticket && radioGeneration == generation {
 					pendingRadioName = name
 				} else {
-					Logger.services.info("👤 [Profiles] A newer name or another radio took the place of one that couldn't be saved")
+					Logger.pangea.info("👤 [Profiles] A newer name or another radio took the place of one that couldn't be saved")
 				}
-				Logger.services.error("👤 [Profiles] Couldn't apply saved name: \(error.localizedDescription, privacy: .public)")
+				Logger.pangea.error("👤 [Profiles] Couldn't apply saved name: \(error.localizedDescription, privacy: .public)")
 			}
 		}
 	}
@@ -268,7 +268,7 @@ enum ProfileSync {
 	private static func schedule(_ item: ProfileOutbox.Item, reason: ProfileOutbox.Reason, delay: ClosedRange<Double>,
 								 hint: ProfileCard? = nil, isReask: Bool = false) -> Bool {
 		guard outbox.schedule(item, reason: reason, delay: delay, hint: hint, isReask: isReask, now: .now) else {
-			Logger.services.info("👤 [Profiles] Outbox full for \(String(describing: reason), privacy: .public); dropped a profile packet")
+			Logger.pangea.info("👤 [Profiles] Outbox full for \(String(describing: reason), privacy: .public); dropped a profile packet")
 			return false
 		}
 		startLane()
@@ -489,10 +489,10 @@ enum ProfileSync {
 			try await accessoryManager.send(toRadio, debugDescription: description)
 			return .sent
 		} catch AccessoryError.connectionFailed(let reason) {
-			Logger.services.error("👤 [Profiles] Send failed, no radio: \(reason, privacy: .public)")
+			Logger.pangea.error("👤 [Profiles] Send failed, no radio: \(reason, privacy: .public)")
 			return .noRadio
 		} catch {
-			Logger.services.error("👤 [Profiles] Send failed: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👤 [Profiles] Send failed: \(error.localizedDescription, privacy: .public)")
 			return .failed
 		}
 	}
@@ -521,7 +521,7 @@ enum ProfileSync {
 		// A private packet must come from the key I already know for them.
 		if route == .direct, !packet.publicKey.isEmpty,
 		   let known = existingUser(num: from, context: accessoryManager.context)?.publicKey, !known.isEmpty, known != packet.publicKey {
-			Logger.services.error("👤 [Profiles] Ignored a private packet signed with an unexpected key")
+			Logger.pangea.error("👤 [Profiles] Ignored a private packet signed with an unexpected key")
 			return true
 		}
 
@@ -555,14 +555,14 @@ enum ProfileSync {
 			// checked again before it goes (their real card may have come meanwhile).
 			let user = existingUser(num: num, context: accessoryManager.context)
 			if ProfileRules.asksForCard(heard: card, stored: store.profile(num)?.card, canReachDirectly: user.map(canReachDirectly) ?? false) {
-				Logger.services.info("👤 [Profiles] Group card differs from their private one; asking them for it")
+				Logger.pangea.info("👤 [Profiles] Group card differs from their private one; asking them for it")
 				schedule(.cardAsk(num), reason: .ask, delay: ProfileOutbox.ask, hint: card)
 			} else {
-				Logger.services.info("👤 [Profiles] Ignored a group card for someone whose private card I have")
+				Logger.pangea.info("👤 [Profiles] Ignored a group card for someone whose private card I have")
 			}
 			return
 		}
-		Logger.services.info("👤 [Profiles] Got a card")
+		Logger.pangea.info("👤 [Profiles] Got a card")
 
 		// Swap cards: if they don't have mine yet, send it back. Only to people I talk
 		// to; anyone can find my key, and a card shouldn't be the reply to a stranger.
@@ -602,7 +602,7 @@ enum ProfileSync {
 		}
 		let key = PhotoSendLimiter.Key(audience: audience, version: pieces.version)
 		guard photoLimiter.admit(request.wanted, slotCount: pieces.slotCount, for: key, now: .now) else {
-			Logger.services.info("👤 [Profiles] Skipped a photo request (sent enough lately, or too busy)")
+			Logger.pangea.info("👤 [Profiles] Skipped a photo request (sent enough lately, or too busy)")
 			return
 		}
 		startLane()
@@ -684,7 +684,7 @@ enum ProfileSync {
 					case .failed, .notNeeded:
 						// Only this one: the others queued can still go.
 						photoLimiter.cancel(next.key, unsent: next.slot)
-						Logger.services.info("👤 [Profiles] Stopped sending my photo to one group or person; the send failed")
+						Logger.pangea.info("👤 [Profiles] Stopped sending my photo to one group or person; the send failed")
 					}
 				case nil:
 					guard let wake = outbox.nextWake(now: now, piecesWaiting: !photoLimiter.isIdle) else { break sending }
@@ -714,7 +714,7 @@ enum ProfileSync {
 	/// dropped (`PhotoSendLimiter.maxWait`).
 	private static func pauseForRadio() {
 		waitingForRadio = true
-		Logger.services.info("👤 [Profiles] Waiting for the radio to send profile packets")
+		Logger.pangea.info("👤 [Profiles] Waiting for the radio to send profile packets")
 	}
 
 	/// A send found no radio (what it was is back in the outbox). Gone or still connecting:
@@ -728,7 +728,7 @@ enum ProfileSync {
 		}
 		backoff = wait
 		backoffUntil = .now + wait
-		Logger.services.info("👤 [Profiles] Radio linked but not taking profile packets; trying again in \(String(describing: wait), privacy: .public)")
+		Logger.pangea.info("👤 [Profiles] Radio linked but not taking profile packets; trying again in \(String(describing: wait), privacy: .public)")
 		return true
 	}
 
@@ -829,11 +829,11 @@ enum ProfileSync {
 			if let photo = transfer.download.assemble(), PhotoCompressor.isAcceptableAvatar(photo) {
 				endTransfer(num, saved: true)
 				store.savePhoto(photo, version: transfer.download.version, for: num)
-				Logger.services.info("👤 [Profiles] Photo received")
+				Logger.pangea.info("👤 [Profiles] Photo received")
 			} else {
 				// Every piece matched the card, yet it isn't a small image of that version:
 				// the card itself was wrong. Asking again would bring the same bytes.
-				Logger.services.error("👤 [Profiles] Received photo isn't a usable image; dropped")
+				Logger.pangea.error("👤 [Profiles] Received photo isn't a usable image; dropped")
 				endTransfer(num, saved: false)
 			}
 			return

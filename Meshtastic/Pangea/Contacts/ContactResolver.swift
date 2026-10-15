@@ -80,7 +80,7 @@ final class ContactResolver: ObservableObject {
 				state = .ready(nodeNum: invite.nodeNum)
 				return
 			} catch {
-				Logger.services.error("👥 [Contacts] Adding contact failed: \(error.localizedDescription, privacy: .public)")
+				Logger.pangea.error("👥 [Contacts] Adding contact failed: \(error.localizedDescription, privacy: .public)")
 			}
 			guard !Task.isCancelled else { return }
 		}

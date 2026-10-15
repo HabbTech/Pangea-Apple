@@ -202,7 +202,7 @@ final class ProfileStore: ObservableObject {
 				// before the next save writes it out without that part, then save what
 				// did load, so the copy isn't made again on every launch.
 				let aside = Self.setAsideURL(in: base)
-				Logger.data.error("👤 [Profiles] Part of profiles.json couldn't be read, copied to \(aside.lastPathComponent, privacy: .public)")
+				Logger.pangea.error("👤 [Profiles] Part of profiles.json couldn't be read, copied to \(aside.lastPathComponent, privacy: .public)")
 				if (try? FileManager.default.copyItem(at: file, to: aside)) != nil {
 					save()
 				}
@@ -211,7 +211,7 @@ final class ProfileStore: ObservableObject {
 			// Keep the unreadable file (nicknames can't be fetched again) rather than
 			// letting the next save write over it. An earlier set-aside copy is kept too.
 			let aside = Self.setAsideURL(in: base)
-			Logger.data.error("👤 [Profiles] Couldn't read profiles.json, set aside as \(aside.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👤 [Profiles] Couldn't read profiles.json, set aside as \(aside.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
 			try? FileManager.default.moveItem(at: file, to: aside)
 		}
 	}
@@ -228,7 +228,7 @@ final class ProfileStore: ObservableObject {
 		do {
 			try JSONEncoder().encode(saved).write(to: folder.appendingPathComponent("profiles.json"), options: .atomic)
 		} catch {
-			Logger.data.error("👤 [Profiles] Save failed: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👤 [Profiles] Save failed: \(error.localizedDescription, privacy: .public)")
 		}
 	}
 
@@ -417,7 +417,7 @@ final class ProfileStore: ObservableObject {
 			do {
 				try FileManager.default.removeItem(at: file)
 			} catch {
-				Logger.data.error("👤 [Profiles] Couldn't remove \(file.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+				Logger.pangea.error("👤 [Profiles] Couldn't remove \(file.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
 			}
 		}
 		save()

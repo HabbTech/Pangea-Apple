@@ -54,18 +54,29 @@ struct SettingsSearchResultsView: View {
 			// reads the same with or without a radio.
 			if !docs.isEmpty {
 				Section(String(localized: "Help & Documentation", comment: "Search results section")) {
+					// Pangea: each opens its guide on the web.
 					ForEach(docs) { page in
-						NavigationLink(value: SettingsNavigationState.helpDocs) {
-							VStack(alignment: .leading, spacing: 2) {
-								Text(page.title)
-									.font(.body)
-								Text(String(localized: "Documentation", comment: "Search result breadcrumb"))
-									.font(.caption)
-									.foregroundStyle(.secondary)
+						Link(destination: page.url) {
+							HStack {
+								VStack(alignment: .leading, spacing: 2) {
+									Text(page.title)
+										.font(.body)
+									Text(String(localized: "Documentation", comment: "Search result breadcrumb"))
+										.font(.caption)
+										.foregroundStyle(.secondary)
+								}
+								.padding(.vertical, 2)
+								.frame(minHeight: 44, alignment: .leading)
+								Spacer(minLength: 8)
+								Image(systemName: "arrow.up.forward")
+									.font(.footnote.weight(.semibold))
+									.foregroundStyle(.tertiary)
+									.accessibilityHidden(true)
 							}
-							.padding(.vertical, 2)
-							.frame(minHeight: 44, alignment: .leading)
+							.contentShape(Rectangle())
 						}
+						.foregroundStyle(.primary)
+						.accessibilityHint("Opens in your browser")
 					}
 				}
 			}

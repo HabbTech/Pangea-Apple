@@ -12,6 +12,9 @@ extension Logger {
 	/// The logger's subsystem.
 	private static let subsystem = Bundle.main.bundleIdentifier!
 
+	/// Pangea's own features: pairing and setup, chats and delivery, groups, contacts and profiles.
+	static let pangea = Logger(subsystem: subsystem, category: "🌍 Pangea")
+
 	/// All admin messages
 	static let admin = Logger(subsystem: subsystem, category: "🏛 Admin")
 

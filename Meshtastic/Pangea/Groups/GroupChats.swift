@@ -298,11 +298,11 @@ enum GroupChats {
 		do {
 			try accessoryManager.applyLocalChannelMutation(channel, fromNum: user.num)
 		} catch {
-			Logger.services.error("👥 [Groups] Joined, but couldn't save the group locally: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👥 [Groups] Joined, but couldn't save the group locally: \(error.localizedDescription, privacy: .public)")
 		}
 		// The Messages extension shares groups from its own copy; rebuilt from the row just saved.
 		MeshShareSnapshotBuilder.refresh(nodeNum: user.num, context: accessoryManager.context)
-		Logger.services.info("👥 [Groups] Joined group in slot \(index)")
+		Logger.pangea.info("👥 [Groups] Joined group in slot \(index)")
 		GroupInviteStore.shared.remove(invite: invite)
 		return index
 	}
@@ -388,7 +388,7 @@ enum GroupChats {
 			try context.save()
 		} catch {
 			context.rollback()
-			Logger.data.error("👥 [Groups] Failed to remove group: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👥 [Groups] Failed to remove group: \(error.localizedDescription, privacy: .public)")
 			return false
 		}
 		return true
@@ -410,7 +410,7 @@ enum GroupChats {
 			try context.save()
 		} catch {
 			context.rollback()
-			Logger.data.error("👥 [Groups] Failed to remove a left group's messages: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("👥 [Groups] Failed to remove a left group's messages: \(error.localizedDescription, privacy: .public)")
 			return false
 		}
 		return true
@@ -467,7 +467,7 @@ enum GroupChats {
 			  packet.to != UInt32.max else { return }
 		guard let invite = GroupInvite(invitePayload: data.payload) else {
 			if data.payload.starts(with: GroupInvite.magic) {
-				Logger.services.info("👥 [Groups] Ignored an invite whose name or key can't be joined")
+				Logger.pangea.info("👥 [Groups] Ignored an invite whose name or key can't be joined")
 			}
 			return
 		}
@@ -630,7 +630,7 @@ final class GroupInviteStore: ObservableObject {
 		guard !keys.contains(where: { (defaults.object(forKey: $0) as? NSObject)?.isEqual(raw) == true }) else { return }
 		if let free = keys.first(where: { defaults.object(forKey: $0) == nil }) {
 			defaults.set(raw, forKey: free)
-			Logger.services.error("👥 [Groups] Some saved invites couldn't be read; kept a copy as \(free, privacy: .public)")
+			Logger.pangea.error("👥 [Groups] Some saved invites couldn't be read; kept a copy as \(free, privacy: .public)")
 			return
 		}
 		// All full: the oldest goes, so the copy of what's about to be saved over is kept.
@@ -638,7 +638,7 @@ final class GroupInviteStore: ObservableObject {
 			defaults.set(defaults.object(forKey: newer), forKey: older)
 		}
 		defaults.set(raw, forKey: keys[keys.count - 1])
-		Logger.services.error("👥 [Groups] Some saved invites couldn't be read; kept a copy as \(keys[keys.count - 1], privacy: .public); dropped the oldest")
+		Logger.pangea.error("👥 [Groups] Some saved invites couldn't be read; kept a copy as \(keys[keys.count - 1], privacy: .public); dropped the oldest")
 	}
 
 	/// Returns true if the invite was new and kept.

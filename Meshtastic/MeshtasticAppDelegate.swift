@@ -19,7 +19,11 @@ class MeshtasticAppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificat
 		guard NSClassFromString("XCTestCase") == nil && ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
 			return true
 		}
-		Logger.services.info("🚀 [App] Meshtstic Apple App launched!")
+		// Pangea: the version and system first, so a shared log says what it came from.
+		let info = Bundle.main.infoDictionary
+		let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+		let build = info?["CFBundleVersion"] as? String ?? "?"
+		Logger.services.info("🚀 [App] Pangea \(version, privacy: .public) (\(build, privacy: .public)) launched on \(UIDevice.current.model, privacy: .public), \(UIDevice.current.systemName, privacy: .public) \(UIDevice.current.systemVersion, privacy: .public)")
 		// Pangea: the old chats' import started in the app's init, before there was an
 		// application to give it background time.
 		LegacyStoreImport.shared.appDidLaunch()

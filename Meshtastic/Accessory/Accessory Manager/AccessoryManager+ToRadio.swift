@@ -673,7 +673,7 @@ extension AccessoryManager {
 			Logger.mesh.error("💥 Could not resend \(messageId, privacy: .public): \(error.localizedDescription, privacy: .public)")
 			throw error
 		}
-		Logger.mesh.info("💬 \(logString, privacy: .public)")
+		Logger.mesh.info("💬 \(logString, privacy: .public), first sent as \(previousId, privacy: .public)")
 	}
 
 	public func setFavoriteNode(node: NodeInfoEntity, connectedNodeNum: Int64) async throws {

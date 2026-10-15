@@ -412,7 +412,7 @@ extension AppLog {
 			/// category with `Bundle.main.bundleIdentifier`, so a hard-coded value silently filters out all
 			/// of the app's own entries in any build whose bundle id differs (a contributor signing with
 			/// their own team, for instance).
-			let appSubsystem = Bundle.main.bundleIdentifier ?? "gvh.MeshtasticClient"
+			let appSubsystem = Bundle.main.bundleIdentifier ?? "gvh.PangeaClient"
 			let subsystemPredicate = NSPredicate(format: "subsystem IN %@", ["com.apple.SwiftUI", "com.apple.coredata", appSubsystem])
 			predicates.append(subsystemPredicate)
 			/// Categories

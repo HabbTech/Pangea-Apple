@@ -300,7 +300,7 @@ struct ChatsView: View {
 					// Takes away its notifications and badge counts itself.
 					try await GroupChats.leave(channel, accessoryManager: accessoryManager)
 				} catch {
-					Logger.services.error("👥 [Groups] Leave failed: \(error.localizedDescription, privacy: .public)")
+					Logger.pangea.error("👥 [Groups] Leave failed: \(error.localizedDescription, privacy: .public)")
 					// The radio went away meanwhile, or didn't take the change.
 					removeError = (error as? GroupChatError) == .notConnected ? Self.leaveNeedsRadio : String(localized: "Your radio didn't take the change. Try again in a moment.")
 				}
@@ -317,7 +317,7 @@ struct ChatsView: View {
 						Self.refreshUnread(appState: appState, myNum: myNum, context: context)
 					}
 				} catch {
-					Logger.data.error("💬 [Chats] Delete chat failed: \(error.localizedDescription, privacy: .public)")
+					Logger.pangea.error("💬 [Chats] Delete chat failed: \(error.localizedDescription, privacy: .public)")
 				}
 			}
 		}

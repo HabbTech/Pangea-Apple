@@ -178,7 +178,7 @@ struct SetupProfileView: View {
 				onFinished()
 			}
 		} catch {
-			Logger.services.error("🧭 [Setup] Saving profile failed: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("🧭 [Setup] Saving profile failed: \(error.localizedDescription, privacy: .public)")
 			phase = .failed(String(localized: "Couldn't save to your radio. Make sure it's still on and nearby, then try again."))
 		}
 	}

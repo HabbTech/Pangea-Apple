@@ -635,7 +635,7 @@ struct GroupChatScreen: View {
 						do {
 							try await GroupChats.leave(channel, accessoryManager: accessoryManager)
 						} catch {
-							Logger.services.error("👥 [Groups] Leave failed: \(error.localizedDescription, privacy: .public)")
+							Logger.pangea.error("👥 [Groups] Leave failed: \(error.localizedDescription, privacy: .public)")
 						}
 					}
 				}

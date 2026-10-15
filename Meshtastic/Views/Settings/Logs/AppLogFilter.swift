@@ -11,6 +11,8 @@ import SwiftUI
 
 enum LogCategories: Int, CaseIterable, Identifiable {
 
+	// Pangea: listed first, it's where pairing, setup, chats, groups and profiles log.
+	case pangea = 8
 	case admin = 0
 	case data = 1
 	case mesh = 2
@@ -19,10 +21,15 @@ enum LogCategories: Int, CaseIterable, Identifiable {
 	case services = 5
 	case stats = 6
 	case transport = 7
+	case tak = 9
+	case discovery = 10
+	case backup = 11
 
 	var id: Int { self.rawValue }
 	var description: String {
 		switch self {
+		case .pangea:
+			return "🌍 Pangea"
 		case .admin:
 			return "🏛 Admin"
 		case .data:
@@ -39,11 +46,19 @@ enum LogCategories: Int, CaseIterable, Identifiable {
 			return "📊 Stats"
 		case .transport:
 			return "🚚 Transport"
+		case .tak:
+			return "🎯 TAK"
+		case .discovery:
+			return "📡 Discovery"
+		case .backup:
+			return "💾 Backup"
 		}
 	}
 
 	var color: Color {
 		switch self {
+		case .pangea:
+			return .accentColor
 		case .admin:
 			return .brown
 		case .data:
@@ -60,6 +75,12 @@ enum LogCategories: Int, CaseIterable, Identifiable {
 			return .purple
 		case .transport:
 			return .teal
+		case .tak:
+			return .red
+		case .discovery:
+			return .cyan
+		case .backup:
+			return .gray
 		}
 	}
 }

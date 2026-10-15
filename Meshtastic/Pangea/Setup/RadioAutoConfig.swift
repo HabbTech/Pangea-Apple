@@ -180,7 +180,7 @@ enum RadioAutoConfig {
 			  needsCodeTurnedOff(mode: bluetooth.mode, expertMode: UserDefaults.expertModeEnabled) else { return }
 		let attempts = pairingCodeAttempts(for: num)
 		guard mayTryTurningOffCode(attempts: attempts) else {
-			Logger.services.info("🧭 [Setup] Radio kept its pairing code after \(attempts, privacy: .public) tries; leaving it")
+			Logger.pangea.info("🧭 [Setup] Radio kept its pairing code after \(attempts, privacy: .public) tries; leaving it")
 			return
 		}
 		var config = Config.BluetoothConfig()
@@ -193,13 +193,13 @@ enum RadioAutoConfig {
 		setPairingCodeAttempts(attempts + 1, for: num)
 		do {
 			_ = try await accessoryManager.saveBluetoothConfig(config: config, fromUser: user, toUser: user)
-			Logger.services.info("🧭 [Setup] Turned off the pairing code")
+			Logger.pangea.info("🧭 [Setup] Turned off the pairing code")
 		} catch {
 			if AccessoryError.neverSent(error) {
 				setPairingCodeAttempts(attempts, for: num)
 			}
 			// Tried again the next time the radio connects, while it has tries left.
-			Logger.services.error("🧭 [Setup] Couldn't turn off the pairing code: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("🧭 [Setup] Couldn't turn off the pairing code: \(error.localizedDescription, privacy: .public)")
 		}
 	}
 
@@ -227,7 +227,7 @@ enum RadioAutoConfig {
 			user.longName = owner.longName
 			user.shortName = owner.shortName
 			try? accessoryManager.context.save()
-			Logger.services.info("🧭 [Setup] Saved owner name")
+			Logger.pangea.info("🧭 [Setup] Saved owner name")
 		}
 
 		let currentRegion = RegionCodes(rawValue: Int(node.loRaConfig?.regionCode ?? 0)) ?? .unset
@@ -251,7 +251,7 @@ enum RadioAutoConfig {
 		lora.region = region.protoEnumValue()
 		lora.txEnabled = true
 		_ = try await accessoryManager.saveLoRaConfig(config: lora, fromUser: user, toUser: user)
-		Logger.services.info("🧭 [Setup] Set region to \(region.description, privacy: .public)")
+		Logger.pangea.info("🧭 [Setup] Set region to \(region.description, privacy: .public)")
 		return true
 	}
 }

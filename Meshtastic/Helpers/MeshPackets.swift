@@ -2349,7 +2349,7 @@ actor MeshPackets {
 						let scheduler = notificationScheduler
 						Task { @MainActor in
 							scheduler([notification])
-							Logger.data.debug("meshtastic:///map?waypointid=\(waypointId, privacy: .public)")
+							Logger.data.debug("📍 [Waypoint] Notified about waypoint \(waypointId, privacy: .public)")
 						}
 					}
 				} else {

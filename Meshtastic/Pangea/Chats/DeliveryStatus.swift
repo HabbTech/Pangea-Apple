@@ -105,10 +105,10 @@ extension DeliveryStatus {
 		do {
 			try context.save()
 			NotificationCenter.default.post(name: .meshMessagesDidChange, object: nil)
-			Logger.data.info("💬 [Chats] \(stale.count, privacy: .public) unanswered sends marked not delivered")
+			Logger.pangea.info("💬 [Chats] \(stale.count, privacy: .public) unanswered sends marked not delivered")
 		} catch {
 			context.rollback()
-			Logger.data.error("💬 [Chats] Couldn't mark unanswered sends: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("💬 [Chats] Couldn't mark unanswered sends: \(error.localizedDescription, privacy: .public)")
 			return 0
 		}
 		return stale.count

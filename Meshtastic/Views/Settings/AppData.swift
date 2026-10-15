@@ -168,8 +168,11 @@ struct AppData: View {
 	}
 
 	private func isActiveDatabaseFile(_ file: URL) -> Bool {
+		// Pangea: compared as resolved paths. The enumerator hands back /private/var/… on a
+		// phone where the directory lookup says /var/…, so comparing the URLs never matched
+		// and the database files were listed under their file names instead.
 		guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
-			file.deletingLastPathComponent() == appSupport else {
+			file.deletingLastPathComponent().resolvingSymlinksInPath().path == appSupport.resolvingSymlinksInPath().path else {
 			return false
 		}
 
@@ -182,9 +185,10 @@ struct AppData: View {
 			return file.lastPathComponent
 		}
 
-		let appSupportPath = appSupport.path + "/"
-		if file.path.hasPrefix(appSupportPath) {
-			return String(file.path.dropFirst(appSupportPath.count))
+		let appSupportPath = appSupport.resolvingSymlinksInPath().path + "/"
+		let filePath = file.resolvingSymlinksInPath().path
+		if filePath.hasPrefix(appSupportPath) {
+			return String(filePath.dropFirst(appSupportPath.count))
 		}
 
 		return file.lastPathComponent
@@ -203,7 +207,7 @@ struct AppData: View {
 			VStack(alignment: .leading ) {
 				if file.pathExtension.contains("sqlite") {
 					Label {
-						Text("Node Core Data Backup \(displayName) - \(file.creationDate?.formatted(date: .numeric, time: .shortened) ?? "") - \(file.fileSizeString)")
+						Text("Node Backup \(displayName) - \(file.creationDate?.formatted(date: .numeric, time: .shortened) ?? "") - \(file.fileSizeString)")
 					} icon: {
 						Image(systemName: "cylinder.split.1x2")
 							.symbolRenderingMode(.hierarchical)

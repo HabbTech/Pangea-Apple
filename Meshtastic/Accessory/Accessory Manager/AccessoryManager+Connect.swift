@@ -168,7 +168,7 @@ extension AccessoryManager {
 				do {
 					Logger.transport.info("🔗👟 [Connect] Step 3a: Refresh bundled Pangea device hardware data")
 					try await MeshtasticAPI.shared.refreshBundledDevicesData()
-					Logger.services.info("✅ [MeshtasticAPI] Refreshed bundled device hardware data after config completion")
+					Logger.services.info("✅ [Hardware] Refreshed bundled device hardware data after config completion")
 				} catch {
 					Logger.services.warning("Failed to refresh bundled device hardware data after config completion: \(error.localizedDescription, privacy: .public)")
 				}

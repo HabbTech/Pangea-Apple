@@ -49,7 +49,7 @@ enum RadioPairing {
 						try await accessoryManager.connect(to: device)
 					} catch {
 						// Refused because auto-connect got in first: `outcome` follows that one.
-						Logger.transport.error("📻 [Pangea] Reconnect: \(error.localizedDescription, privacy: .public)")
+						Logger.pangea.error("📻 [Pairing] Reconnect: \(error.localizedDescription, privacy: .public)")
 					}
 				}
 				return await outcome(of: attempt, accessoryManager: accessoryManager, timeout: attemptTimeout)
@@ -85,7 +85,7 @@ enum RadioPairing {
 		let forgottenDevice = forgottenNum == 0 ? nil
 			: BackupKey.forDevice(getNodeInfo(id: forgottenNum, context: accessoryManager.context)?.myInfo?.deviceId)
 		guard await disconnect(accessoryManager: accessoryManager, timeout: timeout) else {
-			Logger.transport.error("📻 [Pangea] Couldn't disconnect; nothing forgotten")
+			Logger.pangea.error("📻 [Pairing] Couldn't disconnect; nothing forgotten")
 			return false
 		}
 		UserDefaults.preferredPeripheralId = ""
@@ -100,7 +100,7 @@ enum RadioPairing {
 			}
 		}
 		accessoryManager.startDiscovery()
-		Logger.transport.info("📻 [Pangea] Forgot paired radio")
+		Logger.pangea.info("📻 [Pairing] Forgot paired radio")
 		return true
 	}
 
@@ -181,7 +181,7 @@ enum RadioPairing {
 			// A half-cleared store would keep chats the user was told are gone. Same escalation
 			// as the node switch: a guaranteed-empty store. That replaces the container once;
 			// rebinding (not repointing) keeps it to once.
-			Logger.data.error("📻 [Pangea] Clearing the radio's data failed; destroying the store instead")
+			Logger.pangea.error("📻 [Pairing] Clearing the radio's data failed; destroying the store instead")
 			PersistenceController.shared.destroyStoreAndRecreateContainer()
 			AccessoryManager.shared.rebindToCurrentContainer()
 		}
@@ -244,7 +244,7 @@ enum RadioPairing {
 		do {
 			try await disconnect()
 		} catch {
-			Logger.transport.error("📻 [Pangea] Couldn't disconnect; nothing erased: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("📻 [Pairing] Couldn't disconnect; nothing erased: \(error.localizedDescription, privacy: .public)")
 			return false
 		}
 		// At once, as Forget does: auto-connect looks for this radio, and a connect that got in
@@ -268,7 +268,7 @@ enum RadioPairing {
 		// Only keys kept on this device: one synced through iCloud Keychain would go from the
 		// user's other devices too, and survives a reinstall anyway.
 		if !KeychainHelper.standard.deleteAllLocal(withPrefix: KeychainHelper.privateKeyPrefix, service: keychainService) {
-			Logger.services.error("📻 [Pangea] Couldn't remove every saved private key")
+			Logger.pangea.error("📻 [Pairing] Couldn't remove every saved private key")
 		}
 		await clearRadioData(profiles: profiles, clearStore: {
 			let cleared = await clearStore()
@@ -327,7 +327,7 @@ enum RadioPairing {
 		do {
 			try MeshShareStore.delete()
 		} catch {
-			Logger.services.error("📻 [Pangea] Couldn't remove the Messages sharing snapshot: \(error.localizedDescription, privacy: .public)")
+			Logger.pangea.error("📻 [Pairing] Couldn't remove the Messages sharing snapshot: \(error.localizedDescription, privacy: .public)")
 		}
 		// After the wait: a name saved meanwhile, or the push an edit held for want of a radio, was for the old one.
 		ProfileSync.pendingRadioName = nil
