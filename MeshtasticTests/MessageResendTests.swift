@@ -9,11 +9,12 @@ import SwiftData
 import Testing
 
 @testable import Meshtastic
+import MeshtasticProtobufs
 
 /// Retrying a message sends the same one again rather than replacing it. It used to delete the
-/// message and build a new one, which changed its id and its timestamp — the row left the
-/// conversation and a different one appeared at the bottom, and a send that threw left nothing
-/// behind at all.
+/// message and build a new one, which changed its timestamp — the row left the conversation and
+/// a different one appeared at the bottom, and a send that threw left nothing behind at all.
+/// The packet id does change: radios drop a packet whose id they've already seen.
 @Suite("Message resend")
 struct MessageResendTests {
 
@@ -101,4 +102,61 @@ struct MessageResendTests {
 		#expect(message.meshDeliveryStatus(isDirectMessage: true).text == MessageDeliveryStatus.sending.text,
 				"an aged-out message goes back to sending, not straight back to failed")
 	}
+
+	/// Every radio that heard the first try drops a packet with its id as a copy, so a retry
+	/// under the old id never left the first hop. Same row, new id, and what points at it follows.
+	@MainActor
+	@Test func aResendGoesOutUnderANewId() async throws {
+		let connection = ResendRecordingConnection()
+		let manager = AccessoryManager(transports: [])
+		manager.activeConnection = (
+			device: Device(id: UUID(), name: "Test", transportType: .ble, identifier: "resend-test", connectionState: .connected, num: 0x1234),
+			connection: connection
+		)
+		let context = manager.context
+		let message = failedMessage(id: 777_001)
+		let tapback = MessageEntity()
+		tapback.messageId = 777_002
+		tapback.isEmoji = true
+		tapback.replyID = 777_001
+		context.insert(message)
+		context.insert(tapback)
+		try context.save()
+		defer {
+			context.delete(message)
+			context.delete(tapback)
+			try? context.save()
+		}
+
+		try await manager.resendMessage(message)
+
+		let sent = await connection.sentPackets
+		guard case let .packet(packet) = try #require(sent.last).payloadVariant else {
+			Issue.record("no packet sent")
+			return
+		}
+		#expect(packet.id != 777_001, "not the id the mesh already saw")
+		#expect(Int64(packet.id) == message.messageId, "the row now answers to the id that went out")
+		#expect(tapback.replyID == message.messageId, "the reaction stays on the message")
+		let all = try context.fetch(FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.messagePayload == "hello" && $0.isEmoji == false }))
+		#expect(all.count == 1, "still one message")
+	}
+}
+
+private actor ResendRecordingConnection: Connection {
+	let type: TransportType = .ble
+	var isConnected: Bool = true
+	private(set) var sentPackets: [ToRadio] = []
+
+	func send(_ data: ToRadio) async throws {
+		sentPackets.append(data)
+	}
+	func connect() async throws -> AsyncStream<ConnectionEvent> {
+		AsyncStream { $0.finish() }
+	}
+	func disconnect(withError: Error?, shouldReconnect: Bool) async throws {}
+	func drainPendingPackets() async throws {}
+	func startDrainPendingPackets() throws {}
+	func appDidEnterBackground() {}
+	func appDidBecomeActive() {}
 }

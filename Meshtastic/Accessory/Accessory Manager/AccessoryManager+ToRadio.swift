@@ -593,7 +593,17 @@ extension AccessoryManager {
 		}
 
 		let toUserNum = message.toUser?.num ?? 0
-		let messageId = message.messageId
+		// Pangea: a new packet id, kept on the same row. Every radio that heard the first try
+		// remembers its id and drops a packet carrying it again as a copy, so a resend under
+		// the old id never got past the first hop and sat at "Sending…" until it timed out.
+		let previousId = message.messageId
+		let messageId = Int64(UInt32.random(in: UInt32(UInt8.max)..<UInt32.max))
+		message.messageId = messageId
+		// Reactions and replies saved here follow the message to its new id.
+		let replies = (try? context.fetch(FetchDescriptor<MessageEntity>(predicate: #Predicate { $0.replyID == previousId }))) ?? []
+		for reply in replies {
+			reply.replyID = messageId
+		}
 
 		// Kept so the row can go back to failed if the transmit never leaves: otherwise the
 		// message sits in "Sending…" with no retry action until the ack timeout turns it into
@@ -609,6 +619,10 @@ extension AccessoryManager {
 		do {
 			try context.save()
 		} catch {
+			message.messageId = previousId
+			for reply in replies {
+				reply.replyID = previousId
+			}
 			Logger.data.error("💥 Could not reset \(messageId, privacy: .public) before resending: \(error.localizedDescription, privacy: .public)")
 			throw error
 		}
@@ -628,7 +642,6 @@ extension AccessoryManager {
 		}
 
 		var meshPacket = MeshPacket()
-		// The same id as the first attempt, which is what keeps this one message rather than two.
 		meshPacket.id = UInt32(messageId)
 		meshPacket.from = UInt32(fromUserNum)
 		if toUserNum > 0 {
