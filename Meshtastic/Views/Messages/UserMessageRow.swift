@@ -138,10 +138,10 @@ struct UserMessageRow: View {
 								.symbolRenderingMode(.hierarchical).imageScale(.large)
 								.foregroundColor(.accentColor).padding(.leading)
 							Text(quoted.displayedPayload)
-								.foregroundColor(.accentColor).font(.caption2)
+								.foregroundColor(.secondary).font(.caption2)
 						}
 						.padding(10)
-						.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
+						.overlay(RoundedRectangle(cornerRadius: 18).stroke(.secondary, lineWidth: 0.5))
 					}
 					.accessibilityLabel(String(localized: "Replying to: \(quoted.displayedPayload)", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
 					if !isCurrentUser { Spacer(minLength: 50) }

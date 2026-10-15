@@ -372,6 +372,15 @@ struct UserDefaultPropertyWrapperTests {
 			#expect(!key.rawValue.isEmpty)
 		}
 	}
+
+	@Test func resetClearsAppearance() throws {
+		let suite = "reset-appearance-\(UUID().uuidString)"
+		let defaults = try #require(UserDefaults(suiteName: suite))
+		defer { defaults.removePersistentDomain(forName: suite) }
+		defaults.set(AppAppearance.dark.rawValue, forKey: AppAppearance.defaultsKey)
+		defaults.reset()
+		#expect(defaults.string(forKey: AppAppearance.defaultsKey) == nil)
+	}
 }
 
 // MARK: - CoTXMLParser Additional Tests

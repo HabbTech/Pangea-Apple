@@ -198,6 +198,7 @@ struct MeshtasticAppleApp: App {
 				MainScene(persistenceController: persistenceController)
 			}
 			}
+			.appAppearance()
 			.onChange(of: lockdownCoordinator.state) { _, newState in
 				// US-3: when the coordinator resolves to .lockNowAcknowledged
 				// (either via inbound LOCKED status or a BLE disconnect race),
@@ -258,6 +259,7 @@ struct MeshtasticAppleApp: App {
 						MapWindow()
 							.id(appState.databaseResetID)
 					}
+					.appAppearance()
 					.tint(Color.pangeaPrimary)
 					.modelContainer(persistenceController.container)
 					.environmentObject(appState)

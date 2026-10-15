@@ -97,6 +97,7 @@ extension UserDefaults {
 		case migratedPreferredPeripheralPairing
 		case expertModeEnabled
 		case powerMode
+		case pangeaAppearance
 	}
 
 	func reset() {

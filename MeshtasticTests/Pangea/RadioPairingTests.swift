@@ -592,6 +592,7 @@ struct ClearRadioDataTests {
 		defaults.set("New Name", forKey: ProfileSync.pendingNameKey)
 		defaults.set(true, forKey: ProfileSync.pushWhenBackKey)
 		defaults.set(true, forKey: UserDefaults.Keys.expertModeEnabled.rawValue)
+		defaults.set(AppAppearance.dark.rawValue, forKey: AppAppearance.defaultsKey)
 
 		defaults.set(Data("[]".utf8), forKey: UserDefaults.Keys.manualConnections.rawValue)
 		let chatIcons = ChatIconStore(defaults: defaults)
@@ -642,6 +643,7 @@ struct ClearRadioDataTests {
 			#expect(defaults.object(forKey: key) == nil, "\(key)")
 		}
 		#expect(defaults.bool(forKey: UserDefaults.Keys.expertModeEnabled.rawValue), "app settings stay")
+		#expect(defaults.string(forKey: AppAppearance.defaultsKey) == AppAppearance.dark.rawValue, "the appearance stays")
 		chatIcons.set(ChatIcon(emoji: "🐻", color: 1), for: "other")
 		#expect(ChatIconStore(defaults: defaults).icons == ["other": ChatIcon(emoji: "🐻", color: 1)], "the next icon change doesn't write the old icons back")
 	}

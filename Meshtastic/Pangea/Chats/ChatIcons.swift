@@ -80,6 +80,9 @@ struct ChatIconView: View {
 	let everyone: Bool
 	var size: CGFloat = 46
 
+	/// `pangeaTertiary`'s light value in both modes: its dark value is too pale under a white globe.
+	private static let everyoneBlue = Color(hex: "2855A8")
+
 	var body: some View {
 		Group {
 			if let icon = store.icon(for: key) {
@@ -89,7 +92,7 @@ struct ChatIconView: View {
 					.font(.system(size: size * 0.4, weight: .semibold))
 					.foregroundStyle(.white)
 					.frame(width: size, height: size)
-					.background(everyone ? Color.pangeaTertiary : Color.accentColor, in: Circle())
+					.background(everyone ? Self.everyoneBlue : Color.accentColor, in: Circle())
 			}
 		}
 		.accessibilityHidden(true)
@@ -192,7 +195,8 @@ struct ChatIconSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) {
 					Button("Cancel") { dismiss() }
-						.keyboardShortcut(.cancelAction)
+						// Not while All Emoji is pushed, where Esc would close the sheet instead.
+						.keyboardShortcut(showAllEmoji ? nil : .cancelAction)
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") {

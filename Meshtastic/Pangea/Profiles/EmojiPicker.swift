@@ -55,8 +55,31 @@ struct EmojiPickerView: View {
 	}
 
 	/// A tap picks the emoji as shown, like the keyboard; holding it (or a right-click on a Mac)
-	/// offers the skin tones. A tap that only opened the tones looked like a pick that didn't take.
+	/// offers its other styles (skin tones, hair). A tap that only opened the tones looked like a pick that didn't take.
+	/// VoiceOver and keyboard users get the tones as actions. Emoji without tones get no menu.
+	@ViewBuilder
 	private func cell(_ item: EmojiCatalog.Emoji) -> some View {
+		if item.variants.isEmpty {
+			button(item)
+		} else {
+			let tones = [item.emoji] + item.variants
+			button(item)
+				.contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
+				.contextMenu {
+					ForEach(tones, id: \.self) { emoji in
+						Button(emoji) { pick(emoji) }
+					}
+				}
+				.accessibilityActions {
+					ForEach(tones, id: \.self) { emoji in
+						Button(emoji) { pick(emoji) }
+					}
+				}
+				.accessibilityHint(String(localized: "More styles are in its actions."))
+		}
+	}
+
+	private func button(_ item: EmojiCatalog.Emoji) -> some View {
 		Button {
 			pick(item.emoji)
 		} label: {
@@ -75,15 +98,7 @@ struct EmojiPickerView: View {
 				.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
-		.contextMenu {
-			if !item.variants.isEmpty {
-				ForEach([item.emoji] + item.variants, id: \.self) { emoji in
-					Button(emoji) { pick(emoji) }
-				}
-			}
-		}
 		.accessibilityLabel(item.name)
-		.accessibilityHint(item.variants.isEmpty ? "" : String(localized: "Hold for skin tones."))
 	}
 
 	private func pick(_ emoji: String) {

@@ -19,6 +19,7 @@ struct AppSettings: View {
 	@AppStorage("environmentEnableWeatherKit") private var  environmentEnableWeatherKit: Bool = true
 	@AppStorage("enableAdministration") private var  enableAdministration: Bool = false
 	@AppStorage("expertModeEnabled") private var expertModeEnabled: Bool = false
+	@AppStorage(AppAppearance.defaultsKey) private var appearance: AppAppearance = .system
 
 	@StateObject private var powerManager = PowerManager.shared
 
@@ -50,6 +51,22 @@ struct AppSettings: View {
 	var body: some View {
 		VStack {
 			Form {
+				Section {
+					Picker(selection: $appearance) {
+						ForEach(AppAppearance.allCases) { option in
+							Text(option.title).tag(option)
+						}
+					} label: {
+						Label("Appearance", systemImage: "circle.lefthalf.filled")
+					}
+					.pickerStyle(.inline)
+					// The section header already names it.
+					.labelsHidden()
+				} header: {
+					Text("Appearance")
+				} footer: {
+					Text("Match Device follows your device's Light or Dark setting.")
+				}
 				Section(header: Text("App Settings")) {
 					Button("Open Settings", systemImage: "gear") {
 						// Get the settings URL and open it

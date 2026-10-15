@@ -117,10 +117,10 @@ enum SettingsSearchCatalogue {
 		.init(
 			destination: .appSettings,
 			screenTitle: String(localized: "App Settings", comment: "Settings screen"),
-			sectionTitle: String(localized: "App Settings", comment: "Settings section"),
+			sectionTitle: String(localized: "Appearance", comment: "Settings section"),
 			listSection: .general,
-			label: String(localized: "App Icon", comment: "Settings control"),
-			keywords: [String(localized: "icon", comment: "Search keyword"), String(localized: "appearance", comment: "Search keyword")],
+			label: String(localized: "Appearance", comment: "Settings control"),
+			keywords: [String(localized: "dark", comment: "Search keyword"), String(localized: "light", comment: "Search keyword"), String(localized: "dark mode", comment: "Search keyword"), String(localized: "theme", comment: "Search keyword")],
 			requiresConnection: false),
 		.init(
 			destination: .appSettings,

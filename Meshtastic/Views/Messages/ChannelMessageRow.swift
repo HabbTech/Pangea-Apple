@@ -131,9 +131,9 @@ struct ChannelMessageRow: View {
 						}
 					} label: {
 						Text(quoted.displayedPayload)
-							.foregroundColor(.accentColor).font(.caption2)
+							.foregroundColor(.secondary).font(.caption2)
 							.padding(10)
-							.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
+							.overlay(RoundedRectangle(cornerRadius: 18).stroke(.secondary, lineWidth: 0.5))
 						Image(systemName: "arrowshape.turn.up.left.fill")
 							.symbolRenderingMode(.hierarchical).imageScale(.large)
 							.foregroundColor(.accentColor).padding(.trailing)

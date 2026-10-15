@@ -184,7 +184,9 @@ struct ProfileEditorSheet: View {
 						cancelPhotoLoad()
 						dismiss()
 					}
-					.keyboardShortcut(.cancelAction)
+					// Only on this page: the toolbar stays live under a pushed page, and Esc there
+					// mustn't close the sheet and lose the edits.
+					.keyboardShortcut(showAllEmoji || showPhotoLibrary ? nil : .cancelAction)
 				}
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save") { save() }
