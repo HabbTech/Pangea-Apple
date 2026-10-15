@@ -104,7 +104,10 @@ struct ChannelMessageRow: View {
 			}
 			
 			// Reply Message Block
-			if message.replyID > 0 {
+			// Pangea: only when the quoted message is here. It's often one this device never
+			// heard (out of range, or sent before Pangea was installed), and then the reply
+			// shows as a plain message.
+			if message.replyID > 0, let quoted = replyMessage {
 				HStack {
 					Spacer(minLength: isCurrentUser ? 50 : 0)
 					
@@ -127,18 +130,15 @@ struct ChannelMessageRow: View {
 							}
 						}
 					} label: {
-						// Pangea: the quoted message can be missing (cleared, or sent before this device heard it).
-						Text(replyMessage?.displayedPayload ?? String(localized: "Original message not available"))
-							.foregroundColor(replyMessage == nil ? .secondary : .accentColor).font(.caption2)
+						Text(quoted.displayedPayload)
+							.foregroundColor(.accentColor).font(.caption2)
 							.padding(10)
 							.overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.blue, lineWidth: 0.5))
 						Image(systemName: "arrowshape.turn.up.left.fill")
 							.symbolRenderingMode(.hierarchical).imageScale(.large)
 							.foregroundColor(.accentColor).padding(.trailing)
 					}
-					.accessibilityLabel(String(localized: "Replying to: \(replyMessage?.displayedPayload ?? String(localized: "Original message not available"))", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
-					// Nothing to jump to.
-					.disabled(replyMessage == nil)
+					.accessibilityLabel(String(localized: "Replying to: \(quoted.displayedPayload)", comment: "VoiceOver: button that jumps to the quoted message being replied to. %@ is the quoted text"))
 					if !isCurrentUser { Spacer(minLength: 50) }
 				}
 			}
