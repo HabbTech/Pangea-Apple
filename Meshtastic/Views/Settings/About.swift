@@ -22,19 +22,21 @@ struct AboutMeshtastic: View {
 				Section(header: Text("Apple Apps")) {
 
 					if locale.region?.identifier ?? "US" == "US" {
-						HStack {
-							Image("SOLAR_NODE")
-								.resizable()
-								.aspectRatio(contentMode: .fit)
-								.frame(width: 75)
-								.cornerRadius(5)
-								.padding()
-							VStack(alignment: .leading) {
-								// No link yet.
-								Text("Buy Complete Radios (coming soon)")
-									.font(.title2)
-								Text("Get custom waterproof solar and detection sensor router nodes, aluminium desktop nodes and rugged handsets.")
-									.font(.callout)
+						Link(destination: URL(string: "https://www.etsy.com/shop/AlloNode")!) {
+							HStack {
+								Image("SOLAR_NODE")
+									.resizable()
+									.aspectRatio(contentMode: .fit)
+									.frame(width: 75)
+									.cornerRadius(5)
+									.padding()
+								VStack(alignment: .leading) {
+									Text("Buy Complete Radios")
+										.font(.title2)
+									Text("Get custom waterproof solar and detection sensor router nodes, aluminium desktop nodes and rugged handsets.")
+										.font(.callout)
+										.foregroundStyle(.secondary)
+								}
 							}
 						}
 					}
