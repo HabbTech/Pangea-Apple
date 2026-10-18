@@ -11,13 +11,20 @@ import SwiftUI
 struct ContactProfileSheet: View {
 	@Environment(\.modelContext) private var context
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.openURL) private var openURL
 	@ObservedObject private var store = ProfileStore.shared
 	/// Only whether the radio can take a packet, not everything else AccessoryManager publishes.
 	@ObservedObject private var readiness = AccessoryManager.shared.readiness
 	@ObservedObject var router: Router
 	let num: Int64
+	/// Set in the separate map window, which has no Chats. "Send Message" then goes through a
+	/// link. The main window prefers every link and the map window refuses them (MainScene,
+	/// MapWindow), so an open main window takes it and comes to the front.
+	var opensChatInMainWindow = false
 
 	@State private var nickname = ""
+	/// The nickname as it was last loaded or saved here, to tell an edit from an untouched field.
+	@State private var savedNickname = ""
 	@State private var copied = false
 	/// "Update Profile Photo" was tapped and the photo couldn't be asked for.
 	@State private var couldntAsk: ProfileSync.PhotoAsk?
@@ -56,7 +63,7 @@ struct ContactProfileSheet: View {
 
 				Section {
 					TextField("Add a nickname", text: $nickname)
-						.onSubmit { store.setNickname(nickname, for: num) }
+						.onSubmit { saveNickname() }
 				} header: {
 					Text("Nickname")
 				} footer: {
@@ -100,8 +107,14 @@ struct ContactProfileSheet: View {
 
 				Section {
 					Button {
-						store.setNickname(nickname, for: num)
+						saveNickname()
 						dismiss()
+						if opensChatInMainWindow {
+							if let url = Self.chatURL(num: num, hasKey: ContactResolver.hasKey(user)) {
+								openURL(url)
+							}
+							return
+						}
 						router.selectedTab = .messages
 						if ContactResolver.hasKey(user) {
 							router.messagesState = .directMessages(userNum: num)
@@ -131,15 +144,44 @@ struct ContactProfileSheet: View {
 			.toolbar {
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Done") {
-						store.setNickname(nickname, for: num)
+						saveNickname()
 						dismiss()
 					}
 				}
 			}
-			.onAppear { nickname = profile?.nickname ?? "" }
+			.onAppear {
+				nickname = profile?.nickname ?? ""
+				savedNickname = nickname
+			}
+			// Swipe-down, Esc, or the window closing keep a typed nickname too.
+			.onDisappear { saveNickname() }
 			.onChange(of: store.downloading) { couldntAsk = nil }
 			.onChange(of: readiness.value.ready) { couldntAsk = nil }
 		}
+	}
+
+	private func saveNickname() {
+		guard let edit = Self.nicknameEdit(typed: nickname, loaded: savedNickname, stored: profile?.nickname) else { return }
+		store.setNickname(edit, for: num)
+		savedNickname = edit
+	}
+
+	/// The nickname to save, or nil when there's nothing to save: only an edit made here that the
+	/// store doesn't already have, so opening a profile doesn't create a record and an untouched
+	/// field doesn't undo a change made elsewhere.
+	static func nicknameEdit(typed: String, loaded: String, stored: String?) -> String? {
+		let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard trimmed != loaded, trimmed != (stored ?? "") else { return nil }
+		return trimmed
+	}
+
+	/// The link that opens a chat with them from another window: their messages when keys are
+	/// already swapped, otherwise New Message for their code, as below.
+	static func chatURL(num: Int64, hasKey: Bool) -> URL? {
+		if hasKey {
+			return URL(string: "meshtastic:///messages?userNum=\(num)")
+		}
+		return URL(string: "\(PangeaCode.scheme)://\(PangeaCode.contactHost)/\(PangeaCode.code(for: num).dropFirst())")
 	}
 
 	/// The name they picked (in Pangea, or on their radio), shown under a nickname.

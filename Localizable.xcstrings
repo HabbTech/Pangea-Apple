@@ -137983,6 +137983,23 @@
         }
       }
     },
+    "Who's Here (%@)" : {
+      "comment" : "Title of the map picker in standard mode when a tapped cluster or coincident stack holds more than one person. %@ is the number of people.",
+      "localizations" : {
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quién está aquí (%@)"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "여기 있는 사람 (%@)"
+          }
+        }
+      }
+    },
     "Wi-Fi devices at %@" : {
       "comment" : "VoiceOver label for a Wi-Fi device-count point on the PAX counter chart. %@ is the timestamp.",
       "localizations" : {

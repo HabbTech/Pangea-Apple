@@ -36,6 +36,8 @@ enum PangeaHelp {
 				  keywords: ["install", "pair", "pairing", "setup", "radio", "bluetooth", "profile", "region"]),
 		HelpGuide(path: "docs/messaging.md", title: "Messaging", systemImage: "bubble.left.and.bubble.right",
 				  keywords: ["message", "chat", "code", "group", "everyone nearby", "mention", "delivered", "try again", "retry", "reply", "reaction"]),
+		HelpGuide(path: "docs/map.md", title: "Map", systemImage: "map",
+				  keywords: ["map", "location", "where", "gps", "nearby radios"]),
 		HelpGuide(path: "docs/contacts-and-profiles.md", title: "Contacts & Profiles", systemImage: "person.crop.circle",
 				  keywords: ["contact", "profile", "photo", "emoji", "nickname", "name"]),
 		HelpGuide(path: "docs/privacy-and-security.md", title: "Privacy & Security", systemImage: "lock",

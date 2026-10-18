@@ -116,6 +116,12 @@ struct MeshMapMK: View {
 	@State private var lastWaypointKey = "init"
 	@State private var lastGeoJSONKey = "init"
 	@Environment(\.colorScheme) private var colorScheme
+	/// Pangea: standard mode gets the plain map. Tapping a radio opens its profile, and the
+	/// waypoint, filter, legend, settings and coverage controls stay in Expert Mode.
+	@AppStorage("expertModeEnabled") private var expertModeEnabled = false
+	/// Pangea: the contact profile a standard-mode tap opened, shown from this view so it
+	/// appears in the window that was tapped, the separate map window included.
+	@State private var profileNum: MeshMapSelectedNode?
 	@State private var editingSettings = false
 	@State private var editingFilters = false
 	@State var selectedNode: MeshMapSelectedNode?
@@ -237,8 +243,14 @@ struct MeshMapMK: View {
 	/// reduced-precision positions (the same range `rebuildOverlays` draws the translucent precision
 	/// circle for) so the imprecise pins and their circles hide together.
 	private var mapEligiblePositions: [PositionEntity] {
-		guard preciseLocationsOnly else { return allLatestPositions }
+		guard preciseLocationsOnly && expertModeEnabled else { return allLatestPositions }
 		return allLatestPositions.filter { !$0.isReducedPrecision }
+	}
+
+	/// Map filters are set in Expert Mode, which has their button; standard mode, without it,
+	/// shows every radio rather than hiding some for a reason it can't see or change.
+	private var isFiltering: Bool {
+		expertModeEnabled && (filters.isFiltering || !filters.searchText.isEmpty)
 	}
 
 	/// Positions actually passed to the map — empty when the tab is off-screen
@@ -248,7 +260,7 @@ struct MeshMapMK: View {
 
 		let eligiblePositions = mapEligiblePositions
 		guard let visibleRegion else {
-			guard filters.isFiltering || !filters.searchText.isEmpty else {
+			guard isFiltering else {
 				return densityLimitedPositions(eligiblePositions)
 			}
 			return densityLimitedPositions(filteredPositions(from: eligiblePositions))
@@ -257,7 +269,7 @@ struct MeshMapMK: View {
 		// MapKit can briefly report a stale/empty camera region while restoring
 		// the tab or handling deep links. Never blank all pins because of that.
 		let positions = positionsInRegion.isEmpty ? eligiblePositions : positionsInRegion
-		guard filters.isFiltering || !filters.searchText.isEmpty else {
+		guard isFiltering else {
 			return densityLimitedPositions(positions)
 		}
 		return densityLimitedPositions(filteredPositions(from: positions))
@@ -292,7 +304,7 @@ struct MeshMapMK: View {
 			showsTraffic: showTraffic,
 			showsPointsOfInterest: showPointsOfInterest,
 			showsUserLocation: showUserLocation && isMapVisible,
-			controlsBottomInset: 72   // lift compass + pitch toggle above the bottom button bar
+			controlsBottomInset: expertModeEnabled ? 72 : 12   // lift compass + pitch toggle above Expert Mode's button bar
 		)
 	}
 
@@ -358,7 +370,7 @@ struct MeshMapMK: View {
 				overlays: combinedMapOverlays(),
 				coverageAreas: isMapVisible ? offlineCoverageAreas : [],
 				decorations: combinedMapDecorations(),
-				onMapLongPress: { coordinate in beginNewWaypoint(at: coordinate) },
+				onMapLongPress: expertModeEnabled ? { coordinate in beginNewWaypoint(at: coordinate) } : nil,
 				onMapCreated: { flyover.mapView = $0 },
 				suppressRegionUpdates: flyover.isFlying
 			) { item in
@@ -379,11 +391,14 @@ struct MeshMapMK: View {
 	private var combinedMapItems: [MeshMapItem] {
 		guard isMapVisible else { return [] }
 		var result = visiblePositionSnapshots.map { MeshMapItem.node($0) }
-		if showWaypoints {
+		if showsWaypoints {
 			result += waypointSnapshots.map { MeshMapItem.waypoint($0) }
 		}
 		return result
 	}
+
+	/// Pangea: waypoints, and the form that edits or deletes them for everyone, are Expert Mode's.
+	private var showsWaypoints: Bool { showWaypoints && expertModeEnabled }
 
 	/// Banner shown while a trace route is drawn on the map, with controls to fly through and clear it.
 	@ViewBuilder private var traceRouteBanner: some View {
@@ -506,6 +521,9 @@ struct MeshMapMK: View {
 						#endif
 					}
 				}
+				.sheet(item: $profileNum) { selection in
+					ContactProfileSheet(router: router, num: selection.id, opensChatInMainWindow: !showOpenWindowButton)
+				}
 				.sheet(item: $colocatedStack, onDismiss: {
 					// Open the chosen item only after the picker has fully dismissed, so the two
 					// sheets don't fight over presentation.
@@ -524,7 +542,10 @@ struct MeshMapMK: View {
 							}
 							.buttonStyle(.plain)
 						}
-						.navigationTitle(String.localizedStringWithFormat("Select an Item (%@)".localized, String(stack.items.count)))
+						// Standard mode lists only people (no waypoints, not your own radio).
+						.navigationTitle(String.localizedStringWithFormat(
+							(expertModeEnabled ? "Select an Item (%@)" : "Who's Here (%@)").localized,
+							String(stack.items.count)))
 						#if !targetEnvironment(macCatalyst)
 						.navigationBarTitleDisplayMode(.inline)
 						#endif
@@ -622,51 +643,58 @@ struct MeshMapMK: View {
 					}
 				}
 				.safeAreaInset(edge: .bottom, alignment: .trailing) {
-					HStack(spacing: 12) {
-						Spacer()
-						Button(action: {
-							presentCoverageEstimateFromMap()
-						}) {
-							Image("custom.radio.tower")
-						}
-						.accessibilityLabel(String(localized: "Estimate coverage", comment: "VoiceOver label for the coverage estimate button"))
-						.accessibilityHint(String(localized: "Runs a Site Planner coverage estimate and adds it to the map.", comment: "VoiceOver hint for the coverage estimate button"))
-						.glassButtonStyle()
-						Button(action: {
-							withAnimation {
-								editingFilters = !editingFilters
-							}
-						}) {
-							Image(systemName: filters.isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-						}
-						.accessibilityLabel(editingFilters ? String(localized: "Hide node filters", comment: "VoiceOver label to hide map node filters") : String(localized: "Show node filters", comment: "VoiceOver label to show map node filters"))
-						.accessibilityHint(editingFilters ? String(localized: "Hides the node filter options.", comment: "VoiceOver hint to hide map node filters") : String(localized: "Shows the node filter options.", comment: "VoiceOver hint to show map node filters"))
-						.glassButtonStyle()
-						Button(action: {
-							withAnimation {
-								showLegend = !showLegend
-							}
-						}) {
-							Image(systemName: showLegend ? "map.fill" : "map")
-						}
-						.accessibilityLabel(showLegend ? String(localized: "Hide map legend", comment: "VoiceOver label to hide the map legend") : String(localized: "Show map legend", comment: "VoiceOver label to show the map legend"))
-						.accessibilityHint(showLegend ? String(localized: "Hides the map legend.", comment: "VoiceOver hint to hide the map legend") : String(localized: "Shows the map legend.", comment: "VoiceOver hint to show the map legend"))
-						.glassButtonStyle()
-						Button(action: {
-							withAnimation {
-								editingSettings = !editingSettings
-							}
-						}) {
-							Image(systemName: editingSettings ? "info.circle.fill" : "info.circle")
-						}
-						.accessibilityLabel(editingSettings ? String(localized: "Hide map settings", comment: "VoiceOver label to hide the map settings panel") : String(localized: "Show map settings", comment: "VoiceOver label to show the map settings panel"))
-						.accessibilityHint(editingSettings ? String(localized: "Hides the map settings panel.", comment: "VoiceOver hint to hide the map settings panel") : String(localized: "Shows the map settings panel.", comment: "VoiceOver hint to show the map settings panel"))
-						.glassButtonStyle()
+					if expertModeEnabled {
+						mapControls
 					}
-					.controlSize(.regular)
-					.padding(.horizontal, 12)
-					.padding(.vertical, 8)
 				}
+	}
+
+	/// Expert Mode's buttons along the bottom of the map.
+	private var mapControls: some View {
+		HStack(spacing: 12) {
+			Spacer()
+			Button(action: {
+				presentCoverageEstimateFromMap()
+			}) {
+				Image("custom.radio.tower")
+			}
+			.accessibilityLabel(String(localized: "Estimate coverage", comment: "VoiceOver label for the coverage estimate button"))
+			.accessibilityHint(String(localized: "Runs a Site Planner coverage estimate and adds it to the map.", comment: "VoiceOver hint for the coverage estimate button"))
+			.glassButtonStyle()
+			Button(action: {
+				withAnimation {
+					editingFilters = !editingFilters
+				}
+			}) {
+				Image(systemName: filters.isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+			}
+			.accessibilityLabel(editingFilters ? String(localized: "Hide node filters", comment: "VoiceOver label to hide map node filters") : String(localized: "Show node filters", comment: "VoiceOver label to show map node filters"))
+			.accessibilityHint(editingFilters ? String(localized: "Hides the node filter options.", comment: "VoiceOver hint to hide map node filters") : String(localized: "Shows the node filter options.", comment: "VoiceOver hint to show map node filters"))
+			.glassButtonStyle()
+			Button(action: {
+				withAnimation {
+					showLegend = !showLegend
+				}
+			}) {
+				Image(systemName: showLegend ? "map.fill" : "map")
+			}
+			.accessibilityLabel(showLegend ? String(localized: "Hide map legend", comment: "VoiceOver label to hide the map legend") : String(localized: "Show map legend", comment: "VoiceOver label to show the map legend"))
+			.accessibilityHint(showLegend ? String(localized: "Hides the map legend.", comment: "VoiceOver hint to hide the map legend") : String(localized: "Shows the map legend.", comment: "VoiceOver hint to show the map legend"))
+			.glassButtonStyle()
+			Button(action: {
+				withAnimation {
+					editingSettings = !editingSettings
+				}
+			}) {
+				Image(systemName: editingSettings ? "info.circle.fill" : "info.circle")
+			}
+			.accessibilityLabel(editingSettings ? String(localized: "Hide map settings", comment: "VoiceOver label to hide the map settings panel") : String(localized: "Show map settings", comment: "VoiceOver label to show the map settings panel"))
+			.accessibilityHint(editingSettings ? String(localized: "Hides the map settings panel.", comment: "VoiceOver hint to hide the map settings panel") : String(localized: "Shows the map settings panel.", comment: "VoiceOver hint to show the map settings panel"))
+			.glassButtonStyle()
+		}
+		.controlSize(.regular)
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
 	}
 
 	/// Split across several properties on purpose: as one expression this chain of
@@ -699,7 +727,8 @@ struct MeshMapMK: View {
 				applyImportedCoverage(result)
 			}
 			.onAppear {
-				UIApplication.shared.isIdleTimerDisabled = true
+				// Pangea: only Expert Mode keeps the screen on; standard mode auto-locks as usual.
+				UIApplication.shared.isIdleTimerDisabled = expertModeEnabled
 				syncFallbackLocation()
 				refreshMapWindowOpenState()
 				consumeCoverageEstimateState()
@@ -741,7 +770,7 @@ struct MeshMapMK: View {
 			if newTab == .map {
 				syncFallbackLocation()
 				refreshMapWindowOpenState()
-				UIApplication.shared.isIdleTimerDisabled = true
+				UIApplication.shared.isIdleTimerDisabled = expertModeEnabled
 				refreshPositionState(force: true)
 				applyTraceRouteSelection()
 				consumeCoverageEstimateState()
@@ -751,6 +780,16 @@ struct MeshMapMK: View {
 				GeoJSONOverlayManager.shared.clearCache()
 				visiblePositionSnapshots = []
 			}
+		}
+		.onChange(of: expertModeEnabled) {
+			// A picker opened in Expert Mode can still list your own radio and waypoints.
+			if !expertModeEnabled {
+				pendingColocatedSelection = nil
+				colocatedStack = nil
+			}
+			guard isMapVisible else { return }
+			UIApplication.shared.isIdleTimerDisabled = expertModeEnabled
+			applyTraceRouteSelection()
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mapDataFileDeleted)) { notification in
 			if let deletedFileId = notification.object as? UUID {
@@ -819,7 +858,7 @@ struct MeshMapMK: View {
 						if supportsMultipleWindows && showOpenWindowButton && !isMapWindowOpen {
 							Button {
 								if router.selectedTab == .map {
-									router.selectedTab = .nodes
+									router.selectedTab = expertModeEnabled ? .nodes : .messages
 								}
 								openWindow(id: "meshmap-window")
 								isMapWindowOpen = true
@@ -970,6 +1009,7 @@ struct MeshMapMK: View {
 
 	private var filterRefreshKey: Int64 {
 		var key: Int64 = 0
+		combine(&key, expertModeEnabled ? 1 : 0)
 		combine(&key, preciseLocationsOnly ? 1 : 0)
 		combine(&key, stableStringKey(filters.searchText.lowercased()))
 		combine(&key, filters.isOnline ? 1 : 0)
@@ -1020,7 +1060,31 @@ struct MeshMapMK: View {
 	private func presentColocatedStack(_ items: [MeshMapItem]) {
 		selectedWaypoint = nil
 		editingWaypoint = nil
-		colocatedStack = ColocatedMapStack(items: MeshMapItem.dedupedSortedForPicker(items))
+		var items = MeshMapItem.dedupedSortedForPicker(items)
+		// Pangea: standard mode leaves out your own radio, which opens nothing.
+		if !expertModeEnabled {
+			let myNum = ChatsView.myNum(activeDeviceNum: accessoryManager.activeDeviceNum)
+			items = Self.standardPickerItems(items, myNum: myNum)
+			if items.count < 2 {
+				if let only = items.first { open(only) }
+				return
+			}
+		}
+		colocatedStack = ColocatedMapStack(items: items)
+	}
+
+	/// Pangea: the picker rows standard mode offers: everyone but your own radio.
+	static func standardPickerItems(_ items: [MeshMapItem], myNum: Int64?) -> [MeshMapItem] {
+		items.filter { item in
+			guard case let .node(snapshot) = item else { return true }
+			return opensProfile(for: snapshot.nodeNum, myNum: myNum)
+		}
+	}
+
+	/// Pangea: in standard mode a tapped radio opens its profile, unless it's your own. `myNum`
+	/// is `ChatsView.myNum`, which still knows your radio while it's disconnected.
+	static func opensProfile(for nodeNum: Int64, myNum: Int64?) -> Bool {
+		nodeNum != myNum
 	}
 
 	/// The disambiguation-picker row for one map item: the standard node cell for nodes (matching the
@@ -1028,6 +1092,8 @@ struct MeshMapMK: View {
 	@ViewBuilder
 	private func colocatedRow(for item: MeshMapItem) -> some View {
 		switch item {
+		case let .node(snapshot) where !expertModeEnabled:
+			MeshMapProfileRow(snapshot: snapshot)
 		case let .node(snapshot):
 			// Reuse the standard node-list cell so the picker matches the Nodes tab. Fall back to the
 			// snapshot's name if the live node was pruned between the tap and the sheet appearing.
@@ -1058,16 +1124,24 @@ struct MeshMapMK: View {
 	}
 
 	/// Open a single node's detail sheet, clearing any in-flight waypoint selection first.
+	/// Standard mode opens the contact's profile instead, and nothing for your own radio.
 	private func selectNode(_ nodeNum: Int64) {
 		selectedWaypoint = nil
 		editingWaypoint = nil
+		guard expertModeEnabled else {
+			if Self.opensProfile(for: nodeNum, myNum: ChatsView.myNum(activeDeviceNum: accessoryManager.activeDeviceNum)) {
+				profileNum = MeshMapSelectedNode(id: nodeNum)
+			}
+			return
+		}
 		selectedNode = MeshMapSelectedNode(id: nodeNum)
 	}
 
 	/// Open a waypoint's form — the same path a direct waypoint-marker tap takes — resolving the
-	/// backing entity from the snapshot id. No-op if the waypoint was pruned since the snapshot built.
+	/// backing entity from the snapshot id. No-op if the waypoint was pruned since the snapshot built,
+	/// or in standard mode, which has no waypoints.
 	private func openWaypoint(id: Int64) {
-		guard let waypoint = waypointEntitiesByID[id] else { return }
+		guard expertModeEnabled, let waypoint = waypointEntitiesByID[id] else { return }
 		selectedNode = nil
 		editingWaypoint = nil
 		selectedWaypoint = waypoint
@@ -1195,7 +1269,7 @@ struct MeshMapMK: View {
 								/// onChange rebuilds them all (keeps `body`'s modifier chain short enough to type-check).
 								private var overlayInputsKey: String {
 									var parts = [routesKey, waypointsKey]
-									parts.append(showWaypoints ? "w1" : "w0")
+									parts.append(showsWaypoints ? "w1" : "w0")
 									parts.append(showConvexHull ? "h1" : "h0")
 									parts.append(mapOverlaysEnabled ? "o1" : "o0")
 									parts.append(shouldRenderOfflineMaps ? "t1" : "t0")
@@ -1385,10 +1459,10 @@ struct MeshMapMK: View {
 			/// lookup used to open a waypoint's form when its marker (or picker row) is tapped. As items —
 			/// not standalone decorations — waypoints merge into node clusters and appear in the picker.
 				private func rebuildWaypointItems() {
-					let key = "\(showWaypoints)|\(waypointsKey)"
+					let key = "\(showsWaypoints)|\(waypointsKey)"
 					guard key != lastWaypointKey else { return }
 					lastWaypointKey = key
-					guard showWaypoints else {
+					guard showsWaypoints else {
 						if !waypointSnapshots.isEmpty { waypointSnapshots = [] }
 						if !waypointEntitiesByID.isEmpty { waypointEntitiesByID = [:] }
 						if !geofenceOverlays.isEmpty { geofenceOverlays = [] }
@@ -1488,9 +1562,10 @@ struct MeshMapMK: View {
 	/// Resolve the trace route requested via `router.mapState` (a `meshtastic:///map?tracerouteId=`
 	/// deep link), draw it, and frame the camera around it. Clears any drawn route when the map
 	/// state moves elsewhere.
+	/// Pangea: standard mode draws none; the route comes back if Expert Mode is turned on again.
 	private func applyTraceRouteSelection() {
 		guard case .map = router.selectedTab else { return }
-		if case let .traceRoute(id)? = router.mapState {
+		if expertModeEnabled, case let .traceRoute(id)? = router.mapState {
 			let isNewSelection = selectedTraceRoute?.id != id
 			if isNewSelection {
 				selectedTraceRoute = getTraceRoute(id: id, context: context)
@@ -1946,6 +2021,25 @@ private extension PositionEntity {
 			return longitude >= minLongitude || longitude <= maxLongitude - 360
 		}
 		return longitude >= minLongitude && longitude <= maxLongitude
+	}
+}
+
+// MARK: - Standard-mode picker row
+
+/// Pangea: a radio in standard mode's picker, by the name and photo its profile shows. Watches
+/// the profile store itself, so a name that arrives updates the row without redrawing the map.
+private struct MeshMapProfileRow: View {
+	@Environment(\.modelContext) private var context
+	@ObservedObject private var store = ProfileStore.shared
+	let snapshot: MeshMapPositionSnapshot
+
+	var body: some View {
+		let user = existingUser(num: snapshot.nodeNum, context: context)
+		Label {
+			Text(store.name(num: snapshot.nodeNum, radioName: user?.longName ?? snapshot.longName))
+		} icon: {
+			PangeaAvatar(num: snapshot.nodeNum, shortName: user?.shortName, size: 28)
+		}
 	}
 }
 

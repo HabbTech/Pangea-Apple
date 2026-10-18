@@ -41,10 +41,11 @@ struct ContentView: View {
 	@ObservedObject private var inbox = PangeaInbox.shared
 	@ObservedObject private var profiles = ProfileStore.shared
 
-	/// Pangea: standard mode only has Chats and Settings; anything routed elsewhere lands on Chats.
+	/// Pangea: anything routed to a tab this mode doesn't show lands on Chats.
 	private func keepSelectionVisible() {
-		if !expertModeEnabled && ![.messages, .settings].contains(router.selectedTab) {
-			router.selectedTab = .messages
+		let visible = PangeaTabs.visibleSelection(router.selectedTab, expertMode: expertModeEnabled)
+		if visible != router.selectedTab {
+			router.selectedTab = visible
 		}
 	}
 
@@ -289,12 +290,19 @@ struct ContentView: View {
 	private var tabContent: some View {
 		if #available(iOS 18.0, macCatalyst 18.0, *) {
 			TabView(selection: tabSelection) {
+				// Pangea: standard mode leads with the Map; Expert Mode keeps it after Nodes.
+				if !expertModeEnabled {
+					Tab("Map", systemImage: "map", value: NavigationState.Tab.map) {
+						MeshMapMK(router: router)
+					}
+				}
+
 				Tab(expertModeEnabled ? "Messages" : "Chats", systemImage: "message", value: NavigationState.Tab.messages) {
 					messagesTab
 				}
 				.badge(appState.totalUnreadMessages)
 
-				// Pangea: Nodes, Map and Connect are Expert Mode tabs.
+				// Pangea: Nodes and Connect are Expert Mode tabs.
 				if expertModeEnabled {
 					Tab("Nodes", image: "custom.mesh.radio", value: NavigationState.Tab.nodes) {
 						NodeList()
@@ -328,7 +336,7 @@ struct ContentView: View {
 			// layout seen only on iOS 17; shrinking what that pass has to build is the
 			// mitigation, and it also cuts the tab-switch cost on 17.
 			TabView(selection: $router.selectedTab) {
-				ForEach(LegacyTab.allCases.filter { expertModeEnabled || $0.inStandardMode }) { tab in
+				ForEach(LegacyTab.tabs(expertMode: expertModeEnabled)) { tab in
 					LegacyTabContent(tab: tab, isActive: router.selectedTab == tab.value) {
 						legacyContent(for: tab)
 					}
@@ -341,7 +349,7 @@ struct ContentView: View {
 	}
 
 	/// Tabs for the iOS 17 legacy `TabView`, mirroring the iOS 18 `Tab` list.
-	private enum LegacyTab: String, CaseIterable, Identifiable {
+	enum LegacyTab: String, CaseIterable, Identifiable {
 		case messages, nodes, map, settings, connect
 
 		var id: String { rawValue }
@@ -356,9 +364,8 @@ struct ContentView: View {
 			}
 		}
 
-		/// Pangea: standard mode shows only Chats and Settings.
-		var inStandardMode: Bool {
-			self == .messages || self == .settings
+		static func tabs(expertMode: Bool) -> [LegacyTab] {
+			PangeaTabs.order(expertMode: expertMode).compactMap { tab in allCases.first { $0.value == tab } }
 		}
 
 		@ViewBuilder
@@ -406,6 +413,18 @@ struct ContentView: View {
 		}
 	}
 
+}
+
+/// Pangea: the tabs each mode shows, in order. The iOS 18 `Tab` list is written out to match.
+enum PangeaTabs {
+	static func order(expertMode: Bool) -> [NavigationState.Tab] {
+		expertMode ? [.messages, .nodes, .map, .settings, .connect] : [.map, .messages, .settings]
+	}
+
+	/// The tab to show for a selection: itself when this mode has it, otherwise Chats.
+	static func visibleSelection(_ tab: NavigationState.Tab, expertMode: Bool) -> NavigationState.Tab {
+		order(expertMode: expertMode).contains(tab) ? tab : .messages
+	}
 }
 
 // MARK: - Reset Placeholder

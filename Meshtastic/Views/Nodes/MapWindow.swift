@@ -28,6 +28,8 @@ struct MapWindow: View {
 				}
 		}
 		.frame(minWidth: 400, idealWidth: 900, maxWidth: .infinity, minHeight: 300, idealHeight: 700, maxHeight: .infinity)
+		// Pangea: links are handled by the main window (MainScene); this window never claims one.
+		.handlesExternalEvents(preferring: [], allowing: [])
 		.onChange(of: scenePhase) { _, newPhase in
 			if newPhase == .background {
 				dismissWindow(id: "meshmap-window")

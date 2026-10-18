@@ -64,6 +64,9 @@ struct MainScene: View {
 					dispatchIncomingURL(url, fromActivity: true)
 				}
 			}
+			// Pangea: an open main window takes every link, so one opened from the map window
+			// (Send Message on a profile) lands here instead of in a new main window.
+			.handlesExternalEvents(preferring: ["*"], allowing: ["*"])
 			.onChange(of: appState.pendingRoute?.id) { _, _ in
 				claimPendingRoute()
 			}
