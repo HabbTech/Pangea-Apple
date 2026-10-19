@@ -82,9 +82,14 @@ extension Color {
 	public static let pangeaFossil = Color(hex: "F05511")
 
 	/// The app tint, for orange text, icons and controls. Fossil is 3.5:1 on white, so light
-	/// mode uses Ember `#C2410C` (5.2:1); on dark surfaces Fossil itself reads at 4.9:1 or better.
-	/// Fills with white text on top use `accentFill`, Ember in both appearances.
-	public static let pangeaPrimary = Color(light: 0xC2410C, dark: 0xF05511)
+	/// mode uses Ember `#C2410C` (5.2:1). Dark mode uses Fossil Light `#F26A2E`: 5.6:1 on the
+	/// base grouped card `#1C1C1E` and 4.6:1 on the elevated one `#2C2C2E` that sheets use, where
+	/// Fossil itself is only 4.0:1. With Increase Contrast on, light mode darkens to `#A8380A`
+	/// (5.5:1 on the high-contrast grouped background `#EBEBF0`) and dark mode lightens to
+	/// `#F58A5C` (5.0:1 on the high-contrast elevated card `#363638`). Fills with white text on
+	/// top use `accentFill`, Ember in both appearances. Keep in step with both `AccentColor`
+	/// assets (Meshtastic and Shared).
+	public static let pangeaPrimary = Color(light: 0xC2410C, dark: 0xF26A2E, lightHigh: 0xA8380A, darkHigh: 0xF58A5C)
 
 	/// M3 `primaryContainer`: decorative fills behind `pangeaOnPrimaryContainer`.
 	public static let pangeaPrimaryContainer = Color(light: 0xFFDBCB, dark: 0x7A2E04)
@@ -96,10 +101,15 @@ extension Color {
 	/// captions read as a distinct signal rather than more brand orange.
 	public static let pangeaTertiary = Color(light: 0x2855A8, dark: 0xB0BFF0)
 
-	/// Builds an appearance-aware color from a light and a dark hex value.
-	private init(light: UInt32, dark: UInt32) {
+	/// Builds an appearance-aware color from a light and a dark hex value, with optional
+	/// replacements for when Increase Contrast is on.
+	private init(light: UInt32, dark: UInt32, lightHigh: UInt32? = nil, darkHigh: UInt32? = nil) {
 		self.init(UIColor { traits in
-			UIColor(hex: traits.userInterfaceStyle == .dark ? dark : light)
+			let high = traits.accessibilityContrast == .high
+			if traits.userInterfaceStyle == .dark {
+				return UIColor(hex: high ? (darkHigh ?? dark) : dark)
+			}
+			return UIColor(hex: high ? (lightHigh ?? light) : light)
 		})
 	}
 }

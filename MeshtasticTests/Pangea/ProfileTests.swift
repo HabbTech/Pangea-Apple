@@ -132,12 +132,23 @@ struct ProfileStoreTests {
 		let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 		let store = ProfileStore(folder: folder)
 		#expect(store.name(num: 5, radioName: "Radio Name") == "Radio Name")
+		// A blank radio name falls back to the Pangea code rather than reading as nothing.
+		#expect(store.name(num: 5, radioName: "   ") == PangeaCode.code(for: 5))
+		// So does one made only of a Hangul filler (U+3164), which draws nothing.
+		#expect(store.name(num: 5, radioName: "\u{3164}") == PangeaCode.code(for: 5))
 		store.receivedCard(ProfileCard(displayName: "Sam Rivera", emoji: "", color: 0, photoVersion: 0), from: 5, channel: nil)
 		#expect(store.name(num: 5, radioName: "Radio Name") == "Sam Rivera")
 		store.setNickname("  Sammy ", for: 5)
 		#expect(store.name(num: 5, radioName: "Radio Name") == "Sammy")
 		store.setNickname("", for: 5)
 		#expect(store.name(num: 5, radioName: "Radio Name") == "Sam Rivera")
+		store.setNickname("\u{3164}", for: 5)
+		#expect(store.profile(5)?.nickname == nil)
+		#expect(store.name(num: 5, radioName: "Radio Name") == "Sam Rivera")
+		// A blank nickname stored before the check doesn't win either.
+		var legacy = ContactProfile()
+		legacy.nickname = "\u{3164}"
+		#expect(ProfileStore.chosenName(legacy) == nil)
 
 		// Survives a relaunch.
 		store.setNickname("Sammy", for: 5)

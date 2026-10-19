@@ -92,7 +92,7 @@ struct ChatIconView: View {
 					.font(.system(size: size * 0.4, weight: .semibold))
 					.foregroundStyle(.white)
 					.frame(width: size, height: size)
-					.background(everyone ? Self.everyoneBlue : Color.accentColor, in: Circle())
+					.background(everyone ? Self.everyoneBlue : Color.accentFill, in: Circle())
 			}
 		}
 		.accessibilityHidden(true)

@@ -122,6 +122,9 @@ struct MeshMapMK: View {
 	/// Pangea: the contact profile a standard-mode tap opened, shown from this view so it
 	/// appears in the window that was tapped, the separate map window included.
 	@State private var profileNum: MeshMapSelectedNode?
+	/// Pangea: the profile names standard mode's pins are read by. Copied from the profile store
+	/// rather than observing it, which would redraw the map on every photo download tick.
+	@State private var profileNames: [Int64: String] = [:]
 	@State private var editingSettings = false
 	@State private var editingFilters = false
 	@State var selectedNode: MeshMapSelectedNode?
@@ -297,12 +300,13 @@ struct MeshMapMK: View {
 		return MeshMapVisiblePositionState(positions: positions, key: key)
 	}
 
-	/// Apple basemap type + controls fed to ClusterMapView.
+	/// Apple basemap type + controls fed to ClusterMapView. Traffic and points of interest are
+	/// Map Options settings, so standard mode, which has no way to change them, ignores them.
 	private var clusterConfiguration: ClusterMapConfiguration {
 		ClusterMapConfiguration(
 			layer: selectedMapLayer == .offline ? .standard : selectedMapLayer,
-			showsTraffic: showTraffic,
-			showsPointsOfInterest: showPointsOfInterest,
+			showsTraffic: expertModeEnabled && showTraffic,
+			showsPointsOfInterest: expertModeEnabled && showPointsOfInterest,
 			showsUserLocation: showUserLocation && isMapVisible,
 			controlsBottomInset: 72   // lift compass + pitch toggle above the button bar
 		)
@@ -316,9 +320,16 @@ struct MeshMapMK: View {
 
 	/// A saved map is shown whenever the user enabled it, or temporarily when iOS reports that no
 	/// network route is usable. The temporary fallback never writes the user's saved preference.
+	/// The setting lives in Expert Mode's Map Options. In standard mode it applies only on the
+	/// Standard style. Hybrid and Satellite show plain imagery, and the no-network fallback still
+	/// applies to every style.
 	private var shouldRenderOfflineMaps: Bool {
 		OfflineMapFallbackPolicy.shouldRenderOfflineMaps(
-			userEnabled: enableOfflineTiles,
+			userEnabled: OfflineMapFallbackPolicy.userWantsOfflineTiles(
+				enabled: enableOfflineTiles,
+				expertMode: expertModeEnabled,
+				layer: selectedMapLayer
+			),
 			hasSavedMaps: !offlineMapManager.regions.isEmpty,
 			networkAvailable: offlineMapConnectivity.isNetworkAvailable
 		)
@@ -366,10 +377,8 @@ struct MeshMapMK: View {
 					// Coincident stack that zoom-to-fit can't separate -> let the user pick an item by name.
 					presentColocatedStack(items)
 				},
-				pinAccessibilityLabel: { pinAccessibilityLabel(for: $0) },
-				clusterAccessibilityLabel: { count in
-					String.localizedStringWithFormat("%@ radios here. Double-tap to zoom in.".localized, String(count))
-				},
+				pinAccessibility: { [profileNames] in pinAccessibility(for: $0, profileNames: profileNames) },
+				clusterAccessibility: { Self.clusterAccessibility(for: $0) },
 				configuration: clusterConfiguration,
 				overlays: combinedMapOverlays(),
 				coverageAreas: isMapVisible ? offlineCoverageAreas : [],
@@ -669,6 +678,7 @@ struct MeshMapMK: View {
 				Image(systemName: selectedMapLayer == .standard ? "map" : "globe.americas.fill")
 			}
 			.accessibilityLabel(String(localized: "Map style", comment: "VoiceOver label for the standard-mode map style menu"))
+			.accessibilityValue(selectedMapLayer.localized)
 			.glassButtonStyle()
 		}
 		.controlSize(.regular)
@@ -817,6 +827,10 @@ struct MeshMapMK: View {
 			guard isMapVisible else { return }
 			UIApplication.shared.isIdleTimerDisabled = expertModeEnabled
 			applyTraceRouteSelection()
+		}
+		// Pangea: a profile name that arrives while the map is open relabels the pins for VoiceOver.
+		.onReceive(ProfileStore.shared.$contacts) { contacts in
+			profileNames = contacts.compactMapValues(ProfileStore.chosenName)
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mapDataFileDeleted)) { notification in
 			if let deletedFileId = notification.object as? UUID {
@@ -1151,16 +1165,58 @@ struct MeshMapMK: View {
 	}
 
 	/// What VoiceOver reads for a pin: the person's name in standard mode, the node's in Expert Mode.
-	private func pinAccessibilityLabel(for item: MeshMapItem) -> String {
+	/// In standard mode your own radio opens nothing, so it isn't read as a button.
+	private func pinAccessibility(for item: MeshMapItem, profileNames: [Int64: String]) -> ClusterMapAccessibility {
 		switch item {
 		case let .node(snapshot):
+			if !expertModeEnabled,
+			   !Self.opensProfile(for: snapshot.nodeNum, myNum: ChatsView.myNum(activeDeviceNum: accessoryManager.activeDeviceNum)) {
+				return ClusterMapAccessibility(
+					label: String(localized: "Your radio", comment: "VoiceOver label for your own radio's pin on the map"),
+					isButton: false
+				)
+			}
 			let name = expertModeEnabled
-				? snapshot.longName
-				: ProfileStore.shared.name(num: snapshot.nodeNum, radioName: snapshot.longName)
-			return snapshot.isOnline ? name : String.localizedStringWithFormat("%@, not heard recently".localized, name)
+				? Self.expertPinName(longName: snapshot.longName, shortName: snapshot.shortName, nodeNum: snapshot.nodeNum)
+				: profileNames[snapshot.nodeNum] ?? ProfileStore.shared.name(num: snapshot.nodeNum, radioName: snapshot.longName == "?" ? nil : snapshot.longName)
+			let label = snapshot.isOnline
+				? name
+				: String(localized: "\(name), not heard recently", comment: "VoiceOver label for a map pin of a radio that hasn't been heard recently")
+			return ClusterMapAccessibility(label: label)
 		case let .waypoint(waypoint):
-			return String.localizedStringWithFormat("Waypoint %@".localized, waypoint.name)
+			let label = waypoint.name.isEmpty
+				? String(localized: "Waypoint", comment: "A caption displayed underneath the name of a waypoint.")
+				: String(localized: "Waypoint \(waypoint.name)", comment: "VoiceOver label for a waypoint pin on the map")
+			return ClusterMapAccessibility(label: label)
 		}
+	}
+
+	/// The node's name for an Expert Mode pin: its long name, else its short name, else its node
+	/// id. A radio can send a blank long name, and a node with no user row yet carries "?".
+	static func expertPinName(longName: String, shortName: String?, nodeNum: Int64) -> String {
+		let long = longName.trimmingCharacters(in: .whitespacesAndNewlines)
+		if !long.isEmpty, !long.isBlankName, long != "?" { return long }
+		if let short = shortName?.trimmingCharacters(in: .whitespacesAndNewlines), !short.isEmpty, !short.isBlankName { return short }
+		return String(format: "!%08x", UInt32(truncatingIfNeeded: nodeNum))
+	}
+
+	/// What VoiceOver reads for a numbered cluster pin. Counts radios and waypoints by what's
+	/// actually in it. A tap zooms in, or lists the members when they're in one spot.
+	static func clusterAccessibility(for members: [MeshMapItem]) -> ClusterMapAccessibility {
+		let count = members.count
+		let radios = members.filter { if case .node = $0 { return true } else { return false } }.count
+		let label: String
+		if radios == count {
+			label = String(localized: "\(count) radios here", comment: "VoiceOver label for a numbered map pin grouping several radios")
+		} else if radios == 0 {
+			label = String(localized: "\(count) waypoints here", comment: "VoiceOver label for a numbered map pin grouping several waypoints")
+		} else {
+			label = String(localized: "\(count) radios and waypoints here", comment: "VoiceOver label for a numbered map pin grouping radios and waypoints together")
+		}
+		return ClusterMapAccessibility(
+			label: label,
+			hint: String(localized: "Zooms in, or lists them if they're in the same spot.", comment: "VoiceOver hint for a numbered map pin grouping several radios or waypoints")
+		)
 	}
 
 	/// Open a tapped/picked map item: node detail for nodes, the waypoint form for waypoints.
@@ -1331,7 +1387,10 @@ struct MeshMapMK: View {
 								/// Re-bind the offline vector provider to the active archive (newest downloaded region, else the
 								/// bundled demo) and decode it. Cheap no-op when the archive hasn't changed.
 								private func reloadOfflineSource() {
-									offlineVectors.reload(regions: offlineRegions)
+									// Keep the archive bound while the setting is on, even on a style that doesn't
+									// draw it (standard-mode Hybrid/Satellite), so a round trip back to Standard
+									// doesn't drop and re-decode it. Drawing stays gated on shouldRenderOfflineMaps.
+									offlineVectors.reload(regions: enableOfflineTiles ? offlineMapManager.regions : offlineRegions)
 									decodeOfflineIfVisible()
 								}
 

@@ -16,6 +16,13 @@ enum OfflineMapFallbackPolicy {
 	) -> Bool {
 		userEnabled || (hasSavedMaps && !networkAvailable)
 	}
+
+	/// Whether the Offline Tiles setting applies on this style. The setting lives in Expert Mode's
+	/// Map Options. In standard mode it applies only on the Standard style (a legacy `.offline`
+	/// value draws as Standard too), so Hybrid and Satellite show plain imagery.
+	static func userWantsOfflineTiles(enabled: Bool, expertMode: Bool, layer: MapLayer) -> Bool {
+		enabled && (expertMode || layer == .standard || layer == .offline)
+	}
 }
 @MainActor
 final class OfflineMapConnectivityMonitor: ObservableObject {

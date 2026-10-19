@@ -72,6 +72,38 @@ struct StandardMapTests {
 		#expect(MeshMapMK.standardPickerItems(items, myNum: nil).count == 3)
 	}
 
+	// MARK: VoiceOver
+
+	@Test func clusterLabelCountsWhatsInIt() {
+		let waypoint = MeshMapItem.waypoint(MeshMapWaypointSnapshot(
+			id: 99,
+			coordinate: CLLocationCoordinate2D(latitude: 47.6, longitude: -122.33),
+			name: "Camp",
+			icon: "⛺️"
+		))
+		let radios = MeshMapMK.clusterAccessibility(for: [node(1), node(2), node(3)])
+		#expect(radios.label == "3 radios here")
+		#expect(radios.isButton)
+		// The action is a hint, not part of the label.
+		#expect(radios.hint?.isEmpty == false)
+		#expect(!radios.label.localizedCaseInsensitiveContains("double-tap"))
+		// Expert Mode clusters waypoints with radios; they aren't counted as radios.
+		#expect(MeshMapMK.clusterAccessibility(for: [node(1), node(2), waypoint]).label == "3 radios and waypoints here")
+		#expect(MeshMapMK.clusterAccessibility(for: [waypoint, waypoint]).label == "2 waypoints here")
+	}
+
+	/// An Expert Mode pin never reads as a bare "Button": a blank long name falls back to the
+	/// short name, then to the node id.
+	@Test func expertPinNameFallsBack() {
+		#expect(MeshMapMK.expertPinName(longName: " Base Camp ", shortName: "BC", nodeNum: 1) == "Base Camp")
+		#expect(MeshMapMK.expertPinName(longName: "  ", shortName: "BC", nodeNum: 1) == "BC")
+		#expect(MeshMapMK.expertPinName(longName: "?", shortName: nil, nodeNum: 0xA1B2C3D4) == "!a1b2c3d4")
+		#expect(MeshMapMK.expertPinName(longName: "", shortName: " ", nodeNum: 255) == "!000000ff")
+		// A Hangul filler (U+3164) draws nothing, so it counts as blank too.
+		#expect(MeshMapMK.expertPinName(longName: "\u{3164}", shortName: "BC", nodeNum: 1) == "BC")
+		#expect(MeshMapMK.expertPinName(longName: "\u{3164}", shortName: "\u{3164}", nodeNum: 255) == "!000000ff")
+	}
+
 	// MARK: Send Message from the map window
 
 	// MainScene.dispatchIncomingURL is a private method on the window's view, so these walk its

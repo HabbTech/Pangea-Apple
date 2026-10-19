@@ -38,6 +38,16 @@ struct ClusterMapConfiguration: Equatable {
 	var controlsBottomInset: CGFloat = 0
 }
 
+// MARK: - Accessibility
+
+/// What VoiceOver reads for a pin or a cluster. `hint` says what activating it does; `isButton`
+/// is false for a pin that does nothing when tapped.
+struct ClusterMapAccessibility {
+	var label: String
+	var hint: String?
+	var isButton = true
+}
+
 // MARK: - Overlays (polylines / polygons / circles)
 
 /// How to draw a `ClusterMapOverlay` (constant-width strokes; no casing).
@@ -174,9 +184,9 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 	/// them (it would just slam to max zoom on a still-merged stack). Hands the members to the caller
 	/// for a disambiguation menu. `nil` = fall back to the normal zoom-to-fit.
 	let onColocatedStack: (([Item]) -> Void)?
-	/// What VoiceOver reads for a pin, and for a cluster of `count` pins. Nil leaves them unlabeled.
-	let pinAccessibilityLabel: ((Item) -> String)?
-	let clusterAccessibilityLabel: ((Int) -> String)?
+	/// What VoiceOver reads for a pin, and for a cluster of the given members. Nil leaves them unlabeled.
+	let pinAccessibility: ((Item) -> ClusterMapAccessibility)?
+	let clusterAccessibility: (([Item]) -> ClusterMapAccessibility)?
 	/// Apple basemap type + map controls. The offline raster overlay (if any) draws on top.
 	let configuration: ClusterMapConfiguration
 	/// Vector overlays (accuracy circles, convex hull, routes, GeoJSON shapes). Diffed by `id`.
@@ -208,8 +218,8 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 		clustering: Bool = true,
 		onSelect: ((Item) -> Void)? = nil,
 		onColocatedStack: (([Item]) -> Void)? = nil,
-		pinAccessibilityLabel: ((Item) -> String)? = nil,
-		clusterAccessibilityLabel: ((Int) -> String)? = nil,
+		pinAccessibility: ((Item) -> ClusterMapAccessibility)? = nil,
+		clusterAccessibility: (([Item]) -> ClusterMapAccessibility)? = nil,
 		configuration: ClusterMapConfiguration = .init(),
 		overlays: [ClusterMapOverlay] = [],
 		coverageAreas: [GeoBounds] = [],
@@ -228,8 +238,8 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 		self.clustering = clustering
 		self.onSelect = onSelect
 		self.onColocatedStack = onColocatedStack
-		self.pinAccessibilityLabel = pinAccessibilityLabel
-		self.clusterAccessibilityLabel = clusterAccessibilityLabel
+		self.pinAccessibility = pinAccessibility
+		self.clusterAccessibility = clusterAccessibility
 		self.configuration = configuration
 		self.overlays = overlays
 		self.coverageAreas = coverageAreas
@@ -360,8 +370,8 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 		coordinator.regionBinding = region
 		coordinator.onSelect = onSelect
 		coordinator.onColocatedStack = onColocatedStack
-		coordinator.pinAccessibilityLabel = pinAccessibilityLabel
-		coordinator.clusterAccessibilityLabel = clusterAccessibilityLabel
+		coordinator.pinAccessibility = pinAccessibility
+		coordinator.clusterAccessibility = clusterAccessibility
 		coordinator.onMapTap = onMapTap
 		coordinator.onMapLongPress = onMapLongPress
 		coordinator.suppressRegionUpdates = suppressRegionUpdates
@@ -382,8 +392,8 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 		/// Called when a tapped cluster is a coincident stack (see `ClusterMapView.onColocatedStack`).
 		var onColocatedStack: (([Item]) -> Void)?
 		/// VoiceOver labels for pins and clusters (set each render).
-		var pinAccessibilityLabel: ((Item) -> String)?
-		var clusterAccessibilityLabel: ((Int) -> String)?
+		var pinAccessibility: ((Item) -> ClusterMapAccessibility)?
+		var clusterAccessibility: (([Item]) -> ClusterMapAccessibility)?
 		/// Members closer than this (max span, meters) can't be visually separated by zooming, so a
 		/// tapped cluster of them is treated as a coincident stack and routed to `onColocatedStack`
 		/// instead of a max-zoom lurch. Single source of truth in `MapColocation.spreadMeters`, shared
@@ -718,7 +728,7 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 						// Refresh a currently-visible view so it reflects the new item snapshot
 						// (e.g. an online/offline change).
 						view.configure(content: pinContent(item))
-						view.setAccessibility(label: pinAccessibilityLabel?(item))
+						view.setAccessibility(pinAccessibility?(item))
 					}
 				} else {
 					let annotation = ItemAnnotation(item: item, coordinate: coord,
@@ -749,7 +759,8 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 				let view = mapView.dequeueReusableAnnotationView(
 					withIdentifier: HostingClusterView.reuseID, for: cluster) as? HostingClusterView
 				view?.configure(content: clusterContent(cluster.memberAnnotations.count))
-				view?.setAccessibility(label: clusterAccessibilityLabel?(cluster.memberAnnotations.count))
+				let members = cluster.memberAnnotations.compactMap { ($0 as? ItemAnnotation<Item>)?.item }
+				view?.setAccessibility(clusterAccessibility?(members))
 				return view
 			}
 
@@ -778,7 +789,7 @@ struct ClusterMapView<Item: Identifiable, Pin: View, Cluster: View>: UIViewRepre
 				// the VIEW too — MapKit reads it from the annotation view when forming clusters.
 				view?.clusteringIdentifier = item.clusteringIdentifier
 				view?.configure(content: pinContent(item.item))
-				view?.setAccessibility(label: pinAccessibilityLabel?(item.item))
+				view?.setAccessibility(pinAccessibility?(item.item))
 				return view
 			}
 
@@ -952,8 +963,8 @@ extension ClusterMapView where Cluster == ClusterBadge {
 		clustering: Bool = true,
 		onSelect: ((Item) -> Void)? = nil,
 		onColocatedStack: (([Item]) -> Void)? = nil,
-		pinAccessibilityLabel: ((Item) -> String)? = nil,
-		clusterAccessibilityLabel: ((Int) -> String)? = nil,
+		pinAccessibility: ((Item) -> ClusterMapAccessibility)? = nil,
+		clusterAccessibility: (([Item]) -> ClusterMapAccessibility)? = nil,
 		configuration: ClusterMapConfiguration = .init(),
 		overlays: [ClusterMapOverlay] = [],
 		coverageAreas: [GeoBounds] = [],
@@ -971,8 +982,8 @@ extension ClusterMapView where Cluster == ClusterBadge {
 				  clustering: clustering,
 				  onSelect: onSelect,
 				  onColocatedStack: onColocatedStack,
-				  pinAccessibilityLabel: pinAccessibilityLabel,
-				  clusterAccessibilityLabel: clusterAccessibilityLabel,
+				  pinAccessibility: pinAccessibility,
+				  clusterAccessibility: clusterAccessibility,
 				  configuration: configuration,
 				  overlays: overlays,
 				coverageAreas: coverageAreas,
@@ -1067,12 +1078,13 @@ private class HostingAnnotationViewBase: MKAnnotationView {
 		centerOffset = .zero // MapKit places the view's CENTER on the coordinate — what we want.
 	}
 
-	/// One VoiceOver element for the whole pin, read as a button, instead of the hosted
-	/// SwiftUI text inside it. A nil label leaves the view as MapKit would.
-	func setAccessibility(label: String?) {
-		isAccessibilityElement = label != nil
-		accessibilityLabel = label
-		accessibilityTraits = label != nil ? .button : []
+	/// One VoiceOver element for the whole pin instead of the hosted SwiftUI text inside it.
+	/// Nil leaves the view as MapKit would.
+	func setAccessibility(_ accessibility: ClusterMapAccessibility?) {
+		isAccessibilityElement = accessibility != nil
+		accessibilityLabel = accessibility?.label
+		accessibilityHint = accessibility?.hint
+		accessibilityTraits = accessibility?.isButton == true ? .button : []
 	}
 }
 

@@ -708,12 +708,15 @@ struct Settings: View {
 				.disabled(selectedNode > 0 && selectedNode != preferredNodeNum)
 
 				// A managed radio hides the configuration sections; say why instead of
-				// showing nothing (same message as Android).
+				// showing nothing (same message as Android). Standard mode has no radio
+				// settings to hide, so the note is Expert Mode's alone.
 				if let node, node.isManaged, accessoryManager.isConnected {
-					Section("Configure") {
-						Label("This radio is managed and can only be changed by a remote admin.", systemImage: "lock.shield")
-							.font(.callout)
-							.foregroundStyle(.orange)
+					if expertModeEnabled {
+						Section("Configure") {
+							Label("This radio is managed and can only be changed by a remote admin.", systemImage: "lock.shield")
+								.font(.callout)
+								.foregroundStyle(.secondary)
+						}
 					}
 					// The configuration sections are hidden on a managed radio, but backup and
 					// restore still belong on screen: Android shows them disabled with the
@@ -926,6 +929,13 @@ struct Settings: View {
 				if isConnectedNow, self.selectedNode == 0 {
 					self.preferredNodeNum = UserDefaults.preferredPeripheralNum
 					setSelectedNode(to: UserDefaults.preferredPeripheralNum)
+				}
+			}
+			.onChange(of: expertModeEnabled) { _, isOn in
+				// Pangea: standard mode has no node picker, so a remote node left selected in
+				// Expert Mode would keep Firmware Updates disabled with no way to change it.
+				if !isOn, selectedNode > 0, selectedNode != preferredNodeNum {
+					selectedNode = accessoryManager.isConnected ? preferredNodeNum : 0
 				}
 			}
 			.onChange(of: accessoryManager.activeDeviceNum) { oldDevice, newDevice in

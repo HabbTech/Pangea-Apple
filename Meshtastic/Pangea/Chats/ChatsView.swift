@@ -579,7 +579,7 @@ struct ChatRow: View {
 							.foregroundStyle(.white)
 							.padding(.horizontal, 7)
 							.padding(.vertical, 2)
-							.background(Color.accentColor, in: Capsule())
+							.background(Color.accentFill, in: Capsule())
 					}
 				}
 			}

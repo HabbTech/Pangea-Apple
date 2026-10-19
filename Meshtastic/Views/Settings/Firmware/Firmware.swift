@@ -20,10 +20,21 @@ struct Firmware: View {
 	let node: NodeInfoEntity?
 
 	@EnvironmentObject private var accessoryManager: AccessoryManager
+	@Environment(\.modelContext) private var modelContext
 	@Query private var hardwareResults: [DeviceHardwareEntity]
 	@State private var cachedHardware: DeviceHardwareEntity?
 	@State private var cachedNode: NodeInfoEntity?
 	@State private var hardwareState = FirmwareHardwareViewState()
+	@State private var catalogRefresh = CatalogRefresh.inFlight
+	/// Bumped by each refresh, so one that finishes after a newer one started can't
+	/// overwrite the newer one's result.
+	@State private var refreshGeneration = 0
+
+	/// Where this screen's hardware catalog refresh is, so the empty state can tell "still
+	/// looking" from "couldn't reach the server" from "this model isn't in the catalog".
+	private enum CatalogRefresh {
+		case inFlight, succeeded, failed
+	}
 
 	init(node: NodeInfoEntity?) {
 		self.node = node
@@ -43,14 +54,30 @@ struct Firmware: View {
 			} else {
 				List {
 					// Pangea: say what to do, in plain words.
-					if accessoryManager.isConnected {
-						ContentUnavailableView("Can't Check for Updates",
-							systemImage: "arrow.triangle.2.circlepath",
-							description: Text("Pangea couldn't look up your radio's model yet. Check your internet connection, then open this screen again."))
-					} else {
+					if !accessoryManager.isConnected {
 						ContentUnavailableView("Connect Your Radio",
 							systemImage: "antenna.radiowaves.left.and.right.slash",
 							description: Text("Turn on your radio and keep it close to your phone. Firmware updates show here once it connects."))
+					} else if catalogRefresh == .inFlight || !radioReportedModel {
+						// The lookup, or the radio's own details after a fresh connect, is still
+						// on its way. Either one landing resolves the hardware without a reopen.
+						ProgressView("Checking your radio…")
+							.frame(maxWidth: .infinity)
+							.listRowBackground(Color.clear)
+					} else if catalogRefresh == .failed {
+						ContentUnavailableView {
+							Label("Can't Check for Updates", systemImage: "wifi.exclamationmark")
+						} description: {
+							Text("Pangea couldn't reach the update server. Check your internet connection and try again.")
+						} actions: {
+							Button("Try Again") {
+								Task { await refreshFromAPI() }
+							}
+						}
+					} else {
+						ContentUnavailableView("Radio Model Not Recognized",
+							systemImage: "questionmark.circle",
+							description: Text("Pangea doesn't have firmware updates for this radio's model."))
 					}
 				}
 			}
@@ -88,11 +115,27 @@ struct Firmware: View {
 	/// Neither is throttled. Both endpoints send Cache-Control and an ETag, so a repeat call is
 	/// served from URLSession's cache or revalidated for an empty 304. The catalog pass skips
 	/// images, which are local anyway.
+	///
+	/// Overlapping calls (the screen reappearing, Try Again) are allowed; only the newest one
+	/// writes the outcome.
 	private func refreshFromAPI() async {
+		refreshGeneration += 1
+		let generation = refreshGeneration
+		catalogRefresh = .inFlight
 		do {
 			try await MeshtasticAPI.shared.refreshDevicesAPIData(includeImages: false)
-			resolveHardware()
+			// A superseded call skips only its state writes; it still fetches the firmware list below.
+			if generation == refreshGeneration {
+				// Resolve against the rows just saved. `@Query` republishes them on a later update,
+				// and resolving against its stale copy flashed "Not Recognized" for a model the
+				// fresh catalog has.
+				resolveHardware(from: (try? modelContext.fetch(FetchDescriptor<DeviceHardwareEntity>())) ?? hardwareResults)
+				catalogRefresh = .succeeded
+			}
 		} catch {
+			if generation == refreshGeneration {
+				catalogRefresh = .failed
+			}
 			Logger.services.warning("Hardware catalog refresh failed: \(error.localizedDescription, privacy: .public)")
 		}
 		do {
@@ -102,12 +145,24 @@ struct Firmware: View {
 		}
 	}
 
-	private func resolveHardware() {
+	/// Whether the radio has told the app what board it is. Until it has, after a fresh connect,
+	/// there's nothing to look up yet. A placeholder user row carries model 0, so it doesn't
+	/// count; once the config download has finished, whatever the radio sent is final, which
+	/// covers boards that really do report model 0 on firmware without a PlatformIO target.
+	/// With no node row yet there's nothing to resolve, so it still counts as waiting.
+	private var radioReportedModel: Bool {
+		guard node != nil else { return false }
+		let pioEnv = node?.myInfo?.pioEnv?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+		return !pioEnv.isEmpty || (node?.user?.hwModelId ?? 0) != 0 || accessoryManager.state == .subscribed
+	}
+
+	private func resolveHardware(from rows: [DeviceHardwareEntity]? = nil) {
 		guard let node else {
 			resetHardwareCache()
 			return
 		}
-		let records = hardwareResults.map(HardwareCatalogRecord.init)
+		let rows = rows ?? hardwareResults
+		let records = rows.map(HardwareCatalogRecord.init)
 		let hwModel = node.user.map { Int64($0.hwModelId) }
 		hardwareState.resolve(
 			nodeNum: node.num,
@@ -115,7 +170,7 @@ struct Firmware: View {
 			hwModel: hwModel,
 			in: records
 		)
-		cacheResolvedHardware(for: node)
+		cacheResolvedHardware(for: node, rows: rows)
 	}
 
 	private func handlePlatformIOTargetChange(to pioEnv: String?) {
@@ -141,9 +196,9 @@ struct Firmware: View {
 		cacheResolvedHardware(for: node)
 	}
 
-	private func cacheResolvedHardware(for node: NodeInfoEntity) {
+	private func cacheResolvedHardware(for node: NodeInfoEntity, rows: [DeviceHardwareEntity]? = nil) {
 		guard let resolution = hardwareState.resolution,
-		      let hardware = hardwareResults.first(where: {
+		      let hardware = (rows ?? hardwareResults).first(where: {
 			      $0.platformioTarget == resolution.metadataTarget
 		      }) else { return }
 

@@ -328,7 +328,7 @@ final class ProfileStore: ObservableObject {
 	func setNickname(_ nickname: String, for num: Int64) {
 		var profile = contacts[num] ?? ContactProfile()
 		let trimmed = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-		profile.nickname = trimmed.isEmpty ? nil : trimmed
+		profile.nickname = trimmed.isBlankName ? nil : trimmed
 		contacts[num] = profile
 		save()
 	}
@@ -431,9 +431,15 @@ final class ProfileStore: ObservableObject {
 	}
 
 	func name(num: Int64, radioName: String?) -> String {
-		if let nickname = contacts[num]?.nickname { return nickname }
-		if let display = (contacts[num]?.card?.displayName).map(ProfileCard.cleanName), !display.isEmpty { return display }
-		if let radioName, !radioName.isEmpty { return radioName }
+		if let chosen = contacts[num].flatMap(Self.chosenName) { return chosen }
+		if let radioName = radioName?.trimmingCharacters(in: .whitespacesAndNewlines), !radioName.isBlankName { return radioName }
 		return PangeaCode.code(for: num)
+	}
+
+	/// The nickname, then the name they chose in Pangea. Nil when there's neither.
+	static func chosenName(_ contact: ContactProfile) -> String? {
+		if let nickname = contact.nickname, !nickname.isBlankName { return nickname }
+		if let display = (contact.card?.displayName).map(ProfileCard.cleanName), !display.isEmpty { return display }
+		return nil
 	}
 }

@@ -313,6 +313,100 @@
     "%lld could not be removed." : {
       "comment" : "Result after removing unheard nodes: nodes the radio refused to remove"
     },
+    "%lld radios here" : {
+      "comment" : "VoiceOver label for a numbered map pin grouping several radios",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld radio here"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld radios here"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld waypoints here" : {
+      "comment" : "VoiceOver label for a numbered map pin grouping several waypoints",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld waypoint here"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld waypoints here"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld radios and waypoints here" : {
+      "comment" : "VoiceOver label for a numbered map pin grouping radios and waypoints together"
+    },
+    "Zooms in, or lists them if they're in the same spot." : {
+      "comment" : "VoiceOver hint for a numbered map pin grouping several radios or waypoints"
+    },
+    "%@, not heard recently" : {
+      "comment" : "VoiceOver label for a map pin of a radio that hasn't been heard recently"
+    },
+    "Waypoint %@" : {
+      "comment" : "VoiceOver label for a waypoint pin on the map"
+    },
+    "Your radio" : {
+      "comment" : "VoiceOver label for your own radio's pin on the map"
+    },
+    "Map style" : {
+      "comment" : "VoiceOver label for the standard-mode map style menu"
+    },
+    "Map Style" : {
+      "comment" : "Picker title in the standard-mode map style menu"
+    },
+    "Connect Your Radio" : {
+      "comment" : "Firmware Updates empty state when no radio is connected"
+    },
+    "Turn on your radio and keep it close to your phone. Firmware updates show here once it connects." : {
+      "comment" : "Shown under \"Connect Your Radio\" on Firmware Updates."
+    },
+    "Checking your radio…" : {
+      "comment" : "Firmware Updates, while the radio's model is being looked up"
+    },
+    "Can't Check for Updates" : {
+      "comment" : "Firmware Updates empty state when the hardware lookup couldn't reach the server"
+    },
+    "Pangea couldn't reach the update server. Check your internet connection and try again." : {
+      "comment" : "Shown under \"Can't Check for Updates\" on Firmware Updates."
+    },
+    "Radio Model Not Recognized" : {
+      "comment" : "Firmware Updates empty state when the radio's model isn't in the hardware catalog"
+    },
+    "Pangea doesn't have firmware updates for this radio's model." : {
+      "comment" : "Shown under \"Radio Model Not Recognized\" on Firmware Updates."
+    },
+    "No Routes Yet" : {
+      "comment" : "Routes empty state"
+    },
+    "Record one with Route Recorder, or import a CSV file with Latitude and Longitude columns." : {
+      "comment" : "Shown under \"No Routes Yet\" on Routes."
+    },
     "%lld nodes not heard on your current LoRa settings" : {
       "comment" : "Banner headline: the number of nodes the radio has not heard on the LoRa settings it is using now",
       "localizations" : {

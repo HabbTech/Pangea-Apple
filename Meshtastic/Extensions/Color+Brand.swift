@@ -16,7 +16,8 @@ import SwiftUI
 extension Color {
 
 	/// Branded accent — shadows SwiftUI `Color.accentColor`. The `AccentColor` asset: Pangea
-	/// Fossil #F05511 in both modes.
+	/// Ember #C2410C in light mode, Fossil Light #F26A2E in dark mode; with Increase Contrast,
+	/// #A8380A and #F58A5C. Same values as `Color.pangeaPrimary`.
 	///
 	/// This is the accent for text and glyphs, and it is the app-wide tint, so plain buttons,
 	/// toolbar items, links and tab labels all use it.

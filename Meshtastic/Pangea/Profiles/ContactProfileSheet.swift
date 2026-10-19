@@ -186,7 +186,8 @@ struct ContactProfileSheet: View {
 
 	/// The name they picked (in Pangea, or on their radio), shown under a nickname.
 	private var sharedName: String? {
-		if let display = profile?.card?.displayName, !display.isEmpty { return display }
-		return user?.longName
+		if let display = (profile?.card?.displayName).map(ProfileCard.cleanName), !display.isEmpty { return display }
+		guard let radio = user?.longName?.trimmingCharacters(in: .whitespacesAndNewlines), !radio.isBlankName else { return nil }
+		return radio
 	}
 }
