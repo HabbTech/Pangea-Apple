@@ -81,9 +81,10 @@ extension Color {
 	/// accents only — never as text on a light surface, never with white text on top.
 	public static let pangeaFossil = Color(hex: "F05511")
 
-	/// The app tint. Held at Fossil itself in both appearances so the brand hue reads
-	/// identically light and dark, rather than the darkened/lightened M3 primary pair.
-	public static let pangeaPrimary = Color(light: 0xF05511, dark: 0xF05511)
+	/// The app tint, for orange text, icons and controls. Fossil is 3.5:1 on white, so light
+	/// mode uses Ember `#C2410C` (5.2:1); on dark surfaces Fossil itself reads at 4.9:1 or better.
+	/// Fills with white text on top use `accentFill`, Ember in both appearances.
+	public static let pangeaPrimary = Color(light: 0xC2410C, dark: 0xF05511)
 
 	/// M3 `primaryContainer`: decorative fills behind `pangeaOnPrimaryContainer`.
 	public static let pangeaPrimaryContainer = Color(light: 0xFFDBCB, dark: 0x7A2E04)

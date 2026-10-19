@@ -23,7 +23,8 @@ extension Color {
 	static var accentColor: Color { Color("AccentColor") }
 
 	/// The accent as a fill under white text: prominent buttons, message bubbles, badges.
-	/// Pangea: Fossil #F05511 in both modes, the colour of the user's own bubbles.
+	/// Pangea: Ember #C2410C in both modes, the colour of the user's own bubbles. White on
+	/// Fossil #F05511 is only 3.5:1; on Ember it is 5.2:1.
 	static let accentFill = Color("Colors/MeshtasticAccent")
 
 	/// Branded primary text — shadows SwiftUI `Color.primary`

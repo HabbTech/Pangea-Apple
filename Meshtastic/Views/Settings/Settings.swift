@@ -294,7 +294,7 @@ struct Settings: View {
 	// MARK: Views
 
 	var radioConfigurationSection: some View {
-		Section(expertModeEnabled ? "Radio Configuration" : "Radio") {
+		Section("Radio Configuration") {
 			let node = nodeSnapshot(for: preferredNodeNum)
 			if expertModeEnabled, let node,
 				let regionCode = node.regionCode,
@@ -350,7 +350,7 @@ struct Settings: View {
 	}
 
 	var deviceConfigurationSection: some View {
-		Section(expertModeEnabled ? "Device Configuration" : "Device") {
+		Section("Device Configuration") {
 			NavigationLink(value: SettingsNavigationState.user) {
 				Label {
 					Text("User")
@@ -517,7 +517,7 @@ struct Settings: View {
 					.foregroundColor(.secondary)
 			}
 		} header: {
-			Text(expertModeEnabled ? "Module Configuration" : "Modules")
+			Text("Module Configuration")
 		}
 	}
 
@@ -721,7 +721,9 @@ struct Settings: View {
 					backupRestoreSection
 				}
 				if let node, !node.isManaged {
-					if accessoryManager.isConnected {
+					// Pangea: standard mode leaves the radio's own settings to Expert Mode. The radio
+					// names itself from your profile, and its defaults suit set-and-forget use.
+					if expertModeEnabled && accessoryManager.isConnected {
 						Section("Configure") {
 							if node.canRemoteAdmin {
 								Picker("Node", selection: $selectedNode) {
@@ -788,8 +790,10 @@ struct Settings: View {
 					if expertModeEnabled {
 						radioConfigurationSection
 					}
-					deviceConfigurationSection
-					moduleConfigurationSection
+					if expertModeEnabled {
+						deviceConfigurationSection
+						moduleConfigurationSection
+					}
 					backupRestoreSection
 					loggingSection
 					if expertModeEnabled && showsDevelopersSection {

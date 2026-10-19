@@ -304,7 +304,7 @@ struct MeshMapMK: View {
 			showsTraffic: showTraffic,
 			showsPointsOfInterest: showPointsOfInterest,
 			showsUserLocation: showUserLocation && isMapVisible,
-			controlsBottomInset: expertModeEnabled ? 72 : 12   // lift compass + pitch toggle above Expert Mode's button bar
+			controlsBottomInset: 72   // lift compass + pitch toggle above the button bar
 		)
 	}
 
@@ -365,6 +365,10 @@ struct MeshMapMK: View {
 				onColocatedStack: { items in
 					// Coincident stack that zoom-to-fit can't separate -> let the user pick an item by name.
 					presentColocatedStack(items)
+				},
+				pinAccessibilityLabel: { pinAccessibilityLabel(for: $0) },
+				clusterAccessibilityLabel: { count in
+					String.localizedStringWithFormat("%@ radios here. Double-tap to zoom in.".localized, String(count))
 				},
 				configuration: clusterConfiguration,
 				overlays: combinedMapOverlays(),
@@ -645,8 +649,31 @@ struct MeshMapMK: View {
 				.safeAreaInset(edge: .bottom, alignment: .trailing) {
 					if expertModeEnabled {
 						mapControls
+					} else {
+						mapStyleControl
 					}
 				}
+	}
+
+	/// Standard mode's one map button: the base map style, without the rest of Map Options.
+	private var mapStyleControl: some View {
+		HStack {
+			Spacer()
+			Menu {
+				Picker("Map Style", selection: $selectedMapLayer) {
+					ForEach([MapLayer.standard, .hybrid, .satellite], id: \.self) { layer in
+						Text(layer.localized).tag(layer)
+					}
+				}
+			} label: {
+				Image(systemName: selectedMapLayer == .standard ? "map" : "globe.americas.fill")
+			}
+			.accessibilityLabel(String(localized: "Map style", comment: "VoiceOver label for the standard-mode map style menu"))
+			.glassButtonStyle()
+		}
+		.controlSize(.regular)
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
 	}
 
 	/// Expert Mode's buttons along the bottom of the map.
@@ -844,6 +871,10 @@ struct MeshMapMK: View {
 			}
 	}
 
+	private var showsOpenWindowButton: Bool {
+		supportsMultipleWindows && showOpenWindowButton && !isMapWindowOpen
+	}
+
 	private var mapNavigation: some View {
 		NavigationStack {
 			ZStack {
@@ -853,21 +884,25 @@ struct MeshMapMK: View {
 				ToolbarItem(placement: .topBarLeading) {
 					MeshtasticLogo()
 				}
-				ToolbarItem(placement: .topBarTrailing) {
-					HStack {
-						if supportsMultipleWindows && showOpenWindowButton && !isMapWindowOpen {
-							Button {
-								if router.selectedTab == .map {
-									router.selectedTab = expertModeEnabled ? .nodes : .messages
+				// Pangea: standard mode's connection indicator draws nothing, so without the window
+				// button there'd be an empty toolbar bubble.
+				if expertModeEnabled || showsOpenWindowButton {
+					ToolbarItem(placement: .topBarTrailing) {
+						HStack {
+							if showsOpenWindowButton {
+								Button {
+									if router.selectedTab == .map {
+										router.selectedTab = expertModeEnabled ? .nodes : .messages
+									}
+									openWindow(id: "meshmap-window")
+									isMapWindowOpen = true
+								} label: {
+									Image(systemName: "macwindow.badge.plus")
 								}
-								openWindow(id: "meshmap-window")
-								isMapWindowOpen = true
-							} label: {
-								Image(systemName: "macwindow.badge.plus")
+								.accessibilityLabel(String(localized: "Open map in new window", comment: "VoiceOver label for the open map in a new window button"))
 							}
-							.accessibilityLabel(String(localized: "Open map in new window", comment: "VoiceOver label for the open map in a new window button"))
+							ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
 						}
-						ConnectedDevice(deviceConnected: accessoryManager.isConnected, name: accessoryManager.activeConnection?.device.shortName ?? "?")
 					}
 				}
 			}
@@ -1112,6 +1147,19 @@ struct MeshMapMK: View {
 			} icon: {
 				CircleText(text: waypoint.icon, color: .orange, circleSize: 28)
 			}
+		}
+	}
+
+	/// What VoiceOver reads for a pin: the person's name in standard mode, the node's in Expert Mode.
+	private func pinAccessibilityLabel(for item: MeshMapItem) -> String {
+		switch item {
+		case let .node(snapshot):
+			let name = expertModeEnabled
+				? snapshot.longName
+				: ProfileStore.shared.name(num: snapshot.nodeNum, radioName: snapshot.longName)
+			return snapshot.isOnline ? name : String.localizedStringWithFormat("%@, not heard recently".localized, name)
+		case let .waypoint(waypoint):
+			return String.localizedStringWithFormat("Waypoint %@".localized, waypoint.name)
 		}
 	}
 

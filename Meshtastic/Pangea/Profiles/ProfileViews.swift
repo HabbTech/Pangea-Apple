@@ -271,6 +271,7 @@ struct PhotoUpdateBanner: View {
 						couldntAsk = asked ? nil : results.first(where: { $0 == .noRadio }) ?? results.first(where: { $0 == .busy }) ?? results.first
 					}
 					.buttonStyle(.borderedProminent)
+					.tint(.accentFill)
 					.buttonBorderShape(.capsule)
 					.controlSize(.small)
 					.disabled(line != nil)

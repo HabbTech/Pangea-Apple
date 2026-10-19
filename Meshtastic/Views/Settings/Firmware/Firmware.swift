@@ -42,9 +42,16 @@ struct Firmware: View {
 				.id("\(resolvedNode.num)-\(firmwareTarget)")
 			} else {
 				List {
-					ContentUnavailableView("Firmware Updates",
-						systemImage: "arrow.triangle.2.circlepath",
-						description: Text("Please reconnect to your device to load firmware information."))
+					// Pangea: say what to do, in plain words.
+					if accessoryManager.isConnected {
+						ContentUnavailableView("Can't Check for Updates",
+							systemImage: "arrow.triangle.2.circlepath",
+							description: Text("Pangea couldn't look up your radio's model yet. Check your internet connection, then open this screen again."))
+					} else {
+						ContentUnavailableView("Connect Your Radio",
+							systemImage: "antenna.radiowaves.left.and.right.slash",
+							description: Text("Turn on your radio and keep it close to your phone. Firmware updates show here once it connects."))
+					}
 				}
 			}
 		}

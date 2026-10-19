@@ -206,6 +206,7 @@ struct GroupInviteContent: View {
 								.foregroundStyle(.white)
 						}
 						.buttonStyle(.borderedProminent)
+						.tint(.accentFill)
 						.buttonBorderShape(.capsule)
 						.controlSize(.large)
 					}

@@ -92,6 +92,7 @@ struct MyCodeCard: View {
 							.foregroundStyle(.white)
 					}
 					.buttonStyle(.borderedProminent)
+					.tint(.accentFill)
 				}
 				Button {
 					if let showQR {

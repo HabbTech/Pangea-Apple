@@ -223,6 +223,7 @@ struct NewMessageSheet: View {
 					.frame(maxWidth: .infinity)
 			}
 			.buttonStyle(.borderedProminent)
+			.tint(.accentFill)
 			.buttonBorderShape(.capsule)
 			.controlSize(.large)
 			.disabled(parsedInvite == nil || isBusy)

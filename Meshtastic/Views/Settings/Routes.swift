@@ -170,6 +170,13 @@ struct Routes: View {
 					}
 
 				}
+				.overlay {
+					// Pangea: say what goes here rather than showing an empty list.
+					if routes.isEmpty {
+						ContentUnavailableView("No Routes Yet", systemImage: "point.topleft.down.to.point.bottomright.curvepath",
+							description: Text("Record one with Route Recorder, or import a CSV file with Latitude and Longitude columns."))
+					}
+				}
 				.listStyle(.plain)
 			} else {
 				VStack {

@@ -110,6 +110,7 @@ struct RadioStatusBanner: View {
 				Button(action, action: perform)
 					.font(.subheadline.bold())
 					.buttonStyle(.borderedProminent)
+					.tint(.accentFill)
 					.buttonBorderShape(.capsule)
 					.controlSize(.small)
 			}

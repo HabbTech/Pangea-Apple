@@ -434,6 +434,7 @@ struct ChatsView: View {
 						.frame(maxWidth: .infinity)
 				}
 				.buttonStyle(.borderedProminent)
+				.tint(.accentFill)
 				Button {
 					showNewGroup = true
 				} label: {
@@ -622,6 +623,7 @@ struct InviteRow: View {
 			Spacer()
 			Button("Join", action: onJoin)
 				.buttonStyle(.borderedProminent)
+				.tint(.accentFill)
 				.buttonBorderShape(.capsule)
 				.controlSize(.small)
 			Button(action: onDecline) {
